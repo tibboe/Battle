@@ -67,8 +67,8 @@ export class TerrainRenderer {
         const { lanes, elevation } = CONFIG;
         const { castShadowAlpha, castShadowDepth } = CONFIG.terrain.shading;
         const ts = this.ts;
-        const x0 = elevation.rampInset + ts;
-        const w = CONFIG.world.width - 2 * (elevation.rampInset + ts);
+        const x0 = elevation.rampInset;
+        const w = CONFIG.world.width - 2 * elevation.rampInset;
         if (w <= 0) return;
         const g = this.scene.add.graphics().setDepth(DEPTH_CAST_SHADOW);
         const bands = 6;
@@ -83,7 +83,10 @@ export class TerrainRenderer {
         this.layer.add(g);
     }
 
-    // The cliff + lip + ramps along one lane's front (lower) edge.
+    // The cliff + grass lip along one lane's front (lower) edge. The cliff runs across
+    // the middle and stops `rampInset` short of each keep, leaving open grass there as the
+    // implied "way up" — the Tiny Swords sheet has no true ramp-to-lower-level tile, so a
+    // clean cliff end reads better than faking one (real ramp crossings are M3).
     private drawLaneEdge(lane: { y: number; thickness: number }) {
         const { world, elevation } = CONFIG;
         const ts = this.ts;
@@ -91,28 +94,21 @@ export class TerrainRenderer {
         const lipY = cliffY - ts;                   // grass overhang one row above
         const botY = cliffY + ts;                   // lower row of the 2-tile cliff
 
-        // Ramp end-caps sit `rampInset` in from each edge; the cliff runs between them.
-        const rampL = elevation.rampInset;
-        const rampR = world.width - elevation.rampInset - ts;
-        const cliffL = rampL + ts;       // first cliff tile (after the left ramp)
-        const cliffR = rampR;            // x where the right ramp begins
+        const cliffL = elevation.rampInset;                 // left end of the cliff
+        const cliffR = world.width - elevation.rampInset;   // right end (exclusive)
 
-        // Grass front-lip overhang along the cliff span.
-        this.tileRun(TILES.grassBottom, cliffL, cliffR, lipY, DEPTH_EDGE);
+        // Grass front-lip overhang, rounded at both ends to match the cliff caps.
+        this.tile(TILES.grassBottomLeft, cliffL, lipY, DEPTH_EDGE);
+        this.tileRun(TILES.grassBottom, cliffL + ts, cliffR - ts, lipY, DEPTH_EDGE);
+        this.tile(TILES.grassBottomRight, cliffR - ts, lipY, DEPTH_EDGE);
 
-        // Cliff face: end-caps + a tiled middle run, two tiles tall.
+        // Cliff face: rounded end-caps + a tiled middle run, two tiles tall.
         this.tile(TILES.cliffTopLeft, cliffL, cliffY, DEPTH_CLIFF);
         this.tile(TILES.cliffBotLeft, cliffL, botY, DEPTH_CLIFF);
         this.tileRun(TILES.cliffTopMid, cliffL + ts, cliffR - ts, cliffY, DEPTH_CLIFF);
         this.tileRun(TILES.cliffBotMid, cliffL + ts, cliffR - ts, botY, DEPTH_CLIFF);
         this.tile(TILES.cliffTopRight, cliffR - ts, cliffY, DEPTH_CLIFF);
         this.tile(TILES.cliffBotRight, cliffR - ts, botY, DEPTH_CLIFF);
-
-        // Ramp visuals near each keep: the cliff slopes down to grass.
-        this.tile(TILES.rampLeftTop, rampL, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.rampLeftBot, rampL, botY, DEPTH_CLIFF);
-        this.tile(TILES.rampRightTop, rampR, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.rampRightBot, rampR, botY, DEPTH_CLIFF);
     }
 
     // ── primitives ──

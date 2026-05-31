@@ -25,13 +25,13 @@ export const CONFIG = {
         { y: 1378, level: 0, thickness: 300 }, // low ground (bottom)
     ],
 
-    // Elevation between lanes: the cliff face the upper plateau drops down, and where
-    // the ramp visuals sit near the keeps.
+    // Elevation between lanes: the cliff face the upper plateau drops down to the lane
+    // below, and how far the cliff stops short of the keeps.
     elevation: {
         cliffHeight: 128, // px drop between adjacent lanes — MUST equal the band gap
                           // (== 2 tiles tall, the height of the cliff-face art).
-        rampInset: 420,   // px from each world edge where the ramp end-cap sits, so the
-                          // cliff appears to slope down to grass near the keeps.
+        rampInset: 420,   // px from each world edge where the cliff ends, leaving open
+                          // grass near the keeps as the implied access onto the high ground.
     },
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
