@@ -10,6 +10,8 @@ export class CameraController {
     private scene: Phaser.Scene;
     private cam: Phaser.Cameras.Scene2D.Camera;
     private pinchDist = 0;
+    // Once the player drags/zooms, stop auto-reframing on resize (respect their view).
+    private userInteracted = false;
 
     constructor(scene: Phaser.Scene) {
         this.scene = scene;
@@ -28,10 +30,12 @@ export class CameraController {
         this.defaultView();
     }
 
-    // Smallest zoom we allow: the world always at least fills the screen WIDTH, so the
-    // map can never become narrower than the viewport (no black bars left/right).
+    // Smallest zoom we allow: the world always fills the screen on BOTH axes, so there
+    // are never black bars (the bigger ratio wins; the other axis overflows and pans).
     private minZoom(): number {
-        return Math.max(CONFIG.camera.zoomMin, this.scene.scale.width / CONFIG.world.width);
+        const fillX = this.scene.scale.width / CONFIG.world.width;
+        const fillY = this.scene.scale.height / CONFIG.world.height;
+        return Math.max(CONFIG.camera.zoomMin, fillX, fillY);
     }
 
     // Default playing view: frame the lane so it fills the screen, with map above/below
@@ -71,6 +75,7 @@ export class CameraController {
 
         // Two fingers down -> pinch zoom (ignore panning).
         if (p1.isDown && p2.isDown) {
+            this.userInteracted = true;
             const dist = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
             if (this.pinchDist > 0 && dist > 0) {
                 const midX = (p1.x + p2.x) / 2;
@@ -87,6 +92,7 @@ export class CameraController {
         if (pointer.isDown) {
             const dx = pointer.position.x - pointer.prevPosition.x;
             const dy = pointer.position.y - pointer.prevPosition.y;
+            if (dx !== 0 || dy !== 0) this.userInteracted = true;
             this.cam.scrollX -= dx / this.cam.zoom;
             this.cam.scrollY -= dy / this.cam.zoom;
         }
@@ -97,14 +103,19 @@ export class CameraController {
     }
 
     private onWheel(pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) {
+        this.userInteracted = true;
         const factor = dy > 0 ? 0.9 : 1.1;
         this.zoomTo(this.cam.zoom * factor, pointer.x, pointer.y);
     }
 
-    // On rotate/resize, re-clamp zoom so we never end up below the new minimum.
-    // Called by the scene's single resize handler (avoids leaking a global listener
-    // across scene restarts).
+    // On rotate/resize (incl. the mobile URL bar settling after load): until the player
+    // has taken control, re-frame to the default view using the now-correct size;
+    // afterwards just re-clamp so we never drop below the new minimum zoom.
     handleResize() {
-        this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
+        if (this.userInteracted) {
+            this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
+        } else {
+            this.defaultView();
+        }
     }
 }

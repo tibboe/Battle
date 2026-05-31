@@ -55,7 +55,11 @@ export class UnitManager {
     // Called when a unit reaches the opposing keep (so the scene can damage it).
     private readonly onReachKeep: (attacker: Faction) => void;
 
-    constructor(scene: Phaser.Scene, onReachKeep: (attacker: Faction) => void) {
+    constructor(
+        scene: Phaser.Scene,
+        layer: Phaser.GameObjects.Layer,
+        onReachKeep: (attacker: Faction) => void,
+    ) {
         this.onReachKeep = onReachKeep;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
@@ -70,13 +74,15 @@ export class UnitManager {
         this.deathTimer = new Float32Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
-        // Build the whole sprite pool once. These never get destroyed.
+        // Build the whole sprite pool once. These never get destroyed. They live on the
+        // world layer so the UI camera can ignore them.
         for (let i = 0; i < this.capacity; i++) {
             const s = scene.add.sprite(0, 0, MELEE_KEY)
                 .setOrigin(0.5, 1) // feet on the lane line (ASSET_SPEC §4)
                 .setScale(CONFIG.unit.renderScale)
                 .setActive(false)
                 .setVisible(false);
+            layer.add(s);
             this.freeSprites.push(s);
         }
 

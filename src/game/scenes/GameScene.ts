@@ -13,6 +13,12 @@ export class GameScene extends Phaser.Scene {
     private cameraController!: CameraController;
     private units!: UnitManager;
 
+    // World objects (backdrop + units) live here and are shown by the main camera.
+    private worldLayer!: Phaser.GameObjects.Layer;
+    // HUD lives here and is shown by a dedicated UI camera that never zooms/pans.
+    private uiLayer!: Phaser.GameObjects.Layer;
+    private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+
     private hudText!: Phaser.GameObjects.Text;
     private fitButton!: Phaser.GameObjects.Text;
     private playerKeepText!: Phaser.GameObjects.Text;
@@ -38,13 +44,23 @@ export class GameScene extends Phaser.Scene {
         // Subtle colour for anything outside the world bounds.
         this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
 
+        // Two layers: the world (zoomed/panned by the main camera) and the HUD (drawn
+        // by a separate UI camera so it never zooms or drifts with the world).
+        this.worldLayer = this.add.layer();
+        this.uiLayer = this.add.layer();
+
         this.drawBackdrop();
         registerUnitAnimations(this);
         this.cameraController = new CameraController(this);
         this.buildHud();
 
         // Both keeps spawn a horde; units that reach the far keep damage it.
-        this.units = new UnitManager(this, (attacker) => this.onReachKeep(attacker));
+        this.units = new UnitManager(this, this.worldLayer, (attacker) => this.onReachKeep(attacker));
+
+        // UI camera renders only the HUD; the main camera renders only the world.
+        this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        this.cameras.main.ignore(this.uiLayer);
+        this.uiCamera.ignore(this.worldLayer);
 
         // One resize handler, cleaned up on shutdown so restarts don't leak listeners.
         this.scale.on('resize', this.onResize, this);
@@ -69,12 +85,12 @@ export class GameScene extends Phaser.Scene {
         const cx = this.scale.width / 2;
         const cy = this.scale.height / 2;
 
-        this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.6)
+        const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.6)
             .setOrigin(0, 0)
             .setScrollFactor(0)
             .setDepth(HUD_DEPTH);
 
-        this.add.text(cx, cy - 50, playerWon ? 'VICTORY' : 'DEFEAT', {
+        const title = this.add.text(cx, cy - 50, playerWon ? 'VICTORY' : 'DEFEAT', {
             fontFamily: 'monospace',
             fontSize: '64px',
             color: playerWon ? '#7fd0ff' : '#ff8a8a',
@@ -97,6 +113,9 @@ export class GameScene extends Phaser.Scene {
             .setInteractive({ useHandCursor: true });
 
         restart.on('pointerup', () => this.scene.restart());
+
+        // On the UI camera so the overlay is unaffected by world zoom/pan.
+        this.uiLayer.add([dim, title, restart]);
     }
 
     // A static placeholder battlefield: ground, the lane band, faint grid lines, and
@@ -104,6 +123,7 @@ export class GameScene extends Phaser.Scene {
     private drawBackdrop() {
         const { world, lane, keep, colors } = CONFIG;
         const g = this.add.graphics();
+        this.worldLayer.add(g);
 
         g.fillStyle(colors.ground, 1);
         g.fillRect(0, 0, world.width, world.height);
@@ -170,10 +190,13 @@ export class GameScene extends Phaser.Scene {
             .setInteractive({ useHandCursor: true });
 
         this.fitButton.on('pointerup', () => this.cameraController.fitToMap());
+
+        this.uiLayer.add([this.hudText, this.playerKeepText, this.enemyKeepText, this.fitButton]);
         this.layoutHud();
     }
 
     private onResize() {
+        this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.layoutHud();
         this.cameraController.handleResize();
     }
