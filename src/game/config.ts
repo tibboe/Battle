@@ -12,17 +12,21 @@ export const CONFIG = {
 
     // Milestone 2: the battlefield is STACKED into several horizontal lanes at
     // different elevations. Each lane is a grass plateau the armies march along
-    // (left↔right); higher `level` = higher ground = drawn higher on screen (smaller
-    // y). Lanes are DATA — add/remove entries here and spawning, movement, targeting,
-    // terrain and the high-ground rule all follow. (Replaces M1's single `lane`.)
+    // (left↔right); higher `level` = higher ground = drawn brighter, with a cliff at
+    // any boundary where two lanes differ in level. Lanes are DATA — change levels here
+    // and spawning, movement, targeting, terrain and the high-ground rule all follow.
+    //
+    // Default layout: the outer two lanes sit at GROUND level and the MIDDLE lane is a
+    // raised mesa one level up — so it has a cliff on both edges (a rise from the top
+    // lane, a drop to the bottom lane) and is high ground against both neighbours.
     //
     // The y/thickness/cliffHeight numbers are tied together: the GAP between two
     // adjacent lane bands must equal `elevation.cliffHeight` so the 2-tile cliff art
     // fits exactly. Spacing between lane centres = thickness + cliffHeight (300+128=428).
     lanes: [
-        { y: 522, level: 2, thickness: 300 }, // high ground (top of screen)
-        { y: 950, level: 1, thickness: 300 }, // middle
-        { y: 1378, level: 0, thickness: 300 }, // low ground (bottom)
+        { y: 522, level: 0, thickness: 300 },  // ground (top of screen)
+        { y: 950, level: 1, thickness: 300 },  // raised mesa (middle)
+        { y: 1378, level: 0, thickness: 300 }, // ground (bottom)
     ],
 
     // Elevation between lanes: the cliff face the upper plateau drops down to the lane

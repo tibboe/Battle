@@ -7,13 +7,16 @@ import { TILES, TILESET } from './tileset';
 // Two primitives keep the object count tiny and the draws batched:
 //   • TileSprite for long repeating runs (the grass fill, a cliff-face run, a lip
 //     run) — one GPU-tiled object covers an arbitrary width.
-//   • Image for single end-caps / corners / ramps.
+//   • Image for single end-caps / corners.
 // Everything is STATIC (created once in create()), drawn from one spritesheet, so
 // it batches into a handful of draw calls and costs nothing per frame.
 //
-// The "stacked plateau" read comes entirely from the CLIFF FACES: the grass is one
-// flat field, and each lane's front (lower) edge drops a 2-tile cliff to the lane
-// below, with a grassy front-lip overhang on top and ramp end-caps near the keeps.
+// The elevation read comes entirely from CLIFF FACES drawn at lane BOUNDARIES: the
+// grass is one flat field, and wherever two adjacent lanes differ in `level` we drop
+// (or raise) a 2-tile cliff between them. The cliff belongs to the HIGHER lane and
+// faces the lower one — drawn normally when the higher lane is on top (a downward
+// drop), or vertically flipped when the higher lane is below (an upward rise). This
+// is fully data-driven: change the levels in CONFIG.lanes and the terrain follows.
 export class TerrainRenderer {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
@@ -34,37 +37,62 @@ export class TerrainRenderer {
         this.layer.add(field);
     }
 
-    // Phase B: the tiered battlefield. Base grass field + faked terrace lighting +
-    // one cliff drop per lane's front edge, framed by a grass lip and ramp end-caps.
+    // The tiered battlefield. Base grass + faked level lighting + one cliff at every
+    // boundary where adjacent lanes differ in elevation, each grounded by a cast shadow.
     drawTieredLayout() {
         this.drawFlatField();
-        this.drawTerraceShading(); // ambient: lower levels darker
-        for (const lane of CONFIG.lanes) this.drawLaneEdge(lane);
-        this.drawCastShadows(); // contact shadow each cliff throws on the level below
+        this.drawLevelShading(); // ambient: higher levels brighter, lower darker
+        for (const b of this.boundaries()) this.drawCliff(b);
+        this.drawCastShadows(); // soft contact shadow each cliff throws onto the lane below
     }
 
-    // Subtle stepped darkening: each terrace (the slab between two cliff lines) is a
-    // little darker than the one above it, reading as descending ground. Drawn on one
-    // Graphics, beneath the cliffs, so only the grass is tinted — never the cliff art.
-    private drawTerraceShading() {
+    // The gap between each pair of adjacent lanes, with which side is higher. A boundary
+    // only carries a cliff when the two lanes differ in level.
+    private boundaries() {
+        const out: { gapTop: number; flip: boolean }[] = [];
+        const lanes = CONFIG.lanes;
+        for (let i = 0; i < lanes.length - 1; i++) {
+            const north = lanes[i];
+            const south = lanes[i + 1];
+            if (north.level === south.level) continue; // flat boundary — no cliff
+            out.push({
+                gapTop: north.y + north.thickness / 2, // bottom edge of the north band
+                // `flip` when the SOUTH lane is the higher one: the cliff is a rise
+                // (faces up toward the north lane) rather than a downward drop.
+                flip: south.level > north.level,
+            });
+        }
+        return out;
+    }
+
+    // Subtle per-level darkening: higher ground reads brighter, lower ground darker
+    // (like real terraced ground in sun). Each lane's slab spans from the mid-gap above
+    // it to the mid-gap below, so there are no untinted stripes between bands. Drawn on
+    // one Graphics beneath the cliffs, so only the grass is tinted — never the cliff art.
+    private drawLevelShading() {
         const { world, lanes } = CONFIG;
         const step = CONFIG.terrain.shading.levelStep;
-        // Terrace boundaries are the cliff lines (each lane's front edge), sorted.
-        const cliffs = lanes.map((l) => l.y + l.thickness / 2).sort((a, b) => a - b);
-        const bounds = [0, ...cliffs, world.height];
+        const maxLevel = Math.max(...lanes.map((l) => l.level));
         const g = this.scene.add.graphics().setDepth(DEPTH_SHADE);
-        // Slab i spans bounds[i]..bounds[i+1]; the top slab (i=0) stays untinted.
-        for (let i = 1; i < bounds.length - 1; i++) {
-            g.fillStyle(0x000000, step * i);
-            g.fillRect(0, bounds[i], world.width, bounds[i + 1] - bounds[i]);
+        for (let i = 0; i < lanes.length; i++) {
+            const top = i === 0 ? 0 : (lanes[i - 1].y + lanes[i - 1].thickness / 2 + lanes[i].y - lanes[i].thickness / 2) / 2;
+            const bot =
+                i === lanes.length - 1
+                    ? world.height
+                    : (lanes[i].y + lanes[i].thickness / 2 + lanes[i + 1].y - lanes[i + 1].thickness / 2) / 2;
+            const darken = (maxLevel - lanes[i].level) * step;
+            if (darken <= 0) continue; // the highest level stays untinted
+            g.fillStyle(0x000000, darken);
+            g.fillRect(0, top, world.width, bot - top);
         }
         this.layer.add(g);
     }
 
-    // A soft shadow fading downward from the base of each cliff onto the terrace below
-    // (only under the actual cliff span, not the ramps). One Graphics, many rects.
+    // A soft shadow fading away from the foot of each cliff onto the lane below it (only
+    // under the actual cliff span, not the open grass near the keeps). For a downward
+    // drop the shadow falls south onto the lower lane; for an upward rise it falls north.
     private drawCastShadows() {
-        const { lanes, elevation } = CONFIG;
+        const { elevation } = CONFIG;
         const { castShadowAlpha, castShadowDepth } = CONFIG.terrain.shading;
         const ts = this.ts;
         const x0 = elevation.rampInset;
@@ -72,66 +100,90 @@ export class TerrainRenderer {
         if (w <= 0) return;
         const g = this.scene.add.graphics().setDepth(DEPTH_CAST_SHADOW);
         const bands = 6;
-        for (const lane of lanes) {
-            const baseY = lane.y + lane.thickness / 2 + 2 * ts; // foot of the 2-tile cliff
+        for (const b of this.boundaries()) {
+            // Foot of the cliff, and the direction the shadow spills (away from the plateau).
+            const footY = b.flip ? b.gapTop : b.gapTop + 2 * ts;
+            const dir = b.flip ? -1 : 1;
             for (let s = 0; s < bands; s++) {
                 const t = s / bands;
+                const sliceH = castShadowDepth / bands + 1;
+                const y = footY + dir * t * castShadowDepth - (dir < 0 ? sliceH : 0);
                 g.fillStyle(0x000000, castShadowAlpha * (1 - t));
-                g.fillRect(x0, baseY + t * castShadowDepth, w, castShadowDepth / bands + 1);
+                g.fillRect(x0, y, w, sliceH);
             }
         }
         this.layer.add(g);
     }
 
-    // The cliff + grass lip along one lane's front (lower) edge. The cliff runs across
-    // the middle and stops `rampInset` short of each keep, leaving open grass there as the
-    // implied "way up" — the Tiny Swords sheet has no true ramp-to-lower-level tile, so a
-    // clean cliff end reads better than faking one (real ramp crossings are M3).
-    private drawLaneEdge(lane: { y: number; thickness: number }) {
-        const { world, elevation } = CONFIG;
+    // One 2-tile cliff filling the gap [gapTop, gapTop + 2·ts]. When `flip` is false the
+    // higher (north) lane drops down: grass-capped row on top, foot row below, with a
+    // grass lip overhanging the plateau above. When `flip` is true the higher (south)
+    // lane rises up: the rows are swapped and flipped vertically (foot at the top, grass
+    // crest at the bottom), with a grass back-fringe on the plateau below.
+    private drawCliff(b: { gapTop: number; flip: boolean }) {
         const ts = this.ts;
-        const cliffY = lane.y + lane.thickness / 2; // plateau bottom = top of the cliff
-        const lipY = cliffY - ts;                   // grass overhang one row above
-        const botY = cliffY + ts;                   // lower row of the 2-tile cliff
+        const L = CONFIG.elevation.rampInset;
+        const R = CONFIG.world.width - CONFIG.elevation.rampInset;
+        const topY = b.gapTop;
+        const botY = b.gapTop + ts;
 
-        const cliffL = elevation.rampInset;                 // left end of the cliff
-        const cliffR = world.width - elevation.rampInset;   // right end (exclusive)
+        if (!b.flip) {
+            this.cliffRow(L, R, topY, TILES.cliffTopLeft, TILES.cliffTopMid, TILES.cliffTopRight, false);
+            this.cliffRow(L, R, botY, TILES.cliffBotLeft, TILES.cliffBotMid, TILES.cliffBotRight, false);
+            this.grassEdge(L, R, b.gapTop - ts, false); // lip overhang on the plateau above
+        } else {
+            this.cliffRow(L, R, topY, TILES.cliffBotLeft, TILES.cliffBotMid, TILES.cliffBotRight, true);
+            this.cliffRow(L, R, botY, TILES.cliffTopLeft, TILES.cliffTopMid, TILES.cliffTopRight, true);
+            this.grassEdge(L, R, b.gapTop + 2 * ts, true); // back-fringe on the plateau below
+        }
+    }
 
-        // Grass front-lip overhang, rounded at both ends to match the cliff caps.
-        this.tile(TILES.grassBottomLeft, cliffL, lipY, DEPTH_EDGE);
-        this.tileRun(TILES.grassBottom, cliffL + ts, cliffR - ts, lipY, DEPTH_EDGE);
-        this.tile(TILES.grassBottomRight, cliffR - ts, lipY, DEPTH_EDGE);
+    // A row of the cliff face: rounded left cap + tiled middle run + rounded right cap.
+    private cliffRow(L: number, R: number, y: number, left: number, mid: number, right: number, flip: boolean) {
+        const ts = this.ts;
+        this.tile(left, L, y, DEPTH_CLIFF, flip);
+        this.tileRun(mid, L + ts, R - ts, y, DEPTH_CLIFF, flip);
+        this.tile(right, R - ts, y, DEPTH_CLIFF, flip);
+    }
 
-        // Cliff face: rounded end-caps + a tiled middle run, two tiles tall.
-        this.tile(TILES.cliffTopLeft, cliffL, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.cliffBotLeft, cliffL, botY, DEPTH_CLIFF);
-        this.tileRun(TILES.cliffTopMid, cliffL + ts, cliffR - ts, cliffY, DEPTH_CLIFF);
-        this.tileRun(TILES.cliffBotMid, cliffL + ts, cliffR - ts, botY, DEPTH_CLIFF);
-        this.tile(TILES.cliffTopRight, cliffR - ts, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.cliffBotRight, cliffR - ts, botY, DEPTH_CLIFF);
+    // The grass edge framing a cliff: the front-lip overhang (flip=false) above a drop,
+    // or the bushy back-fringe (flip=true) at the top of a rise — each rounded at the ends.
+    private grassEdge(L: number, R: number, y: number, back: boolean) {
+        const ts = this.ts;
+        const [l, m, r] = back
+            ? [TILES.grassTopLeft, TILES.grassTop, TILES.grassTopRight]
+            : [TILES.grassBottomLeft, TILES.grassBottom, TILES.grassBottomRight];
+        this.tile(l, L, y, DEPTH_EDGE, false);
+        this.tileRun(m, L + ts, R - ts, y, DEPTH_EDGE, false);
+        this.tile(r, R - ts, y, DEPTH_EDGE, false);
     }
 
     // ── primitives ──
 
     // A horizontal run of one tile frame from x0..x1 at row-top y (single GPU object).
-    private tileRun(frame: number, x0: number, x1: number, y: number, depth: number) {
+    private tileRun(frame: number, x0: number, x1: number, y: number, depth: number, flipY = false) {
         const w = x1 - x0;
         if (w <= 0) return;
         const run = this.scene.add
             .tileSprite(x0, y, w, this.ts, TILESET.key, frame)
             .setOrigin(0, 0)
+            .setFlipY(flipY)
             .setDepth(depth);
         this.layer.add(run);
     }
 
-    private tile(frame: number, x: number, y: number, depth: number) {
-        const img = this.scene.add.image(x, y, TILESET.key, frame).setOrigin(0, 0).setDepth(depth);
+    private tile(frame: number, x: number, y: number, depth: number, flipY = false) {
+        const img = this.scene.add
+            .image(x, y, TILESET.key, frame)
+            .setOrigin(0, 0)
+            .setFlipY(flipY)
+            .setDepth(depth);
         this.layer.add(img);
     }
 }
 
 // Terrain draws below units (units use world-y as depth, ~400..1530). Layered low→high:
-// ground, terrace shade (tints grass only), cliffs, cast shadows, grass lip — all under
+// ground, level shade (tints grass only), cliffs, cast shadows, grass lip — all under
 // every unit and the keeps.
 export const DEPTH_GROUND = -1000;
 export const DEPTH_SHADE = -960;
