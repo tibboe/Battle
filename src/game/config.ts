@@ -42,6 +42,16 @@ export const CONFIG = {
         deathFadeMs: 400,     // synthesised death fade-out (pack has no death animation)
     },
 
+    // Terrain drawn from the real Tiny Swords tileset (Milestone 2). The full
+    // index→piece map lives in terrain/tileset.ts (it's a big labelled table, kept
+    // beside the loader); these are the tunables the renderer reads. Swap `variant`
+    // (color1..5) to recolour the grass — same layout, different hue.
+    terrain: {
+        tileSize: 64,      // px per tile in the source sheet (confirmed 576×384 / 9×6)
+        variant: 'color1', // which Tilemap_color*.png is loaded (see tileset.ts)
+        renderTile: 64,    // px each tile is drawn at in the world (1:1 — no scaling)
+    },
+
     // Combat tuning.
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
