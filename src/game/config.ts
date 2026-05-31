@@ -29,9 +29,9 @@ export const CONFIG = {
     // origin, tags idle/walk/attack/death. We render that 32px art scaled up.
     unit: {
         hp: 30,
-        damage: 5,
-        range: 22,            // px gap at which a unit stops and attacks
-        attackInterval: 700,  // ms between attacks
+        damage: 10,           // 3 hits to kill at 30 hp
+        range: 52,            // centre-to-centre distance at which a unit engages
+        attackInterval: 600,  // ms between attacks
         moveSpeed: 70,        // px per second along the lane
         frameSize: 32,        // source frame px (per ASSET_SPEC.md) — never mix sizes
         renderScale: 1.4,     // display scale; on-screen footprint ~= frameSize * scale
@@ -41,6 +41,11 @@ export const CONFIG = {
     spawn: {
         spawnInterval: 150, // ms between spawns, per side
         unitsTarget: 300,   // soft cap of active units PER SIDE (600 total on screen)
+    },
+
+    // Combat tuning.
+    combat: {
+        reacquireMs: 100, // how often units re-pick a target (not every frame)
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
