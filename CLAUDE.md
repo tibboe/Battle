@@ -52,7 +52,8 @@ its reference in `package.json` — note this to them rather than deciding silen
 ## How the director tests
 Primary loop: they open the LAN URL in Chrome on their Android phone while `dev --host`
 is running, and watch changes live. So: **keep the build runnable at all times**, and
-keep the layout sane on a portrait phone screen. Don't leave the project in a broken
+keep the layout sane on the phone screen in the chosen orientation (Milestone 1 — Horde
+Core uses **landscape** with a horizontal lane). Don't leave the project in a broken
 state at the end of a session.
 
 ## Working agreement
