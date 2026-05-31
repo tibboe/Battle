@@ -29,6 +29,7 @@ npm run build        # production build into /dist
 - **CLAUDE.md** — context + working agreement for Claude Code. Read this first.
 - **GAME_DESIGN.md** — the full vision, unit system, and roadmap.
 - **MILESTONE_1.md** — the only thing we're building right now. Start here.
+- **ASSET_SPEC.md** — the sprite contract shared by the art and dev tracks.
 
 ## Current milestone
 **Milestone 1** — one lane, one unit type, bases that can win or lose. Nothing else yet.

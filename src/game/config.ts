@@ -23,13 +23,16 @@ export const CONFIG = {
     },
 
     // One melee unit type for Milestone 1.
+    // Art follows ASSET_SPEC.md: 32x32 source frames, faces right, bottom-centre
+    // origin, tags idle/walk/attack/death. We render that 32px art scaled up.
     unit: {
         hp: 30,
         damage: 5,
-        range: 22,           // px gap at which a unit stops and attacks
-        attackInterval: 700, // ms between attacks
-        moveSpeed: 70,       // px per second along the lane
-        size: 44,            // sprite footprint, drives spacing
+        range: 22,            // px gap at which a unit stops and attacks
+        attackInterval: 700,  // ms between attacks
+        moveSpeed: 70,        // px per second along the lane
+        frameSize: 32,        // source frame px (per ASSET_SPEC.md) — never mix sizes
+        renderScale: 1.4,     // display scale; on-screen footprint ~= frameSize * scale
     },
 
     // Spawning ramps each side up to a horde.

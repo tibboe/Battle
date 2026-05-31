@@ -75,3 +75,5 @@ state at the end of a session.
 ## Pointers
 - `GAME_DESIGN.md` — vision, unit system, full roadmap.
 - `MILESTONE_1.md` — what to build right now, with acceptance criteria.
+- `ASSET_SPEC.md` — sprite contract (frame size, tags, origin, export format). Placeholder
+  art must obey it so real art drops in with no code changes.
