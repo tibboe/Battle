@@ -4,7 +4,7 @@ import { CONFIG } from '../config';
 // Handles camera navigation on both phone and desktop:
 //   - drag (one finger / mouse button held) to pan
 //   - pinch (two fingers) or mouse wheel to zoom toward a focal point
-//   - fitToMap() frames the whole battlefield
+//   - fitToMap() frames the whole battlefield (width), defaultView() frames the lane
 // Movement is pure camera scroll/zoom; nothing here touches game state.
 export class CameraController {
     private scene: Phaser.Scene;
@@ -22,22 +22,35 @@ export class CameraController {
         scene.input.on('pointermove', this.onPointerMove, this);
         scene.input.on('pointerup', this.onPointerUp, this);
         scene.input.on('wheel', this.onWheel, this);
+        scene.scale.on('resize', this.onResize, this);
 
         // Open framed on the lane (not fully zoomed out) so panning is useful at once.
         this.defaultView();
     }
 
-    // Default playing view: frame the lane so it fills the screen and there is map to
-    // pan to on either side. Centred on the middle of the lane.
+    // Smallest zoom we allow: the world always at least fills the screen WIDTH, so the
+    // map can never become narrower than the viewport (no black bars left/right).
+    private minZoom(): number {
+        return Math.max(CONFIG.camera.zoomMin, this.scene.scale.width / CONFIG.world.width);
+    }
+
+    // Default playing view: frame the lane so it fills the screen, with map above/below
+    // and to either side to pan into. Centred on the middle of the lane.
     defaultView() {
         const zoom = this.scene.scale.height / CONFIG.camera.defaultViewHeight;
-        this.cam.setZoom(Phaser.Math.Clamp(zoom, CONFIG.camera.zoomMin, CONFIG.camera.zoomMax));
+        this.cam.setZoom(Phaser.Math.Clamp(zoom, this.minZoom(), CONFIG.camera.zoomMax));
+        this.cam.centerOn(CONFIG.world.width / 2, CONFIG.lane.y);
+    }
+
+    // "Fit": zoom out to show the whole lane length (fills the width), centred on the lane.
+    fitToMap() {
+        this.cam.setZoom(this.minZoom());
         this.cam.centerOn(CONFIG.world.width / 2, CONFIG.lane.y);
     }
 
     // Zoom while keeping the world point under (focusX, focusY) fixed on screen.
     private zoomTo(targetZoom: number, focusX: number, focusY: number) {
-        const zoom = Phaser.Math.Clamp(targetZoom, CONFIG.camera.zoomMin, CONFIG.camera.zoomMax);
+        const zoom = Phaser.Math.Clamp(targetZoom, this.minZoom(), CONFIG.camera.zoomMax);
         const before = this.cam.getWorldPoint(focusX, focusY);
         this.cam.setZoom(zoom);
         const after = this.cam.getWorldPoint(focusX, focusY);
@@ -81,12 +94,8 @@ export class CameraController {
         this.zoomTo(this.cam.zoom * factor, pointer.x, pointer.y);
     }
 
-    // Zoom out far enough to show the entire world and centre on it.
-    fitToMap() {
-        const zoomX = this.scene.scale.width / CONFIG.world.width;
-        const zoomY = this.scene.scale.height / CONFIG.world.height;
-        const zoom = Phaser.Math.Clamp(Math.min(zoomX, zoomY), CONFIG.camera.zoomMin, CONFIG.camera.zoomMax);
-        this.cam.setZoom(zoom);
-        this.cam.centerOn(CONFIG.world.width / 2, CONFIG.world.height / 2);
+    // On rotate/resize, re-clamp zoom so we never end up below the new minimum.
+    private onResize() {
+        this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
     }
 }

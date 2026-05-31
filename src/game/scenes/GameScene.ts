@@ -16,6 +16,10 @@ export class GameScene extends Phaser.Scene {
     }
 
     create() {
+        // Subtle colour for anything outside the world bounds, so margins read as
+        // intentional rather than a harsh black "cut off".
+        this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
+
         this.drawBackdrop();
         this.cameraController = new CameraController(this);
         this.buildHud();

@@ -3,23 +3,25 @@
 
 export const CONFIG = {
     // The battlefield is much larger than the phone viewport; the camera shows a
-    // slice of it and can zoom out to frame the whole thing. Landscape: wide + short.
+    // slice of it and can zoom out to frame the whole thing. Aspect (~2.1:1) is close
+    // to a landscape phone so "fit to width" fills the screen with little letterboxing.
     world: {
         width: 4000,
-        height: 1400,
+        height: 1900,
     },
 
     // The single horizontal lane the armies march along (centre line + band height).
+    // The band is thick enough for several ranks of units to stack with depth.
     lane: {
-        y: 700,
-        thickness: 260,
+        y: 950, // vertical centre of the world
+        thickness: 360,
     },
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
     keep: {
         hp: 1000,
-        margin: 220, // distance from the world edge to the keep's centre
-        size: 260,
+        margin: 240, // distance from the world edge to the keep's centre
+        size: 320,
     },
 
     // One melee unit type for Milestone 1.
@@ -45,10 +47,10 @@ export const CONFIG = {
     camera: {
         zoomMin: 0.1,
         zoomMax: 2.5,
-        // On start (and on a tap of nothing), frame this much world HEIGHT around the
-        // lane. Smaller = more zoomed in. Chosen so the lane fills the screen and there
-        // is map to either side, so dragging to pan immediately does something.
-        defaultViewHeight: 820,
+        // On start, frame this much world HEIGHT around the lane. Smaller = more zoomed
+        // in. Less than world.height so the world is taller than the screen and dragging
+        // up/down pans; there is also map to either side for left/right panning.
+        defaultViewHeight: 1100,
     },
 
     // Both armies use the same art, recoloured by tint (Phase 3).
