@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
-import { ANIM, MELEE_KEY } from './animations';
+import { animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat (Milestone 1
 // architecture requirements).
@@ -15,6 +15,9 @@ import { ANIM, MELEE_KEY } from './animations';
 
 export const FACTION = { player: 0, enemy: 1 } as const;
 export type Faction = (typeof FACTION)[keyof typeof FACTION];
+
+// Numeric faction -> the name the animation system uses (blue/red art sets).
+const FACTION_NAME: readonly FactionName[] = ['player', 'enemy'];
 
 const STATE = { walk: 0, attack: 1, dying: 2 } as const;
 
@@ -77,8 +80,8 @@ export class UnitManager {
         // Build the whole sprite pool once. These never get destroyed. They live on the
         // world layer so the UI camera can ignore them.
         for (let i = 0; i < this.capacity; i++) {
-            const s = scene.add.sprite(0, 0, MELEE_KEY)
-                .setOrigin(0.5, 1) // feet on the lane line (ASSET_SPEC §4)
+            const s = scene.add.sprite(0, 0, POOL_TEXTURE)
+                .setOrigin(0.5, CONFIG.unit.footAnchor) // feet on the lane line
                 .setScale(CONFIG.unit.renderScale)
                 .setActive(false)
                 .setVisible(false);
@@ -93,8 +96,8 @@ export class UnitManager {
         this.playerKeepX = CONFIG.keep.margin;
         this.enemyKeepX = CONFIG.world.width - CONFIG.keep.margin;
 
-        // Use the real death animation length so recycling waits for it (adapts to art).
-        this.deathDuration = scene.anims.get(ANIM.death)?.duration ?? 500;
+        // Tiny Swords has no death animation, so death is a synthesised fade of this length.
+        this.deathDuration = CONFIG.unit.deathFadeMs;
     }
 
     get activeCount(): number {
@@ -147,15 +150,14 @@ export class UnitManager {
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
 
-        const tint = faction === FACTION.player ? CONFIG.faction.player.tint : CONFIG.faction.enemy.tint;
         sprite
             .setActive(true)
             .setVisible(true)
+            .setAlpha(1)
             .setPosition(x, y)
             .setDepth(y) // lower on screen draws in front, so ranks overlap correctly
-            .setTint(tint)
-            .setFlipX(faction === FACTION.enemy) // one right-facing art set; enemy mirrors
-            .play(ANIM.walk);
+            .setFlipX(faction === FACTION.enemy) // right-facing art; enemy marches left
+            .play(animKey(FACTION_NAME[faction], 'walk'));
     }
 
     // ---- Targeting (bucketed by lane x; only nearby cells are tested) ----
@@ -213,6 +215,8 @@ export class UnitManager {
 
             if (st === STATE.dying) {
                 this.deathTimer[i] -= delta;
+                // Synthesised death: fade the frozen sprite out over deathDuration.
+                this.sprites[i]!.alpha = Math.max(0, this.deathTimer[i] / this.deathDuration);
                 if (this.deathTimer[i] <= 0) this.despawn(i);
                 continue;
             }
@@ -261,17 +265,21 @@ export class UnitManager {
         this.state[i] = STATE.dying;
         this.target[i] = -1;
         this.deathTimer[i] = this.deathDuration;
-        this.sprites[i]!.play(ANIM.death); // non-looping (repeat 0 from registration)
+        // No death animation in the pack: freeze on the current frame and dim, then the
+        // dying branch in step() fades it out before recycling.
+        this.sprites[i]!.anims.stop();
+        this.sprites[i]!.setTint(0x6a6a6a);
     }
 
     private setState(i: number, next: number) {
         if (this.state[i] === next) return;
         this.state[i] = next;
         const sprite = this.sprites[i]!;
+        const name = FACTION_NAME[this.faction[i]];
         if (next === STATE.attack) {
-            sprite.play({ key: ANIM.attack, repeat: -1 }); // swing continuously while engaged
+            sprite.play(animKey(name, 'attack')); // loops while engaged
         } else if (next === STATE.walk) {
-            sprite.play(ANIM.walk);
+            sprite.play(animKey(name, 'walk'));
         }
     }
 
@@ -279,7 +287,8 @@ export class UnitManager {
     private despawn(i: number) {
         const sprite = this.sprites[i]!;
         sprite.stop();
-        sprite.setActive(false).setVisible(false);
+        sprite.clearTint();
+        sprite.setActive(false).setVisible(false).setAlpha(1);
         this.freeSprites.push(sprite);
 
         const last = --this.count;

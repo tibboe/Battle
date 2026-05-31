@@ -25,17 +25,19 @@ export const CONFIG = {
         size: 320,
     },
 
-    // One melee unit type for Milestone 1.
-    // Art follows ASSET_SPEC.md: 32x32 source frames, faces right, bottom-centre
-    // origin, tags idle/walk/attack/death. We render that 32px art scaled up.
+    // One melee unit type for Milestone 1: the Tiny Swords "Warrior" (faces right; blue
+    // art for the player, red for the enemy — see units/animations.ts). Source frames
+    // are 192x192 with the character centred and feet ~80% down the frame.
     unit: {
         hp: 30,
         damage: 10,           // 3 hits to kill at 30 hp
         range: 52,            // centre-to-centre distance at which a unit engages
         attackInterval: 600,  // ms between attacks
         moveSpeed: 70,        // px per second along the lane
-        frameSize: 32,        // source frame px (per ASSET_SPEC.md) — never mix sizes
-        renderScale: 1.4,     // display scale; on-screen footprint ~= frameSize * scale
+        frameSize: 192,       // source frame px — never mix sizes
+        renderScale: 0.8,     // display scale; visible knight ~= 80px tall on screen
+        footAnchor: 0.8,      // y within the frame where the feet sit (sprite origin.y)
+        deathFadeMs: 400,     // synthesised death fade-out (pack has no death animation)
     },
 
     // Combat tuning.
