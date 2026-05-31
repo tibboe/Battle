@@ -118,32 +118,140 @@ export class GameScene extends Phaser.Scene {
         this.uiLayer.add([dim, title, restart]);
     }
 
-    // A static placeholder battlefield: ground, the lane band, faint grid lines, and
-    // markers where the two keeps stand.
+    // A procedural battlefield: tiled grass field, a dirt lane, scattered scenery in
+    // the margins, and a little castle keep at each end. All baked/drawn once and added
+    // to the world layer. Real art replaces this in Phase 6.
     private drawBackdrop() {
         const { world, lane, keep, colors } = CONFIG;
+        const laneTop = lane.y - lane.thickness / 2;
+        const laneBottom = lane.y + lane.thickness / 2;
+
+        // Cheap, GPU-tiled textures for the large areas (grass + dirt).
+        this.makeNoiseTexture('tex-grass', 128, colors.grass, [
+            { color: colors.grassDark, count: 150, min: 2, max: 6 },
+            { color: colors.grassLight, count: 90, min: 1, max: 4 },
+        ]);
+        this.makeNoiseTexture('tex-dirt', 128, colors.dirt, [
+            { color: colors.dirtDark, count: 130, min: 2, max: 7 },
+            { color: colors.dirtEdge, count: 60, min: 1, max: 4 },
+            { color: colors.rockDark, count: 18, min: 1, max: 3 },
+        ]);
+
+        const grass = this.add.tileSprite(0, 0, world.width, world.height, 'tex-grass').setOrigin(0, 0);
+        const dirt = this.add.tileSprite(0, laneTop, world.width, lane.thickness, 'tex-dirt').setOrigin(0, 0);
+        this.worldLayer.add([grass, dirt]);
+
+        // Everything else is a single static Graphics (modest command count).
         const g = this.add.graphics();
         this.worldLayer.add(g);
 
-        g.fillStyle(colors.ground, 1);
-        g.fillRect(0, 0, world.width, world.height);
+        // Soft worn edges along the lane.
+        g.fillStyle(colors.dirtEdge, 0.8);
+        g.fillRect(0, laneTop - 5, world.width, 5);
+        g.fillRect(0, laneBottom, world.width, 5);
 
-        g.lineStyle(2, colors.grid, 1);
-        for (let x = 0; x <= world.width; x += 250) {
-            g.lineBetween(x, 0, x, world.height);
-        }
+        this.scatterDecor(g, laneTop, laneBottom);
 
-        g.fillStyle(colors.laneBand, 1);
-        g.fillRect(0, lane.y - lane.thickness / 2, world.width, lane.thickness);
+        this.drawKeep(g, keep.margin, CONFIG.faction.player.tint);
+        this.drawKeep(g, world.width - keep.margin, CONFIG.faction.enemy.tint);
 
-        const half = keep.size / 2;
-        g.fillStyle(CONFIG.faction.player.tint, 0.85);
-        g.fillRect(keep.margin - half, lane.y - half, keep.size, keep.size);
-        g.fillStyle(CONFIG.faction.enemy.tint, 0.85);
-        g.fillRect(world.width - keep.margin - half, lane.y - half, keep.size, keep.size);
-
-        g.lineStyle(6, 0xffffff, 0.25);
+        // Subtle vignette so the world edge is felt, not a hard line.
+        g.lineStyle(10, 0x000000, 0.22);
         g.strokeRect(0, 0, world.width, world.height);
+    }
+
+    // Bake a small tileable texture: a base fill plus scattered coloured specks.
+    private makeNoiseTexture(
+        key: string,
+        size: number,
+        base: number,
+        specks: { color: number; count: number; min: number; max: number }[],
+    ) {
+        if (this.textures.exists(key)) return;
+        const g = this.add.graphics();
+        g.fillStyle(base, 1).fillRect(0, 0, size, size);
+        const rng = new Phaser.Math.RandomDataGenerator([key]);
+        for (const s of specks) {
+            g.fillStyle(s.color, 1);
+            for (let i = 0; i < s.count; i++) {
+                const w = rng.between(s.min, s.max);
+                const h = rng.between(s.min, s.max);
+                g.fillRect(rng.between(0, size - w), rng.between(0, size - h), w, h);
+            }
+        }
+        g.generateTexture(key, size, size);
+        g.destroy();
+    }
+
+    // Trees, bushes and rocks scattered in the grass margins above and below the lane,
+    // kept clear of the keeps. Deterministic (seeded) so it looks the same each run.
+    private scatterDecor(g: Phaser.GameObjects.Graphics, laneTop: number, laneBottom: number) {
+        const { world, keep } = CONFIG;
+        const rng = new Phaser.Math.RandomDataGenerator(['decor']);
+        const bands = [
+            { lo: 60, hi: laneTop - 60 },
+            { lo: laneBottom + 60, hi: world.height - 60 },
+        ];
+        const keepClear = keep.margin + keep.size;
+        for (const band of bands) {
+            if (band.hi - band.lo < 40) continue;
+            let x = 120;
+            while (x < world.width - 120) {
+                if (x > keepClear && x < world.width - keepClear) {
+                    const y = rng.between(band.lo, band.hi);
+                    const roll = rng.frac();
+                    if (roll < 0.5) this.drawTree(g, x, y);
+                    else if (roll < 0.8) this.drawBush(g, x, y);
+                    else this.drawRock(g, x, y);
+                }
+                x += rng.between(90, 200);
+            }
+        }
+    }
+
+    private drawTree(g: Phaser.GameObjects.Graphics, x: number, y: number) {
+        const { colors } = CONFIG;
+        g.fillStyle(0x000000, 0.18).fillEllipse(x, y + 3, 38, 14);
+        g.fillStyle(colors.trunk, 1).fillRect(x - 4, y - 18, 8, 22);
+        g.fillStyle(colors.leafDark, 1).fillCircle(x, y - 30, 21);
+        g.fillStyle(colors.leaf, 1).fillCircle(x - 7, y - 35, 14);
+    }
+
+    private drawBush(g: Phaser.GameObjects.Graphics, x: number, y: number) {
+        const { colors } = CONFIG;
+        g.fillStyle(0x000000, 0.15).fillEllipse(x, y + 2, 30, 10);
+        g.fillStyle(colors.leafDark, 1).fillCircle(x, y - 6, 12);
+        g.fillStyle(colors.leaf, 1).fillCircle(x - 7, y - 8, 8).fillCircle(x + 7, y - 7, 7);
+    }
+
+    private drawRock(g: Phaser.GameObjects.Graphics, x: number, y: number) {
+        const { colors } = CONFIG;
+        g.fillStyle(0x000000, 0.15).fillEllipse(x, y + 2, 28, 9);
+        g.fillStyle(colors.rockDark, 1).fillCircle(x, y - 2, 11);
+        g.fillStyle(colors.rock, 1).fillCircle(x - 3, y - 5, 7);
+    }
+
+    // A small castle keep: walls, crenellations, a gate, and a faction-coloured banner.
+    private drawKeep(g: Phaser.GameObjects.Graphics, cx: number, tint: number) {
+        const { lane, keep, colors } = CONFIG;
+        const w = keep.size;
+        const top = lane.y - w * 0.7;
+        const bottom = lane.y + w * 0.35;
+        const left = cx - w / 2;
+        const merlon = w / 7;
+
+        g.fillStyle(0x000000, 0.22).fillEllipse(cx, bottom, w * 1.15, 44);
+        g.fillStyle(colors.stone, 1).fillRect(left, top, w, bottom - top);
+        g.fillStyle(colors.stoneDark, 1).fillRect(left, bottom - 22, w, 22);
+        // Crenellations across the top.
+        g.fillStyle(colors.stone, 1);
+        for (let i = 0; i < 7; i += 2) g.fillRect(left + i * merlon, top - merlon, merlon, merlon);
+        // Gate.
+        g.fillStyle(colors.stoneDark, 1).fillRect(cx - merlon * 0.7, bottom - 74, merlon * 1.4, 74);
+        // Banner pole + faction flag.
+        const poleTop = top - merlon - 64;
+        g.fillStyle(colors.trunk, 1).fillRect(cx - 2, poleTop, 4, 66);
+        g.fillStyle(tint, 1).fillTriangle(cx + 2, poleTop, cx + 38, poleTop + 10, cx + 2, poleTop + 22);
     }
 
     private buildHud() {

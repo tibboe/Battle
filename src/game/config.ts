@@ -68,12 +68,22 @@ export const CONFIG = {
         enemy: { tint: 0xff5a5a },  // crimson
     },
 
-    // Backdrop palette (placeholder until real art lands in Phase 6).
+    // Backdrop palette (procedural placeholder until real art lands in Phase 6).
     colors: {
-        sky: 0x121a24,
-        ground: 0x2c3a26,
-        laneBand: 0x394a30,
-        grid: 0x1d2630,
+        sky: 0x0e1620,       // outside-world / void
+        grass: 0x3b5230,     // base field
+        grassDark: 0x33482a,
+        grassLight: 0x47603a,
+        dirt: 0x6b5536,      // the lane / road
+        dirtDark: 0x5a472d,
+        dirtEdge: 0x42341f,
+        rock: 0x7d7d82,
+        rockDark: 0x5c5c61,
+        trunk: 0x5a3d22,
+        leaf: 0x3f6b32,
+        leafDark: 0x32562a,
+        stone: 0x8a8a90,     // keep walls
+        stoneDark: 0x6c6c72,
     },
 } as const;
 
