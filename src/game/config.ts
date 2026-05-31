@@ -31,7 +31,9 @@ export const CONFIG = {
     unit: {
         hp: 30,
         damage: 10,           // 3 hits to kill at 30 hp
-        range: 52,            // centre-to-centre distance at which a unit engages
+        range: 64,            // centre-to-centre engage distance. ~= the knight's body
+                              // width at this scale, so the front line meets edge-to-edge
+                              // instead of piling up. Raise for more spacing, lower to scrum.
         attackInterval: 600,  // ms between attacks
         moveSpeed: 70,        // px per second along the lane
         frameSize: 192,       // source frame px — never mix sizes
