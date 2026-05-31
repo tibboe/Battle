@@ -39,7 +39,7 @@ export const CONFIG = {
 
     // Spawning ramps each side up to a horde.
     spawn: {
-        spawnInterval: 220, // ms between spawns, per side
+        spawnInterval: 150, // ms between spawns, per side
         unitsTarget: 300,   // soft cap of active units PER SIDE (600 total on screen)
     },
 
