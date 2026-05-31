@@ -53,6 +53,24 @@ Keep it simple and emergent: units have HP, deal `damage` every `attackInterval`
 nearest enemy in `range`. No complex targeting AI to start — nearest-in-front is enough.
 The RPS triangle is expressed through stats and damage multipliers, not special-case code.
 
+## Art & movement constraints (Tiny Swords pack)
+Units use the **Tiny Swords** pack (Pixel Frog), a side / 3-quarter-view style. This
+shapes what movement can *look* like — design layouts around it:
+- **Facing is left/right only.** The foot units (Warrior, Archer, Pawn, Monk) are drawn
+  facing right; "left" is a horizontal mirror. There are **no up/down walk frames**.
+- **Movement direction is free; facing is not.** Units can travel up/down/diagonally, but
+  they only ever *face* left or right (sliding vertically). In this perspective that reads
+  fine — it's how RTS games on this pack work — they just never turn to face the screen.
+- **The Lancer is the exception:** it ships directional attack/defence poses (Right, Up,
+  Down, UpRight, DownRight → 8-way with mirroring), but its *run* is still single-facing.
+- **True 4-direction facing is not available** in this style. A future need for units that
+  visibly walk toward/away from the camera would mean a different art style (e.g. LPC) —
+  treat that as a look-and-feel decision, not a quick swap.
+
+**Implication:** horizontal lanes (one, or several stacked) are a perfect fit. "Up/down/
+diagonal" movement and dynamic per-run environments are viable as long as advance stays
+broadly left↔right and we don't rely on units facing vertically.
+
 ## Roguelite meta-progression
 - A **run** is a sequence of encounters (one base at a time, harder each step).
 - Losing/clearing awards **points** based on progress.
