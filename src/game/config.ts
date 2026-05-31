@@ -47,6 +47,14 @@ export const CONFIG = {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
     },
 
+    // Soft separation: units nudge away from any neighbour (friend or foe) closer than
+    // `radius`, so the horde stays a loose organic mass instead of a hard pile. Capped per
+    // frame so it never jitters. Raise strength for more spread; raise radius for bigger gaps.
+    separation: {
+        radius: 42,   // px; neighbours closer than this push apart
+        strength: 50, // px/sec; max nudge applied per unit per frame
+    },
+
     // Spawning ramps each side up to a horde. The per-side caps are ASYMMETRIC on
     // purpose: Milestone 1 has no player input, so equal armies just stalemate in the
     // middle and nobody ever wins. A denser side wins the attrition and breaks through.

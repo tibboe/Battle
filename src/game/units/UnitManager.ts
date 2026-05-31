@@ -51,6 +51,13 @@ export class UnitManager {
     private readonly numCells: number;
     private readonly buckets: number[][];
 
+    // Separation: a fresh x-bucketing each frame + per-unit accumulated push (no allocation).
+    private readonly sepCellSize: number;
+    private readonly numSepCells: number;
+    private readonly sepBuckets: number[][];
+    private readonly pushX: Float32Array;
+    private readonly pushY: Float32Array;
+
     private readonly playerKeepX: number;
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
@@ -93,6 +100,12 @@ export class UnitManager {
         this.numCells = Math.ceil(CONFIG.world.width / this.cellSize) + 1;
         this.buckets = Array.from({ length: this.numCells }, () => []);
 
+        this.sepCellSize = CONFIG.separation.radius;
+        this.numSepCells = Math.ceil(CONFIG.world.width / this.sepCellSize) + 1;
+        this.sepBuckets = Array.from({ length: this.numSepCells }, () => []);
+        this.pushX = new Float32Array(this.capacity);
+        this.pushY = new Float32Array(this.capacity);
+
         this.playerKeepX = CONFIG.keep.margin;
         this.enemyKeepX = CONFIG.world.width - CONFIG.keep.margin;
 
@@ -114,6 +127,7 @@ export class UnitManager {
         }
 
         this.step(delta);
+        this.applySeparation(delta);
     }
 
     // ---- Spawning ----
@@ -256,6 +270,82 @@ export class UnitManager {
             this.attackCd[i] = 0;
             this.setState(i, STATE.walk);
         }
+    }
+
+    // ---- Soft separation: nudge overlapping units apart so the horde stays a loose mass ----
+
+    // Uses its own per-frame x-bucketing (positions move every frame, so the targeting
+    // buckets are too stale to reuse). The total nudge is capped per frame, so dense piles
+    // relax smoothly without jitter. Dying units neither push nor are pushed.
+    private applySeparation(delta: number) {
+        const radius = CONFIG.separation.radius;
+        const r2 = radius * radius;
+
+        // Rebuild x-buckets for living units.
+        for (let c = 0; c < this.numSepCells; c++) this.sepBuckets[c].length = 0;
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying) continue;
+            this.sepBuckets[this.sepCellOf(i)].push(i);
+        }
+
+        // Accumulate a push vector per unit from neighbours in this + adjacent x-cells.
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying) continue;
+            let px = 0;
+            let py = 0;
+            const ci = this.sepCellOf(i);
+            for (let dc = -1; dc <= 1; dc++) {
+                const c = ci + dc;
+                if (c < 0 || c >= this.numSepCells) continue;
+                const bucket = this.sepBuckets[c];
+                for (let k = 0; k < bucket.length; k++) {
+                    const j = bucket[k];
+                    if (j === i) continue;
+                    const dx = this.x[i] - this.x[j];
+                    const dy = this.y[i] - this.y[j];
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 >= r2) continue;
+                    if (d2 > 0.01) {
+                        const d = Math.sqrt(d2);
+                        const w = (radius - d) / radius; // 1 when touching, 0 at the edge
+                        px += (dx / d) * w;
+                        py += (dy / d) * w;
+                    } else {
+                        py += i < j ? -1 : 1; // exactly stacked: deterministic shove apart
+                    }
+                }
+            }
+            this.pushX[i] = px;
+            this.pushY[i] = py;
+        }
+
+        // Apply, capped to maxStep px this frame, keeping units within the lane band.
+        const maxStep = CONFIG.separation.strength * (delta / 1000);
+        const laneHalf = CONFIG.lane.thickness / 2 - 24;
+        const yMin = CONFIG.lane.y - laneHalf;
+        const yMax = CONFIG.lane.y + laneHalf;
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying) continue;
+            let nx = this.pushX[i] * maxStep;
+            let ny = this.pushY[i] * maxStep;
+            const disp = Math.hypot(nx, ny);
+            if (disp <= 0.0001) continue;
+            if (disp > maxStep) {
+                const s = maxStep / disp;
+                nx *= s;
+                ny *= s;
+            }
+            this.x[i] += nx;
+            this.y[i] = Phaser.Math.Clamp(this.y[i] + ny, yMin, yMax);
+            const sprite = this.sprites[i]!;
+            sprite.x = this.x[i];
+            sprite.y = this.y[i];
+            sprite.setDepth(this.y[i]);
+        }
+    }
+
+    private sepCellOf(i: number): number {
+        return Phaser.Math.Clamp(Math.floor(this.x[i] / this.sepCellSize), 0, this.numSepCells - 1);
     }
 
     // Begin dying: play the death anim once, then recycle when it finishes.
