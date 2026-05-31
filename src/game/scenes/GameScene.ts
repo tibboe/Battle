@@ -1,9 +1,11 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { CameraController } from '../controls/CameraController';
+import { ANIM, MELEE_KEY, loadUnitAtlas, registerUnitAnimations } from '../units/animations';
 
 // The single scene for Milestone 1. Phase 1 sets up the world, the navigable
-// camera, and the dev HUD. Units, combat and keeps arrive in later phases.
+// camera, and the dev HUD. Phase 2 adds the animation pipeline + one demo unit.
+// Pooled hundreds, combat and keeps arrive in later phases.
 export class GameScene extends Phaser.Scene {
     private cameraController!: CameraController;
     private hudText!: Phaser.GameObjects.Text;
@@ -11,8 +13,25 @@ export class GameScene extends Phaser.Scene {
     // Live count of active units, driven by the unit manager in Phase 3.
     private unitCount = 0;
 
+    // --- Phase 2 demo only (replaced by the pooled unit manager in Phase 3) ---
+    private demo!: Phaser.GameObjects.Sprite;
+    private demoState = 0;
+    private demoTimer = 0;
+    private demoStartX = 0;
+    // Cycle through every state so each animation can be eyeballed.
+    private readonly demoPhases = [
+        { anim: ANIM.idle, ms: 1500, move: false },
+        { anim: ANIM.walk, ms: 3000, move: true },
+        { anim: ANIM.attack, ms: 1400, move: false },
+        { anim: ANIM.death, ms: 1600, move: false },
+    ];
+
     constructor() {
         super('Game');
+    }
+
+    preload() {
+        loadUnitAtlas(this);
     }
 
     create() {
@@ -21,11 +40,51 @@ export class GameScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
 
         this.drawBackdrop();
+        registerUnitAnimations(this);
         this.cameraController = new CameraController(this);
         this.buildHud();
+        this.createDemoUnit();
 
         // Keep the HUD anchored when the phone rotates or the window resizes.
         this.scale.on('resize', this.layoutHud, this);
+    }
+
+    // A single soldier that walks and cycles through idle/walk/attack/death so the
+    // animation pipeline can be verified. Tinted azure to preview the player faction.
+    private createDemoUnit() {
+        this.demoStartX = CONFIG.world.width / 2 - 150;
+        this.demo = this.add.sprite(this.demoStartX, CONFIG.lane.y, MELEE_KEY)
+            .setOrigin(0.5, 1) // feet on the lane line (ASSET_SPEC §4)
+            .setScale(CONFIG.unit.renderScale)
+            .setTint(CONFIG.faction.player.tint);
+        this.enterDemoState(0);
+        this.unitCount = 1;
+
+        // Start zoomed in on the demo so the animation is clearly visible; the player
+        // can pinch out or tap Fit to see the whole battlefield.
+        this.cameraController.focusOn(this.demo.x, CONFIG.lane.y);
+    }
+
+    private enterDemoState(index: number) {
+        this.demoState = index;
+        this.demoTimer = 0;
+        const phase = this.demoPhases[index];
+        if (phase.anim === ANIM.idle) {
+            // Restart the loop from the spawn point.
+            this.demo.setPosition(this.demoStartX, CONFIG.lane.y);
+        }
+        this.demo.play(phase.anim);
+    }
+
+    private updateDemo(delta: number) {
+        const phase = this.demoPhases[this.demoState];
+        if (phase.move) {
+            this.demo.x += CONFIG.unit.moveSpeed * (delta / 1000);
+        }
+        this.demoTimer += delta;
+        if (this.demoTimer >= phase.ms) {
+            this.enterDemoState((this.demoState + 1) % this.demoPhases.length);
+        }
     }
 
     // A static placeholder battlefield: ground, the lane band, faint grid lines for
@@ -102,7 +161,8 @@ export class GameScene extends Phaser.Scene {
         this.unitCount = count;
     }
 
-    update() {
+    update(_time: number, delta: number) {
+        this.updateDemo(delta);
         const fps = Math.round(this.game.loop.actualFps);
         this.hudText.setText(`FPS: ${fps}    Units: ${this.unitCount}`);
     }

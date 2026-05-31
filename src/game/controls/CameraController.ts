@@ -48,6 +48,13 @@ export class CameraController {
         this.cam.centerOn(CONFIG.world.width / 2, CONFIG.lane.y);
     }
 
+    // Zoom in on a world point so detail (e.g. a single unit) is clearly visible.
+    focusOn(x: number, y: number, viewHeight = 350) {
+        const zoom = Phaser.Math.Clamp(this.scene.scale.height / viewHeight, this.minZoom(), CONFIG.camera.zoomMax);
+        this.cam.setZoom(zoom);
+        this.cam.centerOn(x, y);
+    }
+
     // Zoom while keeping the world point under (focusX, focusY) fixed on screen.
     private zoomTo(targetZoom: number, focusX: number, focusY: number) {
         const zoom = Phaser.Math.Clamp(targetZoom, this.minZoom(), CONFIG.camera.zoomMax);
