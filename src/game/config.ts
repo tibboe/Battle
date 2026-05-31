@@ -140,15 +140,39 @@ export const CONFIG = {
         stone: 0x8a8a90,     // keep walls
         stoneDark: 0x6c6c72,
     },
-} as const;
+};
+// NB: not `as const` — the dev tuning panel (controls/DevPanel.ts) mutates a few of
+// these live (spawn rate, army caps, map width, lane count, high-ground bonus). They
+// stay the single source of truth; the panel just edits the numbers, exactly like
+// editing this file but without a rebuild.
 
 export type GameConfig = typeof CONFIG;
 
+// Build an evenly-stacked set of lanes for a given count, centred vertically in the
+// world. Spacing keeps the band-to-band GAP equal to the cliff height so the 2-tile
+// cliff art always fits. Highest `level` sits at the top of the screen. The default
+// CONFIG.lanes above is exactly makeLanes(3); the panel calls this to re-tier.
+export function makeLanes(count: number): { y: number; level: number; thickness: number }[] {
+    const thickness = 300;
+    const gap = CONFIG.elevation.cliffHeight;
+    const spacing = thickness + gap;
+    const totalH = count * thickness + (count - 1) * gap;
+    const top = (CONFIG.world.height - totalH) / 2;
+    const lanes = [];
+    for (let i = 0; i < count; i++) {
+        lanes.push({ y: top + thickness / 2 + i * spacing, level: count - 1 - i, thickness });
+    }
+    return lanes;
+}
+
+// Derived layout helpers — FUNCTIONS (not constants) so they re-read CONFIG.lanes
+// after the panel changes the lane count on restart.
+
 // Vertical centre of the whole lane stack — what the camera frames by default.
-export const BATTLEFIELD_CENTER_Y =
+export const battlefieldCenterY = () =>
     (CONFIG.lanes[0].y + CONFIG.lanes[CONFIG.lanes.length - 1].y) / 2;
 
 // Top/bottom of the stacked plateaus (used to size the keeps spanning every lane).
-export const STACK_TOP = CONFIG.lanes[0].y - CONFIG.lanes[0].thickness / 2;
-export const STACK_BOTTOM =
+export const stackTop = () => CONFIG.lanes[0].y - CONFIG.lanes[0].thickness / 2;
+export const stackBottom = () =>
     CONFIG.lanes[CONFIG.lanes.length - 1].y + CONFIG.lanes[CONFIG.lanes.length - 1].thickness / 2;

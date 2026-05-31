@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { BATTLEFIELD_CENTER_Y, CONFIG } from '../config';
+import { battlefieldCenterY, CONFIG } from '../config';
 
 // Handles camera navigation on both phone and desktop:
 //   - drag (one finger / mouse button held) to pan
@@ -43,13 +43,13 @@ export class CameraController {
     defaultView() {
         const zoom = this.scene.scale.height / CONFIG.camera.defaultViewHeight;
         this.cam.setZoom(Phaser.Math.Clamp(zoom, this.minZoom(), CONFIG.camera.zoomMax));
-        this.cam.centerOn(CONFIG.world.width / 2, BATTLEFIELD_CENTER_Y);
+        this.cam.centerOn(CONFIG.world.width / 2, battlefieldCenterY());
     }
 
     // "Fit": zoom out to show the whole lane length (fills the width), centred on the lane.
     fitToMap() {
         this.cam.setZoom(this.minZoom());
-        this.cam.centerOn(CONFIG.world.width / 2, BATTLEFIELD_CENTER_Y);
+        this.cam.centerOn(CONFIG.world.width / 2, battlefieldCenterY());
     }
 
     // Zoom in on a world point so detail (e.g. a single unit) is clearly visible.

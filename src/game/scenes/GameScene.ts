@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
-import { CONFIG, STACK_BOTTOM, STACK_TOP } from '../config';
+import { CONFIG, stackBottom, stackTop } from '../config';
 import { CameraController } from '../controls/CameraController';
+import { DevPanel } from '../controls/DevPanel';
 import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
 import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
@@ -58,6 +59,9 @@ export class GameScene extends Phaser.Scene {
         registerUnitAnimations(this);
         this.cameraController = new CameraController(this);
         this.buildHud();
+
+        // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
+        new DevPanel(this, this.uiLayer, () => this.scene.restart());
 
         // Both keeps spawn a horde; units that reach the far keep damage it.
         this.units = new UnitManager(this, this.worldLayer, (attacker) => this.onReachKeep(attacker));
@@ -153,8 +157,8 @@ export class GameScene extends Phaser.Scene {
     private drawKeep(g: Phaser.GameObjects.Graphics, cx: number, tint: number) {
         const { keep, colors, lanes } = CONFIG;
         const w = keep.size;
-        const top = STACK_TOP - 40;
-        const bottom = STACK_BOTTOM + 30;
+        const top = stackTop() - 40;
+        const bottom = stackBottom() + 30;
         const left = cx - w / 2;
         const merlon = w / 6;
 
