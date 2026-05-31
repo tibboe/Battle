@@ -67,6 +67,15 @@ export const CONFIG = {
         tileSize: 64,      // px per tile in the source sheet (confirmed 576×384 / 9×6)
         variant: 'color1', // which Tilemap_color*.png is loaded (see tileset.ts)
         renderTile: 64,    // px each tile is drawn at in the world (1:1 — no scaling)
+
+        // Faked lighting that sells the stacked-plateau read (purely visual). Lower
+        // terraces sit a touch darker (like real terraced ground), and each cliff casts
+        // a soft contact shadow onto the level below it.
+        shading: {
+            levelStep: 0.08,       // extra darkening per terrace, going downward
+            castShadowAlpha: 0.28, // strength of a cliff's shadow on the level below
+            castShadowDepth: 54,   // px the cast shadow reaches onto the lower terrace
+        },
     },
 
     // Combat tuning.

@@ -34,11 +34,53 @@ export class TerrainRenderer {
         this.layer.add(field);
     }
 
-    // Phase B: the tiered battlefield. Base grass field + one cliff drop per lane's
-    // front edge, framed by a grass lip and ramp end-caps near the keeps.
+    // Phase B: the tiered battlefield. Base grass field + faked terrace lighting +
+    // one cliff drop per lane's front edge, framed by a grass lip and ramp end-caps.
     drawTieredLayout() {
         this.drawFlatField();
+        this.drawTerraceShading(); // ambient: lower levels darker
         for (const lane of CONFIG.lanes) this.drawLaneEdge(lane);
+        this.drawCastShadows(); // contact shadow each cliff throws on the level below
+    }
+
+    // Subtle stepped darkening: each terrace (the slab between two cliff lines) is a
+    // little darker than the one above it, reading as descending ground. Drawn on one
+    // Graphics, beneath the cliffs, so only the grass is tinted — never the cliff art.
+    private drawTerraceShading() {
+        const { world, lanes } = CONFIG;
+        const step = CONFIG.terrain.shading.levelStep;
+        // Terrace boundaries are the cliff lines (each lane's front edge), sorted.
+        const cliffs = lanes.map((l) => l.y + l.thickness / 2).sort((a, b) => a - b);
+        const bounds = [0, ...cliffs, world.height];
+        const g = this.scene.add.graphics().setDepth(DEPTH_SHADE);
+        // Slab i spans bounds[i]..bounds[i+1]; the top slab (i=0) stays untinted.
+        for (let i = 1; i < bounds.length - 1; i++) {
+            g.fillStyle(0x000000, step * i);
+            g.fillRect(0, bounds[i], world.width, bounds[i + 1] - bounds[i]);
+        }
+        this.layer.add(g);
+    }
+
+    // A soft shadow fading downward from the base of each cliff onto the terrace below
+    // (only under the actual cliff span, not the ramps). One Graphics, many rects.
+    private drawCastShadows() {
+        const { lanes, elevation } = CONFIG;
+        const { castShadowAlpha, castShadowDepth } = CONFIG.terrain.shading;
+        const ts = this.ts;
+        const x0 = elevation.rampInset + ts;
+        const w = CONFIG.world.width - 2 * (elevation.rampInset + ts);
+        if (w <= 0) return;
+        const g = this.scene.add.graphics().setDepth(DEPTH_CAST_SHADOW);
+        const bands = 6;
+        for (const lane of lanes) {
+            const baseY = lane.y + lane.thickness / 2 + 2 * ts; // foot of the 2-tile cliff
+            for (let s = 0; s < bands; s++) {
+                const t = s / bands;
+                g.fillStyle(0x000000, castShadowAlpha * (1 - t));
+                g.fillRect(x0, baseY + t * castShadowDepth, w, castShadowDepth / bands + 1);
+            }
+        }
+        this.layer.add(g);
     }
 
     // The cliff + lip + ramps along one lane's front (lower) edge.
@@ -92,8 +134,11 @@ export class TerrainRenderer {
     }
 }
 
-// Terrain draws below units (units use world-y as depth, ~400..1530). Ground at the
-// bottom; cliffs/lips above the ground but still under every unit.
+// Terrain draws below units (units use world-y as depth, ~400..1530). Layered low→high:
+// ground, terrace shade (tints grass only), cliffs, cast shadows, grass lip — all under
+// every unit and the keeps.
 export const DEPTH_GROUND = -1000;
+export const DEPTH_SHADE = -960;
 export const DEPTH_CLIFF = -900;
+export const DEPTH_CAST_SHADOW = -850;
 export const DEPTH_EDGE = -800;
