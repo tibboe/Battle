@@ -17,14 +17,46 @@ export const ANIM = {
 // idle/walk loop forever; attack/death play once.
 const LOOPING = new Set<string>([ANIM.idle, ANIM.walk]);
 
+// Minimal shape of the Aseprite JSON we rely on (real exports include much more).
+interface AsepriteData {
+    frames: Record<string, { duration?: number }>;
+    meta: { frameTags?: { name: string; from: number; to: number }[] };
+}
+
 export function loadUnitAtlas(scene: Phaser.Scene) {
     scene.load.aseprite(MELEE_KEY, 'assets/units/melee/melee.png', 'assets/units/melee/melee.json');
 }
 
-// Build animations from the Aseprite tags and set their loop behaviour.
+// Build one animation per Aseprite tag, manually, from the loaded atlas + JSON.
+// We don't use anims.createFromAseprite because it can silently create nothing for
+// non-Aseprite-authored JSON; manual creation works for both placeholder and real art.
 export function registerUnitAnimations(scene: Phaser.Scene) {
-    const created = scene.anims.createFromAseprite(MELEE_KEY);
-    for (const anim of created) {
-        anim.repeat = LOOPING.has(anim.key) ? -1 : 0;
+    const data = scene.cache.json.get(MELEE_KEY) as AsepriteData | undefined;
+    if (!data || !data.meta.frameTags) {
+        console.warn(`[animations] no Aseprite tags found for "${MELEE_KEY}"`);
+        return;
+    }
+
+    // Atlas frame names, in sheet order — tag from/to index into this list.
+    const frameNames = Object.keys(data.frames);
+
+    for (const tag of data.meta.frameTags) {
+        if (scene.anims.exists(tag.name)) {
+            scene.anims.remove(tag.name);
+        }
+        const frames = [];
+        for (let i = tag.from; i <= tag.to; i++) {
+            const name = frameNames[i];
+            frames.push({
+                key: MELEE_KEY,
+                frame: name,
+                duration: data.frames[name].duration ?? 100,
+            });
+        }
+        scene.anims.create({
+            key: tag.name,
+            frames,
+            repeat: LOOPING.has(tag.name) ? -1 : 0,
+        });
     }
 }
