@@ -2,6 +2,8 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { CameraController } from '../controls/CameraController';
 import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
+import { TerrainRenderer } from '../terrain/TerrainRenderer';
+import { loadTerrainTileset } from '../terrain/tileset';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
@@ -32,8 +34,11 @@ export class GameScene extends Phaser.Scene {
         super('Game');
     }
 
+    private terrain!: TerrainRenderer;
+
     preload() {
         loadUnitAtlas(this);
+        loadTerrainTileset(this);
     }
 
     create() {
@@ -118,37 +123,23 @@ export class GameScene extends Phaser.Scene {
         this.uiLayer.add([dim, title, restart]);
     }
 
-    // A procedural battlefield: tiled grass field, a dirt lane, scattered scenery in
-    // the margins, and a little castle keep at each end. All baked/drawn once and added
-    // to the world layer. Real art replaces this in Phase 6.
+    // The battlefield ground is now built from the real Tiny Swords tileset (Milestone
+    // 2). Phase A: a flat grass field tiled from real art, with the existing scenery and
+    // keeps drawn on top so single-lane gameplay runs unchanged. Phase B turns this flat
+    // field into stacked plateaus with cliff edges.
     private drawBackdrop() {
-        const { world, lane, keep, colors } = CONFIG;
+        const { world, lane, keep } = CONFIG;
         const laneTop = lane.y - lane.thickness / 2;
         const laneBottom = lane.y + lane.thickness / 2;
 
-        // Cheap, GPU-tiled textures for the large areas (grass + dirt).
-        this.makeNoiseTexture('tex-grass', 128, colors.grass, [
-            { color: colors.grassDark, count: 150, min: 2, max: 6 },
-            { color: colors.grassLight, count: 90, min: 1, max: 4 },
-        ]);
-        this.makeNoiseTexture('tex-dirt', 128, colors.dirt, [
-            { color: colors.dirtDark, count: 130, min: 2, max: 7 },
-            { color: colors.dirtEdge, count: 60, min: 1, max: 4 },
-            { color: colors.rockDark, count: 18, min: 1, max: 3 },
-        ]);
+        // Real grass field from the tileset, replacing the procedural grass/dirt.
+        this.terrain = new TerrainRenderer(this, this.worldLayer);
+        this.terrain.drawFlatField();
 
-        const grass = this.add.tileSprite(0, 0, world.width, world.height, 'tex-grass').setOrigin(0, 0);
-        const dirt = this.add.tileSprite(0, laneTop, world.width, lane.thickness, 'tex-dirt').setOrigin(0, 0);
-        this.worldLayer.add([grass, dirt]);
-
-        // Everything else is a single static Graphics (modest command count).
+        // Scenery + keeps still drawn (decor/keep art is polish, not blocking — see
+        // MILESTONE_2 Phase A step 3). One static Graphics keeps the command count low.
         const g = this.add.graphics();
         this.worldLayer.add(g);
-
-        // Soft worn edges along the lane.
-        g.fillStyle(colors.dirtEdge, 0.8);
-        g.fillRect(0, laneTop - 5, world.width, 5);
-        g.fillRect(0, laneBottom, world.width, 5);
 
         this.scatterDecor(g, laneTop, laneBottom);
 
@@ -158,29 +149,6 @@ export class GameScene extends Phaser.Scene {
         // Subtle vignette so the world edge is felt, not a hard line.
         g.lineStyle(10, 0x000000, 0.22);
         g.strokeRect(0, 0, world.width, world.height);
-    }
-
-    // Bake a small tileable texture: a base fill plus scattered coloured specks.
-    private makeNoiseTexture(
-        key: string,
-        size: number,
-        base: number,
-        specks: { color: number; count: number; min: number; max: number }[],
-    ) {
-        if (this.textures.exists(key)) return;
-        const g = this.add.graphics();
-        g.fillStyle(base, 1).fillRect(0, 0, size, size);
-        const rng = new Phaser.Math.RandomDataGenerator([key]);
-        for (const s of specks) {
-            g.fillStyle(s.color, 1);
-            for (let i = 0; i < s.count; i++) {
-                const w = rng.between(s.min, s.max);
-                const h = rng.between(s.min, s.max);
-                g.fillRect(rng.between(0, size - w), rng.between(0, size - h), w, h);
-            }
-        }
-        g.generateTexture(key, size, size);
-        g.destroy();
     }
 
     // Trees, bushes and rocks scattered in the grass margins above and below the lane,
