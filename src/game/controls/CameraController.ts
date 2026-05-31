@@ -19,10 +19,10 @@ export class CameraController {
         // Ensure at least two touch pointers exist so pinch works on the phone.
         scene.input.addPointer(2);
 
+        // Pointer/wheel listeners are scene-scoped, so they're cleaned up on shutdown.
         scene.input.on('pointermove', this.onPointerMove, this);
         scene.input.on('pointerup', this.onPointerUp, this);
         scene.input.on('wheel', this.onWheel, this);
-        scene.scale.on('resize', this.onResize, this);
 
         // Open framed on the lane (not fully zoomed out) so panning is useful at once.
         this.defaultView();
@@ -102,7 +102,9 @@ export class CameraController {
     }
 
     // On rotate/resize, re-clamp zoom so we never end up below the new minimum.
-    private onResize() {
+    // Called by the scene's single resize handler (avoids leaking a global listener
+    // across scene restarts).
+    handleResize() {
         this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
     }
 }

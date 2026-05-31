@@ -52,8 +52,12 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
-    constructor(scene: Phaser.Scene) {
-        this.capacity = CONFIG.spawn.unitsTarget * 2 + 40;
+    // Called when a unit reaches the opposing keep (so the scene can damage it).
+    private readonly onReachKeep: (attacker: Faction) => void;
+
+    constructor(scene: Phaser.Scene, onReachKeep: (attacker: Faction) => void) {
+        this.onReachKeep = onReachKeep;
+        this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
         this.y = new Float32Array(this.capacity);
@@ -111,7 +115,8 @@ export class UnitManager {
             this.spawnAcc[f] += delta;
             if (this.spawnAcc[f] < spawnInterval) continue;
             this.spawnAcc[f] = 0;
-            if (this.livingByFaction[f] < unitsTarget) this.spawn(f);
+            const cap = f === FACTION.player ? unitsTarget.player : unitsTarget.enemy;
+            if (this.livingByFaction[f] < cap) this.spawn(f);
         }
     }
 
@@ -212,7 +217,8 @@ export class UnitManager {
                 this.sprites[i]!.x = this.x[i];
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
                 if (reachedEnd) {
-                    // Phase 5 will damage the keep here; for now just recycle.
+                    // Damage the opposing keep, then recycle this unit.
+                    this.onReachKeep(this.faction[i] as Faction);
                     this.livingByFaction[this.faction[i]]--;
                     this.despawn(i);
                 }

@@ -19,8 +19,9 @@ export const CONFIG = {
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
     keep: {
-        hp: 1000,
-        margin: 240, // distance from the world edge to the keep's centre
+        hp: 500,
+        damagePerUnit: 25, // damage each unit that reaches the opposing keep deals
+        margin: 240,       // distance from the world edge to the keep's centre
         size: 320,
     },
 
@@ -37,15 +38,18 @@ export const CONFIG = {
         renderScale: 1.4,     // display scale; on-screen footprint ~= frameSize * scale
     },
 
-    // Spawning ramps each side up to a horde.
-    spawn: {
-        spawnInterval: 150, // ms between spawns, per side
-        unitsTarget: 300,   // soft cap of active units PER SIDE (600 total on screen)
-    },
-
     // Combat tuning.
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
+    },
+
+    // Spawning ramps each side up to a horde. The per-side caps are ASYMMETRIC on
+    // purpose: Milestone 1 has no player input, so equal armies just stalemate in the
+    // middle and nobody ever wins. A denser side wins the attrition and breaks through.
+    // Default: player advantage -> you tend to WIN. Swap the numbers to test a LOSE.
+    spawn: {
+        spawnInterval: 150, // ms between spawns, per side
+        unitsTarget: { player: 300, enemy: 220 }, // soft cap of active living units per side
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
