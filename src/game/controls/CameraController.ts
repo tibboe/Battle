@@ -23,7 +23,16 @@ export class CameraController {
         scene.input.on('pointerup', this.onPointerUp, this);
         scene.input.on('wheel', this.onWheel, this);
 
-        this.fitToMap();
+        // Open framed on the lane (not fully zoomed out) so panning is useful at once.
+        this.defaultView();
+    }
+
+    // Default playing view: frame the lane so it fills the screen and there is map to
+    // pan to on either side. Centred on the middle of the lane.
+    defaultView() {
+        const zoom = this.scene.scale.height / CONFIG.camera.defaultViewHeight;
+        this.cam.setZoom(Phaser.Math.Clamp(zoom, CONFIG.camera.zoomMin, CONFIG.camera.zoomMax));
+        this.cam.centerOn(CONFIG.world.width / 2, CONFIG.lane.y);
     }
 
     // Zoom while keeping the world point under (focusX, focusY) fixed on screen.

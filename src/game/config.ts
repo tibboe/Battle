@@ -45,6 +45,10 @@ export const CONFIG = {
     camera: {
         zoomMin: 0.1,
         zoomMax: 2.5,
+        // On start (and on a tap of nothing), frame this much world HEIGHT around the
+        // lane. Smaller = more zoomed in. Chosen so the lane fills the screen and there
+        // is map to either side, so dragging to pan immediately does something.
+        defaultViewHeight: 820,
     },
 
     // Both armies use the same art, recoloured by tint (Phase 3).
