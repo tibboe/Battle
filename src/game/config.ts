@@ -10,11 +10,28 @@ export const CONFIG = {
         height: 1900,
     },
 
-    // The single horizontal lane the armies march along (centre line + band height).
-    // The band is thick enough for several ranks of units to stack with depth.
-    lane: {
-        y: 950, // vertical centre of the world
-        thickness: 360,
+    // Milestone 2: the battlefield is STACKED into several horizontal lanes at
+    // different elevations. Each lane is a grass plateau the armies march along
+    // (left↔right); higher `level` = higher ground = drawn higher on screen (smaller
+    // y). Lanes are DATA — add/remove entries here and spawning, movement, targeting,
+    // terrain and the high-ground rule all follow. (Replaces M1's single `lane`.)
+    //
+    // The y/thickness/cliffHeight numbers are tied together: the GAP between two
+    // adjacent lane bands must equal `elevation.cliffHeight` so the 2-tile cliff art
+    // fits exactly. Spacing between lane centres = thickness + cliffHeight (300+128=428).
+    lanes: [
+        { y: 522, level: 2, thickness: 300 }, // high ground (top of screen)
+        { y: 950, level: 1, thickness: 300 }, // middle
+        { y: 1378, level: 0, thickness: 300 }, // low ground (bottom)
+    ],
+
+    // Elevation between lanes: the cliff face the upper plateau drops down, and where
+    // the ramp visuals sit near the keeps.
+    elevation: {
+        cliffHeight: 128, // px drop between adjacent lanes — MUST equal the band gap
+                          // (== 2 tiles tall, the height of the cliff-face art).
+        rampInset: 420,   // px from each world edge where the ramp end-cap sits, so the
+                          // cliff appears to slope down to grass near the keeps.
     },
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
@@ -55,6 +72,19 @@ export const CONFIG = {
     // Combat tuning.
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
+
+        // High-ground rule (M2): lanes share a cliff-edge boundary. A front-line unit
+        // may engage an enemy in the VERTICALLY ADJACENT lane (one level up/down) when
+        // within `reach` across the edge — a longer reach than the melee `range` so the
+        // skirmish bites right at the boundary. The UPHILL unit (higher level) deals
+        // `damageMult`× damage. This is the only place elevation touches combat in M2.
+        highGround: {
+            // Cross-edge engage distance to an adjacent-level lane. Must clear the gap
+            // between two lane BANDS — that gap is cliffHeight (128) + both 24px insets
+            // = 176px — with headroom, so units near the shared edge actually clash.
+            reach: 220,
+            damageMult: 2.0, // uphill striker's damage multiplier (downhill = 1×)
+        },
     },
 
     // Soft separation: units nudge away from any neighbour (friend or foe) closer than
@@ -72,6 +102,9 @@ export const CONFIG = {
     spawn: {
         spawnInterval: 150, // ms between spawns, per side
         unitsTarget: { player: 300, enemy: 220 }, // soft cap of active living units per side
+        // Relative likelihood a new unit spawns into each lane (index matches `lanes`).
+        // Equal = the horde spreads evenly over every elevation. Tune to favour a lane.
+        laneDistribution: [1, 1, 1],
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
@@ -110,3 +143,12 @@ export const CONFIG = {
 } as const;
 
 export type GameConfig = typeof CONFIG;
+
+// Vertical centre of the whole lane stack — what the camera frames by default.
+export const BATTLEFIELD_CENTER_Y =
+    (CONFIG.lanes[0].y + CONFIG.lanes[CONFIG.lanes.length - 1].y) / 2;
+
+// Top/bottom of the stacked plateaus (used to size the keeps spanning every lane).
+export const STACK_TOP = CONFIG.lanes[0].y - CONFIG.lanes[0].thickness / 2;
+export const STACK_BOTTOM =
+    CONFIG.lanes[CONFIG.lanes.length - 1].y + CONFIG.lanes[CONFIG.lanes.length - 1].thickness / 2;

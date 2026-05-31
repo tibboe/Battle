@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG } from '../config';
+import { CONFIG, STACK_BOTTOM, STACK_TOP } from '../config';
 import { CameraController } from '../controls/CameraController';
 import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
 import { TerrainRenderer } from '../terrain/TerrainRenderer';
@@ -123,25 +123,21 @@ export class GameScene extends Phaser.Scene {
         this.uiLayer.add([dim, title, restart]);
     }
 
-    // The battlefield ground is now built from the real Tiny Swords tileset (Milestone
-    // 2). Phase A: a flat grass field tiled from real art, with the existing scenery and
-    // keeps drawn on top so single-lane gameplay runs unchanged. Phase B turns this flat
-    // field into stacked plateaus with cliff edges.
+    // The battlefield ground is built from the real Tiny Swords tileset (Milestone 2):
+    // a flat grass field with a cliff drop at each lane's front edge, giving stacked
+    // plateaus at different elevations. A keep at each end spans every lane (one HP pool
+    // per side). Keep art is still a drawn placeholder (polish, not blocking).
     private drawBackdrop() {
-        const { world, lane, keep } = CONFIG;
-        const laneTop = lane.y - lane.thickness / 2;
-        const laneBottom = lane.y + lane.thickness / 2;
+        const { world, keep } = CONFIG;
 
-        // Real grass field from the tileset, replacing the procedural grass/dirt.
+        // Real tiered terrain from the tileset, replacing the procedural grass/dirt.
         this.terrain = new TerrainRenderer(this, this.worldLayer);
-        this.terrain.drawFlatField();
+        this.terrain.drawTieredLayout();
 
-        // Scenery + keeps still drawn (decor/keep art is polish, not blocking — see
-        // MILESTONE_2 Phase A step 3). One static Graphics keeps the command count low.
+        // Keeps drawn on one static Graphics (modest command count, default depth 0 so
+        // it sits above terrain but below the units, which use world-y as depth).
         const g = this.add.graphics();
         this.worldLayer.add(g);
-
-        this.scatterDecor(g, laneTop, laneBottom);
 
         this.drawKeep(g, keep.margin, CONFIG.faction.player.tint);
         this.drawKeep(g, world.width - keep.margin, CONFIG.faction.enemy.tint);
@@ -151,75 +147,30 @@ export class GameScene extends Phaser.Scene {
         g.strokeRect(0, 0, world.width, world.height);
     }
 
-    // Trees, bushes and rocks scattered in the grass margins above and below the lane,
-    // kept clear of the keeps. Deterministic (seeded) so it looks the same each run.
-    private scatterDecor(g: Phaser.GameObjects.Graphics, laneTop: number, laneBottom: number) {
-        const { world, keep } = CONFIG;
-        const rng = new Phaser.Math.RandomDataGenerator(['decor']);
-        const bands = [
-            { lo: 60, hi: laneTop - 60 },
-            { lo: laneBottom + 60, hi: world.height - 60 },
-        ];
-        const keepClear = keep.margin + keep.size;
-        for (const band of bands) {
-            if (band.hi - band.lo < 40) continue;
-            let x = 120;
-            while (x < world.width - 120) {
-                if (x > keepClear && x < world.width - keepClear) {
-                    const y = rng.between(band.lo, band.hi);
-                    const roll = rng.frac();
-                    if (roll < 0.5) this.drawTree(g, x, y);
-                    else if (roll < 0.8) this.drawBush(g, x, y);
-                    else this.drawRock(g, x, y);
-                }
-                x += rng.between(90, 200);
-            }
-        }
-    }
-
-    private drawTree(g: Phaser.GameObjects.Graphics, x: number, y: number) {
-        const { colors } = CONFIG;
-        g.fillStyle(0x000000, 0.18).fillEllipse(x, y + 3, 38, 14);
-        g.fillStyle(colors.trunk, 1).fillRect(x - 4, y - 18, 8, 22);
-        g.fillStyle(colors.leafDark, 1).fillCircle(x, y - 30, 21);
-        g.fillStyle(colors.leaf, 1).fillCircle(x - 7, y - 35, 14);
-    }
-
-    private drawBush(g: Phaser.GameObjects.Graphics, x: number, y: number) {
-        const { colors } = CONFIG;
-        g.fillStyle(0x000000, 0.15).fillEllipse(x, y + 2, 30, 10);
-        g.fillStyle(colors.leafDark, 1).fillCircle(x, y - 6, 12);
-        g.fillStyle(colors.leaf, 1).fillCircle(x - 7, y - 8, 8).fillCircle(x + 7, y - 7, 7);
-    }
-
-    private drawRock(g: Phaser.GameObjects.Graphics, x: number, y: number) {
-        const { colors } = CONFIG;
-        g.fillStyle(0x000000, 0.15).fillEllipse(x, y + 2, 28, 9);
-        g.fillStyle(colors.rockDark, 1).fillCircle(x, y - 2, 11);
-        g.fillStyle(colors.rock, 1).fillCircle(x - 3, y - 5, 7);
-    }
-
-    // A small castle keep: walls, crenellations, a gate, and a faction-coloured banner.
+    // A tall fortified keep spanning every lane in the stack: a stone wall with
+    // crenellations, a gate facing each lane, and a faction-coloured banner. Units of
+    // that side spawn in front of it on every lane and feed its single HP pool.
     private drawKeep(g: Phaser.GameObjects.Graphics, cx: number, tint: number) {
-        const { lane, keep, colors } = CONFIG;
+        const { keep, colors, lanes } = CONFIG;
         const w = keep.size;
-        const top = lane.y - w * 0.7;
-        const bottom = lane.y + w * 0.35;
+        const top = STACK_TOP - 40;
+        const bottom = STACK_BOTTOM + 30;
         const left = cx - w / 2;
-        const merlon = w / 7;
+        const merlon = w / 6;
 
-        g.fillStyle(0x000000, 0.22).fillEllipse(cx, bottom, w * 1.15, 44);
+        g.fillStyle(0x000000, 0.22).fillEllipse(cx, bottom, w * 1.1, 50);
         g.fillStyle(colors.stone, 1).fillRect(left, top, w, bottom - top);
         g.fillStyle(colors.stoneDark, 1).fillRect(left, bottom - 22, w, 22);
         // Crenellations across the top.
         g.fillStyle(colors.stone, 1);
-        for (let i = 0; i < 7; i += 2) g.fillRect(left + i * merlon, top - merlon, merlon, merlon);
-        // Gate.
-        g.fillStyle(colors.stoneDark, 1).fillRect(cx - merlon * 0.7, bottom - 74, merlon * 1.4, 74);
-        // Banner pole + faction flag.
-        const poleTop = top - merlon - 64;
-        g.fillStyle(colors.trunk, 1).fillRect(cx - 2, poleTop, 4, 66);
-        g.fillStyle(tint, 1).fillTriangle(cx + 2, poleTop, cx + 38, poleTop + 10, cx + 2, poleTop + 22);
+        for (let i = 0; i <= 6; i += 2) g.fillRect(left + i * merlon, top - merlon, merlon, merlon);
+        // A gate facing each lane.
+        g.fillStyle(colors.stoneDark, 1);
+        for (const lane of lanes) g.fillRect(cx - merlon * 0.6, lane.y - 42, merlon * 1.2, 84);
+        // Banner pole + faction flag at the top.
+        const poleTop = top - merlon - 70;
+        g.fillStyle(colors.trunk, 1).fillRect(cx - 2, poleTop, 4, 72);
+        g.fillStyle(tint, 1).fillTriangle(cx + 2, poleTop, cx + 42, poleTop + 11, cx + 2, poleTop + 24);
     }
 
     private buildHud() {
