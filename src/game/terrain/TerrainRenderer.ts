@@ -74,27 +74,44 @@ export class TerrainRenderer {
         lift.fillStyle(0xffffff, 0.06).fillRect(x0, top, w, cliffY - top);
         this.layer.add(lift);
 
-        // 3) Front (south) cliff: the grass-capped stone TOP row only — a clean ground
-        //    cliff with no watery foam base — with rounded stone ends.
+        // 3) Front (south) cliff: the grass-capped stone TOP row (frames 41-43). This tile
+        //    already carries its own grass cap, so we do NOT add a separate grass lip on
+        //    top of it (that double edge was the wrong-looking top). Rounded stone ends.
         this.tile(TILES.cliffTopLeft, x0, cliffY, DEPTH_CLIFF);
         this.tileRun(TILES.cliffTopMid, x0 + ts, x1 - ts, cliffY, DEPTH_CLIFF);
         this.tile(TILES.cliffTopRight, x1 - ts, cliffY, DEPTH_CLIFF);
 
-        // 4) Grass framing: a lip overhanging the cliff top, and a bushy back-fringe along
-        //    the north edge, both rounded at the ends.
-        this.grassEdge(x0, x1, cliffY - ts, false); // front lip on top of the cliff
-        this.grassEdge(x0, x1, top, true); // back-fringe along the north edge
+        // 4) Frame the level so it reads as an enclosed plateau: a bushy back-fringe along
+        //    the north edge and grass side-fringes down the west/east edges.
+        this.grassEdge(x0, x1, top, true);
+        this.vrun(TILES.grassLeft, x0, top + ts, cliffY, DEPTH_EDGE);
+        this.vrun(TILES.grassRight, x1 - ts, top + ts, cliffY, DEPTH_EDGE);
 
-        // 5) Stairs: the pack's stair pieces (2 tiles tall) set into the cliff — the "up"
-        //    stair at the left end, the "down" stair at the right/middle end.
-        this.stair(TILES.stairLeftTop, TILES.stairLeftBot, x0, cliffY - ts);
-        this.stair(TILES.stairRightTop, TILES.stairRightBot, x1 - ts, cliffY - ts);
+        // 5) Stairs: the pack's stair pieces, STACKED several wide to make a broad opening
+        //    cut into the front cliff — the "up" stair at the left end, the "down" stair
+        //    at the right/middle end. Each is 2 tiles tall (grass top + stone steps).
+        const n = p.stairTiles ?? 4;
+        this.stairRun(x0, n, cliffY - ts);
+        this.stairRun(x1 - n * ts, n, cliffY - ts);
     }
 
-    // A 2-tile-tall stair (grass-topped steps) at column x, top tile at row-top y.
-    private stair(topFrame: number, botFrame: number, x: number, y: number) {
-        this.tile(topFrame, x, y, DEPTH_STAIR);
-        this.tile(botFrame, x, y + this.ts, DEPTH_STAIR);
+    // A run of `n` stair columns starting at x, alternating left/right pieces so the steps
+    // read as one wide staircase. Each column is 2 tiles tall (top grass, bottom steps).
+    private stairRun(x: number, n: number, yTop: number) {
+        const ts = this.ts;
+        for (let k = 0; k < n; k++) {
+            const left = k % 2 === 0;
+            const topF = left ? TILES.stairLeftTop : TILES.stairRightTop;
+            const botF = left ? TILES.stairLeftBot : TILES.stairRightBot;
+            this.tile(topF, x + k * ts, yTop, DEPTH_STAIR);
+            this.tile(botF, x + k * ts, yTop + ts, DEPTH_STAIR);
+        }
+    }
+
+    // A vertical column of one tile frame from y0..y1 at column-left x.
+    private vrun(frame: number, x: number, y0: number, y1: number, depth: number) {
+        const ts = this.ts;
+        for (let y = y0; y < y1; y += ts) this.tile(frame, x, y, depth);
     }
 
     // The grass edge framing the plateau: the front-lip overhang (back=false) above the

@@ -27,7 +27,7 @@ export const CONFIG = {
     plateau: {
         x0: 700,      // left edge — where the "up" stairs are (just past the player keep)
         x1: 2000,     // right edge at the middle — where the "down" stairs are
-        cliffTiles: 1, // height of the front cliff in tiles (grass-capped stone; no foam)
+        stairTiles: 4, // width (in tiles) of each stair opening — stack stairs to widen
     },
 
     // Elevation tunables. cliffHeight is the visual drop height; rampInset is unused by
