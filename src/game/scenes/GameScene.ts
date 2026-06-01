@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG, stackBottom, stackTop } from '../config';
+import { CONFIG, laneBottom, laneTop } from '../config';
 import { CameraController } from '../controls/CameraController';
 import { DevPanel } from '../controls/DevPanel';
 import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
@@ -130,10 +130,8 @@ export class GameScene extends Phaser.Scene {
         this.uiLayer.add([dim, title, restart]);
     }
 
-    // The battlefield ground is built from the real Tiny Swords tileset (Milestone 2):
-    // a flat grass field with a cliff drop at each lane's front edge, giving stacked
-    // plateaus at different elevations. A keep at each end spans every lane (one HP pool
-    // per side). Keep art is still a drawn placeholder (polish, not blocking).
+    // The battlefield: a flat grass island on open water (Tiny Swords tileset + decos),
+    // with a placeholder drawn keep flanking each end of the lane.
     private drawBackdrop() {
         const { world, keep } = CONFIG;
 
@@ -154,14 +152,14 @@ export class GameScene extends Phaser.Scene {
         g.strokeRect(0, 0, world.width, world.height);
     }
 
-    // A tall fortified keep spanning every lane in the stack: a stone wall with
-    // crenellations, a gate facing each lane, and a faction-coloured banner. Units of
-    // that side spawn in front of it on every lane and feed its single HP pool.
+    // A tall fortified keep flanking the lane: a stone wall with crenellations, a gate
+    // facing the lane, and a faction-coloured banner. Units of that side spawn in front of
+    // it and feed its single HP pool.
     private drawKeep(g: Phaser.GameObjects.Graphics, cx: number, tint: number) {
         const { keep, colors, lanes } = CONFIG;
         const w = keep.size;
-        const top = stackTop() - 40;
-        const bottom = stackBottom() + 30;
+        const top = laneTop() - 40;
+        const bottom = laneBottom() + 30;
         const left = cx - w / 2;
         const merlon = w / 6;
 
