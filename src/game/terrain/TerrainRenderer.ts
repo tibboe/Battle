@@ -1,152 +1,215 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
-import { SHADOW, TILES, TILESET } from './tileset';
+import { TILES, TILESET } from './tileset';
+import { BUSHES, CLOUDS, DUCK, FOAM, ROCKS, WATER, WATER_ROCKS } from './environment';
 
-// Draws the battlefield ground from the real Tiny Swords tileset (Milestone 2, rebuild).
-//
-// The world is one flat grass field. A single raised PLATEAU sits in the left-centre of
-// the lane (CONFIG.plateau): the pack's layering is followed — a Shadow blob placed
-// under the elevated ground and shifted one tile DOWN for depth, the plateau grass laid
-// opaque on top of it, a grass-capped stone CLIFF dropping off the front (south) edge,
-// a grass fringe/lip framing it, and STAIRS (the pack's stair pieces) at the left end
-// (up from the flat) and the right/middle end (down to the flat).
-//
-// Primitives keep the draw count tiny and static: TileSprite for repeating runs, Image
-// for single tiles. Everything is created once; nothing updates per frame.
+// Draws the battlefield: a flat grass ISLAND on an open sea. Bottom-up:
+//   • water background tiled over the whole world,
+//   • an animated foam ring along the island's coastline,
+//   • the flat-ground grass island (a 4×4 autotile) the armies fight on,
+//   • scatter decorations (bushes/rocks on land, water rocks/duck at sea),
+//   • drifting clouds along the top/left/right edges, above the water.
+// Leveling/plateaus are parked — this is a single flat plain.
 export class TerrainRenderer {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly ts = CONFIG.terrain.renderTile;
+
+    // Island bounds in world px (tile-aligned), computed from the water margin.
+    private islandLeft = 0;
+    private islandTop = 0;
+    private islandRight = 0;
+    private islandBottom = 0;
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
         this.scene = scene;
         this.layer = layer;
     }
 
-    // Tile the whole world with flat grass.
-    drawFlatField() {
+    /** The grass island rectangle in world coords — used to keep units/keeps on land. */
+    get island() {
+        return { left: this.islandLeft, top: this.islandTop, right: this.islandRight, bottom: this.islandBottom };
+    }
+
+    // Entry point.
+    draw() {
+        this.computeIsland();
+        this.drawWater();
+        this.drawFoam();
+        this.drawGrassIsland();
+        this.drawDecorations();
+        this.drawClouds();
+    }
+
+    // Snap the island to the tile grid inside the requested water margin.
+    private computeIsland() {
         const { world } = CONFIG;
-        const field = this.scene.add
-            .tileSprite(0, 0, world.width, world.height, TILESET.key, TILES.grassFill)
-            .setOrigin(0, 0)
-            .setDepth(DEPTH_GROUND);
-        this.layer.add(field);
-    }
-
-    // Entry point: flat field + the single raised plateau with stairs.
-    drawTieredLayout() {
-        this.drawFlatField();
-        this.drawPlateau();
-    }
-
-    // The raised level: ONE platform in the left-centre of the lane, read left→right as
-    // STAIR UP → OPEN CLIFF → STAIR DOWN, exactly as the level rule says. No side/back
-    // walls — just the platform's front edge, with a Shadow under it for height.
-    private drawPlateau() {
-        const p = CONFIG.plateau;
-        if (!p) return;
         const ts = this.ts;
-        const lane = CONFIG.lanes[0];
-        const x0 = p.x0;
-        const x1 = p.x1;
-        const top = lane.y - lane.thickness / 2; // back of the platform
-        const cliffY = lane.y + lane.thickness / 2; // front edge — the cliff/stair row
-        const w = x1 - x0;
-
-        // 1) Shadow under the platform footprint, shifted one cell DOWN (guide's method),
-        //    so it peeks out below the front edge and reads as height.
-        const shadow = this.scene.add
-            .image(x0, top + ts, SHADOW.key)
-            .setOrigin(0, 0)
-            .setDepth(DEPTH_SHADOW)
-            .setAlpha(0.5);
-        shadow.setDisplaySize(w, cliffY - top);
-        this.layer.add(shadow);
-
-        // 2) Platform grass laid opaque on top of the shadow, a touch brighter (higher
-        //    ground), with a light bushy back-fringe so the top edge isn't a hard seam.
-        const grass = this.scene.add
-            .tileSprite(x0, top, w, cliffY - top, TILESET.key, TILES.grassFill)
-            .setOrigin(0, 0)
-            .setDepth(DEPTH_PLATEAU);
-        this.layer.add(grass);
-        const lift = this.scene.add.graphics().setDepth(DEPTH_PLATEAU + 1);
-        lift.fillStyle(0xffffff, 0.06).fillRect(x0, top, w, cliffY - top);
-        this.layer.add(lift);
-        // Top rim: the plain "cliff looking over" tile (grassTop, ^) across the MIDDLE only
-        //    — no corner pieces. The top corners stay plain grass; the side stairs start one
-        //    row below this rim.
-        this.tileRun(TILES.grassTop, x0 + ts, x1 - ts, top, DEPTH_EDGE);
-
-        // 2b) The SIDES are stairs: an UP-stair "/" column down the LEFT edge and a DOWN-stair
-        //     "\" column down the RIGHT edge (the pack's 2-tile stair unit repeated), starting
-        //     one row below the rim. So units climb up the left side and down the right side.
-        this.stairColumn(TILES.stairLeftTop, TILES.stairLeftBot, x0, top + ts, cliffY + ts);
-        this.stairColumn(TILES.stairRightTop, TILES.stairRightBot, x1 - ts, top + ts, cliffY + ts);
-
-        // 3) Bottom-middle is the stone cliff face ("looking up at it"), between the two
-        //    stair columns; the top-middle rim ("looking over the edge") is drawn above.
-        const cl = x0 + ts; // cliff spans between the side stair columns
-        const cr = x1 - ts;
-        this.tile(TILES.cliffTopLeft, cl, cliffY, DEPTH_CLIFF);
-        this.tileRun(TILES.cliffTopMid, cl + ts, cr - ts, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.cliffTopRight, cr - ts, cliffY, DEPTH_CLIFF);
+        const margin = CONFIG.island.margin;
+        this.islandLeft = Math.ceil(margin / ts) * ts;
+        this.islandTop = Math.ceil(margin / ts) * ts;
+        const cols = Math.floor((world.width - 2 * this.islandLeft) / ts);
+        const rows = Math.floor((world.height - 2 * this.islandTop) / ts);
+        this.islandRight = this.islandLeft + cols * ts;
+        this.islandBottom = this.islandTop + rows * ts;
     }
 
-    // A column of the pack's 2-tile stair unit (grass top + stone steps) repeated from y0
-    // down to y1, at column-left x. Alternating top/bottom frames tile without gaps.
-    private stairColumn(topF: number, botF: number, x: number, y0: number, y1: number) {
+    private drawWater() {
+        const { world } = CONFIG;
+        const sea = this.scene.add
+            .tileSprite(0, 0, world.width, world.height, WATER.key)
+            .setOrigin(0, 0)
+            .setDepth(DEPTH_WATER);
+        this.layer.add(sea);
+    }
+
+    // Animated foam ring: a foam sprite straddling every coastline cell. The inland half
+    // is hidden by the grass island drawn on top; the seaward half shows as moving surf.
+    // Each starts on a random frame so the coast doesn't pulse in unison.
+    private drawFoam() {
         const ts = this.ts;
-        let i = 0;
-        for (let y = y0; y < y1; y += ts, i++) {
-            this.tile(i % 2 === 0 ? topF : botF, x, y, DEPTH_STAIR);
+        const place = (cx: number, cy: number) => {
+            const s = this.scene.add
+                .sprite(cx, cy, FOAM.key)
+                .setDepth(DEPTH_FOAM)
+                .play(FOAM.anim);
+            s.anims.setProgress(Math.random());
+            this.layer.add(s);
+        };
+        // Centres of the perimeter cells (sprite origin is centre by default).
+        for (let x = this.islandLeft; x < this.islandRight; x += ts) {
+            place(x + ts / 2, this.islandTop + ts / 2);
+            place(x + ts / 2, this.islandBottom - ts / 2);
+        }
+        for (let y = this.islandTop; y < this.islandBottom; y += ts) {
+            place(this.islandLeft + ts / 2, y + ts / 2);
+            place(this.islandRight - ts / 2, y + ts / 2);
         }
     }
-    // A vertical column of one tile frame from y0..y1 at column-left x.
-    private vrun(frame: number, x: number, y0: number, y1: number, depth: number) {
+
+    // The flat grass island as a 4×4 autotile: corners, edges, interior fill.
+    private drawGrassIsland() {
         const ts = this.ts;
-        for (let y = y0; y < y1; y += ts) this.tile(frame, x, y, depth);
+        const L = this.islandLeft;
+        const T = this.islandTop;
+        const R = this.islandRight;
+        const B = this.islandBottom;
+
+        // Interior fill (one tiled object), then the four edges and corners over it.
+        const fill = this.scene.add
+            .tileSprite(L, T, R - L, B - T, TILESET.key, TILES.flatFill)
+            .setOrigin(0, 0)
+            .setDepth(DEPTH_GROUND);
+        this.layer.add(fill);
+
+        this.runX(TILES.flatTop, L + ts, R - ts, T, DEPTH_EDGE);
+        this.runX(TILES.flatBot, L + ts, R - ts, B - ts, DEPTH_EDGE);
+        this.runY(TILES.flatLeft, L, T + ts, B - ts, DEPTH_EDGE);
+        this.runY(TILES.flatRight, R - ts, T + ts, B - ts, DEPTH_EDGE);
+        this.tile(TILES.flatTopLeft, L, T, DEPTH_EDGE);
+        this.tile(TILES.flatTopRight, R - ts, T, DEPTH_EDGE);
+        this.tile(TILES.flatBotLeft, L, B - ts, DEPTH_EDGE);
+        this.tile(TILES.flatBotRight, R - ts, B - ts, DEPTH_EDGE);
     }
 
-    private grassEdge(L: number, R: number, y: number, back: boolean) {
+    // Scatter decorations: bushes/rocks on the grass (clear of the lane), water rocks and
+    // a duck in the sea. Deterministic-ish via Phaser RNG so a session looks stable.
+    private drawDecorations() {
         const ts = this.ts;
-        const [l, m, r] = back
-            ? [TILES.grassTopLeft, TILES.grassTop, TILES.grassTopRight]
-            : [TILES.grassBottomLeft, TILES.grassBottom, TILES.grassBottomRight];
-        this.tile(l, L, y, DEPTH_EDGE, false);
-        this.tileRun(m, L + ts, R - ts, y, DEPTH_EDGE, false);
-        this.tile(r, R - ts, y, DEPTH_EDGE, false);
+        const rnd = Phaser.Math.RND;
+        const decorations = CONFIG.decorations;
+        const lane = CONFIG.lanes[0];
+        const laneTop = lane.y - lane.thickness / 2 - 40;
+        const laneBot = lane.y + lane.thickness / 2 + 40;
+
+        // Land scatter (bushes + rocks), kept off the marching lane and off the very edge.
+        for (let i = 0; i < decorations.land; i++) {
+            const x = rnd.between(this.islandLeft + ts, this.islandRight - ts);
+            const y = rnd.between(this.islandTop + ts, this.islandBottom - ts);
+            if (y > laneTop && y < laneBot) continue; // leave the lane clear
+            if (rnd.frac() < 0.55) {
+                const b = BUSHES[rnd.between(0, BUSHES.length - 1)];
+                const s = this.scene.add.sprite(x, y, b.key).setOrigin(0.5, 0.8).play(b.anim);
+                s.anims.setProgress(rnd.frac());
+                s.setDepth(y);
+                this.layer.add(s);
+            } else {
+                const r = ROCKS[rnd.between(0, ROCKS.length - 1)];
+                const img = this.scene.add.image(x, y, r.key).setOrigin(0.5, 0.8).setDepth(y);
+                this.layer.add(img);
+            }
+        }
+
+        // Sea scatter (water rocks + the odd duck) in the water margin around the island.
+        for (let i = 0; i < decorations.sea; i++) {
+            const onSide = rnd.frac() < 0.5;
+            const x = onSide
+                ? (rnd.frac() < 0.5 ? rnd.between(ts, this.islandLeft - ts) : rnd.between(this.islandRight + ts, CONFIG.world.width - ts))
+                : rnd.between(ts, CONFIG.world.width - ts);
+            const y = onSide
+                ? rnd.between(ts, CONFIG.world.height - ts)
+                : (rnd.frac() < 0.5 ? rnd.between(ts, this.islandTop - ts) : rnd.between(this.islandBottom + ts, CONFIG.world.height - ts));
+            if (rnd.frac() < 0.85) {
+                const w = WATER_ROCKS[rnd.between(0, WATER_ROCKS.length - 1)];
+                const s = this.scene.add.sprite(x, y, w.key).setDepth(DEPTH_SEADECO).play(w.anim);
+                s.anims.setProgress(rnd.frac());
+                this.layer.add(s);
+            } else {
+                const s = this.scene.add.sprite(x, y, DUCK.key).setScale(1.4).setDepth(DEPTH_SEADECO).play(DUCK.anim);
+                s.anims.setProgress(rnd.frac());
+                this.layer.add(s);
+            }
+        }
+    }
+
+    // Clouds drift over the sea along the TOP, LEFT and RIGHT edges (never the bottom).
+    // Drawn above everything else so they read as overhead atmosphere.
+    private drawClouds() {
+        const rnd = Phaser.Math.RND;
+        const { world } = CONFIG;
+        const place = (x: number, y: number) => {
+            const c = CLOUDS[rnd.between(0, CLOUDS.length - 1)];
+            const img = this.scene.add
+                .image(x, y, c.key)
+                .setScale(rnd.realInRange(0.55, 0.9))
+                .setAlpha(0.9)
+                .setDepth(DEPTH_CLOUD);
+            this.layer.add(img);
+        };
+        const n = CONFIG.clouds.count;
+        // Top band.
+        for (let i = 0; i < n; i++) place(rnd.between(0, world.width), rnd.between(0, this.islandTop));
+        // Left and right bands.
+        for (let i = 0; i < Math.ceil(n / 2); i++) {
+            place(rnd.between(0, this.islandLeft), rnd.between(0, world.height));
+            place(rnd.between(this.islandRight, world.width), rnd.between(0, world.height));
+        }
     }
 
     // ── primitives ──
-
-    // A horizontal run of one tile frame from x0..x1 at row-top y (single GPU object).
-    private tileRun(frame: number, x0: number, x1: number, y: number, depth: number, flipY = false) {
-        const w = x1 - x0;
-        if (w <= 0) return;
+    private runX(frame: number, x0: number, x1: number, y: number, depth: number) {
+        if (x1 - x0 <= 0) return;
         const run = this.scene.add
-            .tileSprite(x0, y, w, this.ts, TILESET.key, frame)
+            .tileSprite(x0, y, x1 - x0, this.ts, TILESET.key, frame)
             .setOrigin(0, 0)
-            .setFlipY(flipY)
             .setDepth(depth);
         this.layer.add(run);
     }
-
-    private tile(frame: number, x: number, y: number, depth: number, flipY = false) {
-        const img = this.scene.add
-            .image(x, y, TILESET.key, frame)
-            .setOrigin(0, 0)
-            .setFlipY(flipY)
-            .setDepth(depth);
+    private runY(frame: number, x: number, y0: number, y1: number, depth: number) {
+        const ts = this.ts;
+        for (let y = y0; y < y1; y += ts) this.tile(frame, x, y, depth);
+    }
+    private tile(frame: number, x: number, y: number, depth: number) {
+        const img = this.scene.add.image(x, y, TILESET.key, frame).setOrigin(0, 0).setDepth(depth);
         this.layer.add(img);
     }
 }
 
-// Terrain draws below units (units use world-y as depth, ~760..1140). Layered low→high:
-// ground field, plateau shadow, plateau grass, cliff, grass edge/lip, stairs.
-export const DEPTH_GROUND = -1000;
-export const DEPTH_SHADOW = -970;
-export const DEPTH_PLATEAU = -955;
-export const DEPTH_CLIFF = -900;
-export const DEPTH_EDGE = -850;
-export const DEPTH_STAIR = -840;
+// Draw order (units use world-y as depth, ~700+). Sea decorations sit just above the
+// foam; clouds sit above everything.
+export const DEPTH_WATER = -1000;
+export const DEPTH_FOAM = -980;
+export const DEPTH_GROUND = -960;
+export const DEPTH_EDGE = -950;
+export const DEPTH_SEADECO = -940;
+export const DEPTH_CLOUD = 2_000_000;

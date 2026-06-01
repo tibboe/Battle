@@ -47,6 +47,20 @@ export const TILESET = {
 // Named pieces → frame index. These are the only frames the renderer references.
 // Grouped by role so authoring a plateau reads like ASCII art.
 export const TILES = {
+    // ── Flat Ground — the water-bordered grass island (left block, cols 0–3) ──
+    // A 4×4 autotile whose edges carry a light coastline rim (meant to sit next to
+    // water). Corners + edges wrap a repeatable interior fill.
+    flatTopLeft: 0,
+    flatTop: 1,
+    flatTopRight: 3,
+    flatLeft: 9,
+    flatFill: 10, // pure interior
+    flatRight: 12,
+    flatBotLeft: 27,
+    flatBot: 28,
+    flatBotRight: 30,
+    flatFillAlt: [11, 19, 20] as readonly number[],
+
     // ── Grass plateau surface — a 3×3 autotile (right block, cols 5–8) ──
     // Corners + edges wrap a repeatable centre fill. The BOTTOM edge is the
     // "front lip" that overhangs a cliff face; the TOP edge is the back fringe.

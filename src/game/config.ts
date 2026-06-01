@@ -18,20 +18,22 @@ export const CONFIG = {
         { y: 950, level: 0, thickness: 420 }, // the single lane, ground level
     ],
 
-    // A single raised PLATEAU occupying the left-centre of the lane: from the left the
-    // ground is flat, STAIRS climb up onto the plateau, it runs to the middle, then
-    // STAIRS drop back down to flat ground — the right half has no plateau. Pixels are in
-    // world space (world is 4000 wide; middle = 2000). Vertical extent follows the lane
-    // band; the stone cliff drops off its front (south) edge with a Shadow beneath for
-    // depth, exactly as the Tiny Swords guide layers it.
-    plateau: {
-        x0: 700,      // left edge — where the "up" stairs are (just past the player keep)
-        x1: 2000,     // right edge at the middle — where the "down" stairs are
-        stairTiles: 4, // width (in tiles) of each stair opening — stack stairs to widen
-    },
+    // Leveling/plateaus are PARKED (the pack only supports a double-incline, not broad
+    // stairs). The battlefield is now a flat grass ISLAND on open water.
+    //
+    // `margin` = px of water framing the grass on every side (snapped to the tile grid by
+    // the renderer). The island fills the rest; keeps + the lane sit inside it.
+    island: { margin: 320 },
 
-    // Elevation tunables. cliffHeight is the visual drop height; rampInset is unused by
-    // the single-plateau layout but kept for the high-ground combat reach maths.
+    // Scatter decoration counts: bushes/rocks on the grass (kept clear of the lane) and
+    // water rocks / the odd duck out at sea.
+    decorations: { land: 36, sea: 28 },
+
+    // Drifting clouds over the sea, along the TOP/LEFT/RIGHT edges only. `count` is the
+    // top-band cloud count; the side bands use roughly half that each.
+    clouds: { count: 10 },
+
+    // Kept for the high-ground combat reach maths even though leveling is parked.
     elevation: {
         cliffHeight: 128,
         rampInset: 420,
@@ -41,7 +43,7 @@ export const CONFIG = {
     keep: {
         hp: 500,
         damagePerUnit: 25, // damage each unit that reaches the opposing keep deals
-        margin: 240,       // distance from the world edge to the keep's centre
+        margin: 520,       // distance from the world edge to the keep's centre (on the island)
         size: 320,
     },
 

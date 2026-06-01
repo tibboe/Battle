@@ -5,6 +5,7 @@ import { DevPanel } from '../controls/DevPanel';
 import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
 import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
+import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
@@ -40,6 +41,7 @@ export class GameScene extends Phaser.Scene {
     preload() {
         loadUnitAtlas(this);
         loadTerrainTileset(this);
+        loadEnvironment(this);
     }
 
     create() {
@@ -55,6 +57,7 @@ export class GameScene extends Phaser.Scene {
         this.worldLayer = this.add.layer();
         this.uiLayer = this.add.layer();
 
+        registerEnvironmentAnims(this);
         this.drawBackdrop();
         registerUnitAnimations(this);
         this.cameraController = new CameraController(this);
@@ -134,9 +137,9 @@ export class GameScene extends Phaser.Scene {
     private drawBackdrop() {
         const { world, keep } = CONFIG;
 
-        // Real tiered terrain from the tileset, replacing the procedural grass/dirt.
+        // Flat grass island on open water (leveling parked).
         this.terrain = new TerrainRenderer(this, this.worldLayer);
-        this.terrain.drawTieredLayout();
+        this.terrain.draw();
 
         // Keeps drawn on one static Graphics (modest command count, default depth 0 so
         // it sits above terrain but below the units, which use world-y as depth).
