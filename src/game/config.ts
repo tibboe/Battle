@@ -10,24 +10,40 @@ export const CONFIG = {
         height: 1900,
     },
 
-    // The single horizontal lane the armies march along (centre line + band height).
-    // The band is thick enough for several ranks of units to stack with depth.
-    lane: {
-        y: 950, // vertical centre of the world
-        thickness: 360,
-    },
+    // ONE flat horizontal lane the armies march along (left↔right). Elevation is parked
+    // (the pack can't do broad stairs), so the field is a single flat plain. `y` is the
+    // lane centre; `thickness` is the band the horde spreads within.
+    lanes: [
+        { y: 950, thickness: 420 },
+    ],
+
+    // The battlefield is a flat grass ISLAND on open water. `margin` = px of water framing
+    // the grass on every side (snapped to the tile grid by the renderer). The island fills
+    // the rest; keeps + the lane sit inside it.
+    island: { margin: 320 },
+
+    // Scatter decoration counts. `land` rocks/bushes dot the field; `sea` water-rocks/duck
+    // float around the island. `forest` trees/stumps/bushes fill the grass ABOVE and BELOW
+    // the lane (random x/y for an organic, varied-depth wood), split by band height.
+    // `laneClear` is the half-height of the kept-clear path corridor — trees may crowd up
+    // to its edge but not onto the path. Raise `forest` for a denser wood.
+    decorations: { land: 18, sea: 28, forest: 46, laneClear: 170 },
+
+    // Drifting clouds over the sea, along the TOP/LEFT/RIGHT edges only. `count` is the
+    // top-band cloud count; the side bands use roughly half that each.
+    clouds: { count: 10 },
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
     keep: {
         hp: 500,
         damagePerUnit: 25, // damage each unit that reaches the opposing keep deals
-        margin: 240,       // distance from the world edge to the keep's centre
+        margin: 520,       // distance from the world edge to the keep's centre (on the island)
         size: 320,
     },
 
-    // One melee unit type for Milestone 1: the Tiny Swords "Warrior" (faces right; blue
-    // art for the player, red for the enemy — see units/animations.ts). Source frames
-    // are 192x192 with the character centred and feet ~80% down the frame.
+    // One melee unit type: the Tiny Swords "Warrior" (faces right; blue art for the player,
+    // red for the enemy — see units/animations.ts). Source frames are 192x192 with the
+    // character centred and feet ~80% down the frame.
     unit: {
         hp: 30,
         damage: 10,           // 3 hits to kill at 30 hp
@@ -40,6 +56,12 @@ export const CONFIG = {
         renderScale: 0.8,     // display scale; visible knight ~= 80px tall on screen
         footAnchor: 0.8,      // y within the frame where the feet sit (sprite origin.y)
         deathFadeMs: 400,     // synthesised death fade-out (pack has no death animation)
+    },
+
+    // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in
+    // terrain/tileset.ts; swap the loaded variant there (Tilemap_color1..5) to recolour.
+    terrain: {
+        renderTile: 64, // px each 64px source tile is drawn at in the world (1:1)
     },
 
     // Combat tuning.
@@ -55,13 +77,14 @@ export const CONFIG = {
         strength: 50, // px/sec; max nudge applied per unit per frame
     },
 
-    // Spawning ramps each side up to a horde. The per-side caps are ASYMMETRIC on
-    // purpose: Milestone 1 has no player input, so equal armies just stalemate in the
-    // middle and nobody ever wins. A denser side wins the attrition and breaks through.
-    // Default: player advantage -> you tend to WIN. Swap the numbers to test a LOSE.
+    // Spawning ramps each side up to a horde. The per-side caps are ASYMMETRIC on purpose:
+    // there is no player input yet, so equal armies just stalemate in the middle and nobody
+    // ever wins. A denser side wins the attrition and breaks through (player edge -> you
+    // tend to WIN). Kept small (~50 each) so the lane stays readable.
     spawn: {
-        spawnInterval: 150, // ms between spawns, per side
-        unitsTarget: { player: 300, enemy: 220 }, // soft cap of active living units per side
+        spawnInterval: 300, // ms between spawns, per side
+        unitsTarget: { player: 55, enemy: 45 }, // soft cap of active living units per side
+        laneDistribution: [1], // relative spawn weight per lane (one lane now)
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
@@ -74,29 +97,32 @@ export const CONFIG = {
         defaultViewHeight: 1100,
     },
 
-    // Both armies use the same art, recoloured by tint (Phase 3).
+    // The two armies use the pack's blue (player) and red (enemy) art sets directly.
     faction: {
         player: { tint: 0x4aa3ff }, // azure
         enemy: { tint: 0xff5a5a },  // crimson
     },
 
-    // Backdrop palette (procedural placeholder until real art lands in Phase 6).
+    // Palette for the drawn placeholder keeps + the out-of-world void.
     colors: {
         sky: 0x0e1620,       // outside-world / void
-        grass: 0x3b5230,     // base field
-        grassDark: 0x33482a,
-        grassLight: 0x47603a,
-        dirt: 0x6b5536,      // the lane / road
-        dirtDark: 0x5a472d,
-        dirtEdge: 0x42341f,
-        rock: 0x7d7d82,
-        rockDark: 0x5c5c61,
-        trunk: 0x5a3d22,
-        leaf: 0x3f6b32,
-        leafDark: 0x32562a,
+        trunk: 0x5a3d22,     // keep banner pole
         stone: 0x8a8a90,     // keep walls
         stoneDark: 0x6c6c72,
     },
-} as const;
+};
+// NB: not `as const` — the dev tuning panel (controls/DevPanel.ts) mutates a few of these
+// live (spawn rate, army caps, map width, water edge, forest, clouds). CONFIG stays the
+// single source of truth; the panel just edits the numbers, like editing this file.
 
 export type GameConfig = typeof CONFIG;
+
+// Derived layout helpers — FUNCTIONS (not constants) so they re-read CONFIG after the
+// dev panel changes things on restart.
+
+// Vertical centre of the lane — what the camera frames by default.
+export const battlefieldCenterY = () => CONFIG.lanes[0].y;
+
+// Top/bottom of the lane band (used to size the keeps that flank it).
+export const laneTop = () => CONFIG.lanes[0].y - CONFIG.lanes[0].thickness / 2;
+export const laneBottom = () => CONFIG.lanes[0].y + CONFIG.lanes[0].thickness / 2;

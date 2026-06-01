@@ -39,7 +39,14 @@ export class UnitManager {
     private readonly target: Int32Array;     // index of current enemy, or -1
     private readonly attackCd: Float32Array; // ms until next strike
     private readonly deathTimer: Float32Array; // ms left of death anim before recycle
+    private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
+
+    // Lane geometry, derived once from CONFIG.lanes (index == lane index).
+    private readonly laneY: Float32Array;
+    private readonly laneHalf: Float32Array;  // half-band the unit may roam within
+    private readonly laneCumWeight: Float32Array; // cumulative spawn weights for picking
+    private readonly laneWeightTotal: number;
 
     // Pool + spawn cadence.
     private readonly freeSprites: Phaser.GameObjects.Sprite[] = [];
@@ -82,7 +89,22 @@ export class UnitManager {
         this.target = new Int32Array(this.capacity);
         this.attackCd = new Float32Array(this.capacity);
         this.deathTimer = new Float32Array(this.capacity);
+        this.lane = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
+
+        // Derive lane geometry + a cumulative spawn-weight table from config.
+        const lanes = CONFIG.lanes;
+        this.laneY = new Float32Array(lanes.length);
+        this.laneHalf = new Float32Array(lanes.length);
+        this.laneCumWeight = new Float32Array(lanes.length);
+        let cum = 0;
+        for (let l = 0; l < lanes.length; l++) {
+            this.laneY[l] = lanes[l].y;
+            this.laneHalf[l] = lanes[l].thickness / 2 - 24; // keep feet inside the band
+            cum += CONFIG.spawn.laneDistribution[l] ?? 0;
+            this.laneCumWeight[l] = cum;
+        }
+        this.laneWeightTotal = cum;
 
         // Build the whole sprite pool once. These never get destroyed. They live on the
         // world layer so the UI camera can ignore them.
@@ -96,6 +118,8 @@ export class UnitManager {
             this.freeSprites.push(s);
         }
 
+        // Cells must be at least as wide as the engage range so the ±1 neighbour scan
+        // never misses an in-range enemy.
         this.cellSize = CONFIG.unit.range;
         this.numCells = Math.ceil(CONFIG.world.width / this.cellSize) + 1;
         this.buckets = Array.from({ length: this.numCells }, () => []);
@@ -148,8 +172,9 @@ export class UnitManager {
         if (!sprite) return; // pool exhausted (shouldn't happen given the cap)
 
         const i = this.count++;
-        const laneHalf = CONFIG.lane.thickness / 2 - 24;
-        const y = CONFIG.lane.y + Phaser.Math.FloatBetween(-laneHalf, laneHalf);
+        const laneIdx = this.pickLane();
+        const half = this.laneHalf[laneIdx];
+        const y = this.laneY[laneIdx] + Phaser.Math.FloatBetween(-half, half);
         const x = faction === FACTION.player ? this.playerKeepX : this.enemyKeepX;
 
         this.x[i] = x;
@@ -161,6 +186,7 @@ export class UnitManager {
         this.target[i] = -1;
         this.attackCd[i] = Phaser.Math.FloatBetween(0, CONFIG.unit.attackInterval); // desync
         this.deathTimer[i] = 0;
+        this.lane[i] = laneIdx;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
 
@@ -172,6 +198,16 @@ export class UnitManager {
             .setDepth(y) // lower on screen draws in front, so ranks overlap correctly
             .setFlipX(faction === FACTION.enemy) // right-facing art; enemy marches left
             .play(animKey(FACTION_NAME[faction], 'walk'));
+    }
+
+    // Weighted random lane pick (CONFIG.spawn.laneDistribution). One lane today, but the
+    // machinery stays so spawn weighting survives if lanes return.
+    private pickLane(): number {
+        const r = Phaser.Math.FloatBetween(0, this.laneWeightTotal);
+        for (let l = 0; l < this.laneCumWeight.length; l++) {
+            if (r <= this.laneCumWeight[l]) return l;
+        }
+        return this.laneCumWeight.length - 1;
     }
 
     // ---- Targeting (bucketed by lane x; only nearby cells are tested) ----
@@ -186,12 +222,13 @@ export class UnitManager {
             this.buckets[c].push(i);
         }
 
-        const r2 = this.cellSize * this.cellSize; // range^2 (cell size == range)
+        // Single melee engage distance (flat field — no elevation).
+        const range2 = CONFIG.unit.range * CONFIG.unit.range;
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             const ci = this.cellOf(i);
             let best = -1;
-            let bestD2 = r2;
+            let bestD2 = Infinity;
             // Only this cell and its immediate neighbours can hold an in-range enemy.
             for (let dc = -1; dc <= 1; dc++) {
                 const c = ci + dc;
@@ -203,7 +240,7 @@ export class UnitManager {
                     const dx = this.x[j] - this.x[i];
                     const dy = this.y[j] - this.y[i];
                     const d2 = dx * dx + dy * dy;
-                    if (d2 < bestD2) {
+                    if (d2 <= range2 && d2 < bestD2) {
                         bestD2 = d2;
                         best = j;
                     }
@@ -222,7 +259,8 @@ export class UnitManager {
 
     private step(delta: number) {
         const dt = delta / 1000;
-        const reach2 = (CONFIG.unit.range + 8) * (CONFIG.unit.range + 8); // strike validity slack
+        // Strike-validity distance (a little slack on the engage range).
+        const meleeReach2 = (CONFIG.unit.range + 8) * (CONFIG.unit.range + 8);
         // Backwards because despawn() swap-removes from the tail.
         for (let i = this.count - 1; i >= 0; i--) {
             const st = this.state[i];
@@ -258,7 +296,7 @@ export class UnitManager {
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
-                if (dx * dx + dy * dy <= reach2) {
+                if (dx * dx + dy * dy <= meleeReach2) {
                     this.attackCd[i] += CONFIG.unit.attackInterval;
                     this.hp[t] -= CONFIG.unit.damage;
                     if (this.hp[t] <= 0) this.kill(t);
@@ -321,9 +359,6 @@ export class UnitManager {
 
         // Apply, capped to maxStep px this frame, keeping units within the lane band.
         const maxStep = CONFIG.separation.strength * (delta / 1000);
-        const laneHalf = CONFIG.lane.thickness / 2 - 24;
-        const yMin = CONFIG.lane.y - laneHalf;
-        const yMax = CONFIG.lane.y + laneHalf;
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             let nx = this.pushX[i] * maxStep;
@@ -335,6 +370,9 @@ export class UnitManager {
                 nx *= s;
                 ny *= s;
             }
+            const ln = this.lane[i];
+            const yMin = this.laneY[ln] - this.laneHalf[ln];
+            const yMax = this.laneY[ln] + this.laneHalf[ln];
             this.x[i] += nx;
             this.y[i] = Phaser.Math.Clamp(this.y[i] + ny, yMin, yMax);
             const sprite = this.sprites[i]!;
@@ -392,6 +430,7 @@ export class UnitManager {
             this.target[i] = this.target[last];
             this.attackCd[i] = this.attackCd[last];
             this.deathTimer[i] = this.deathTimer[last];
+            this.lane[i] = this.lane[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

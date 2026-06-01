@@ -7,8 +7,10 @@ anything.
 A 2D auto-battler lane-pusher with roguelite meta-progression (working title:
 Lanebreaker). Full design is in `GAME_DESIGN.md`. **You are not building the whole
 design.** You are building one milestone at a time. Milestone 1 (Horde Core) is
-**complete**; the current milestone is defined in `MILESTONE_2.md` — that file is the
-source of truth for scope right now.
+**complete**. Milestone 2 (tiered elevation) was **parked** — the Tiny Swords pack can't
+do broad stairs, so the battlefield is staying a **single flat lane** (a grass island on
+open water). The current milestone is defined in `MILESTONE_3.md` (Armies & Production) —
+that file is the source of truth for scope right now.
 
 ## Roles
 - The human is the **creative director**: they decide how it should feel, play it, and
@@ -75,7 +77,8 @@ state at the end of a session.
 
 ## Pointers
 - `GAME_DESIGN.md` — vision, unit system, full roadmap.
-- `MILESTONE_2.md` — what to build right now, with acceptance criteria.
+- `MILESTONE_3.md` — what to build right now (Armies & Production), with acceptance criteria.
+- `MILESTONE_2.md` — PARKED (tiered elevation); kept for reference, not being built.
 - `MILESTONE_1.md` — completed (Horde Core); kept for reference.
 - `ASSET_SPEC.md` — sprite contract (frame size, tags, origin, export format). Placeholder
   art must obey it so real art drops in with no code changes.
