@@ -25,10 +25,12 @@ export const CONFIG = {
     // the renderer). The island fills the rest; keeps + the lane sit inside it.
     island: { margin: 320 },
 
-    // Scatter decoration counts: bushes/rocks on the grass (kept clear of the lane) and
-    // water rocks / the odd duck out at sea. `treesPerLine` trees+bushes are lined along
-    // the TOP and BOTTOM grass edges (a forest fringe), clear of the central lane.
-    decorations: { land: 18, sea: 28, treesPerLine: 12 },
+    // Scatter decoration counts. `land` rocks/bushes dot the field; `sea` water-rocks/duck
+    // float around the island. `forest` trees/stumps/bushes fill the grass ABOVE and BELOW
+    // the lane (random x/y for an organic, varied-depth wood), split by band height.
+    // `laneClear` is the half-height of the kept-clear path corridor — trees may crowd up
+    // to its edge but not onto the path. Raise `forest` for a denser wood.
+    decorations: { land: 18, sea: 28, forest: 46, laneClear: 170 },
 
     // Drifting clouds over the sea, along the TOP/LEFT/RIGHT edges only. `count` is the
     // top-band cloud count; the side bands use roughly half that each.

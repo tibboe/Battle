@@ -60,6 +60,12 @@ export const TREES = [
     { key: 'env-tree-4', file: `${BASE}/Resources/Wood/Trees/Tree4.png`, size: 192, frames: 8, rate: 7, anim: 'anim-tree-4' },
 ];
 
+// Static tree stumps — 4 variants, 192×256 (base at bottom-centre).
+export const STUMPS = Array.from({ length: 4 }, (_, i) => ({
+    key: `env-stump-${i + 1}`,
+    file: `${BASE}/Resources/Wood/Trees/Stump ${i + 1}.png`,
+}));
+
 // Animated rubber duck — 32² × 3 frames.
 export const DUCK = {
     key: 'env-duck',
@@ -76,25 +82,29 @@ export function loadEnvironment(scene: Phaser.Scene) {
     scene.load.spritesheet(DUCK.key, encodeURI(DUCK.file), { frameWidth: DUCK.size, frameHeight: DUCK.size });
     for (const c of CLOUDS) scene.load.image(c.key, encodeURI(c.file));
     for (const r of ROCKS) scene.load.image(r.key, encodeURI(r.file));
+    for (const s of STUMPS) scene.load.image(s.key, encodeURI(s.file));
     for (const b of BUSHES) scene.load.spritesheet(b.key, encodeURI(b.file), { frameWidth: b.size, frameHeight: b.size });
     for (const w of WATER_ROCKS) scene.load.spritesheet(w.key, encodeURI(w.file), { frameWidth: w.size, frameHeight: w.size });
     for (const t of TREES) scene.load.spritesheet(t.key, encodeURI(t.file), { frameWidth: t.size, frameHeight: t.size });
 }
 
-function makeAnim(scene: Phaser.Scene, key: string, tex: string, frames: number, rate: number) {
+// `yoyo` plays the strip forward then backward so a one-directional sway eases back
+// instead of snapping from the last frame to the first (which reads as sliding).
+function makeAnim(scene: Phaser.Scene, key: string, tex: string, frames: number, rate: number, yoyo = false) {
     if (scene.anims.exists(key)) scene.anims.remove(key);
     scene.anims.create({
         key,
         frames: scene.anims.generateFrameNumbers(tex, { start: 0, end: frames - 1 }),
         frameRate: rate,
         repeat: -1,
+        yoyo,
     });
 }
 
 export function registerEnvironmentAnims(scene: Phaser.Scene) {
     makeAnim(scene, FOAM.anim, FOAM.key, FOAM.frames, FOAM.rate);
     makeAnim(scene, DUCK.anim, DUCK.key, DUCK.frames, DUCK.rate);
-    for (const b of BUSHES) makeAnim(scene, b.anim, b.key, b.frames, b.rate);
+    for (const b of BUSHES) makeAnim(scene, b.anim, b.key, b.frames, b.rate, true);
     for (const w of WATER_ROCKS) makeAnim(scene, w.anim, w.key, w.frames, w.rate);
-    for (const t of TREES) makeAnim(scene, t.anim, t.key, t.frames, t.rate);
+    for (const t of TREES) makeAnim(scene, t.anim, t.key, t.frames, t.rate, true);
 }
