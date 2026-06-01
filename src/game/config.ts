@@ -25,7 +25,6 @@ export interface UnitType {
     armour: Armour;
     scale: number;          // display scale applied to the source frame
     footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
-    spawnWeight: number;    // relative chance to be the next unit spawned (until Phase 3)
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
     // `interval` ms (capped at the ally's max HP). Combat units omit this.
     heal?: { amount: number; interval: number };
@@ -63,38 +62,40 @@ export const CONFIG = {
     // top-band cloud count; the side bands use roughly half that each.
     clouds: { count: 10 },
 
-    // Keeps sit at each end of the lane. Player on the left, enemy on the right.
+    // Keeps sit at each end of the lane. Player on the left, enemy on the right. The keep
+    // is drawn as the pack's Castle (the HP target); units that reach the opposing keep's
+    // centre damage it.
     keep: {
         hp: 500,
         damagePerUnit: 25, // damage each unit that reaches the opposing keep deals
         margin: 520,       // distance from the world edge to the keep's centre (on the island)
         size: 320,
+        art: 'Castle',     // pack building drawn as the keep
+        scale: 1.2,        // display scale for the castle sprite
     },
 
     // The unit roster — all five Tiny Swords types, data-driven. UnitManager reads these
-    // rather than hard-coded numbers; each spawn picks a type weighted by `spawnWeight`.
-    // The Warrior row reproduces the Milestone-1 numbers EXACTLY (hp 30 = 3 hits to kill;
-    // range ~= one body width so the front line meets edge-to-edge instead of piling up).
-    // The other four are sensible starting points to tune by playing. Combat is plain melee
-    // for now — the weapon/armour counter matrix, the Archer's arrow, and the Monk's heal
-    // all arrive in Phase 2; until then the Monk simply marches (it has no attack) and the
-    // Archer "shoots" at melee range.
+    // rather than hard-coded numbers; the production buildings decide which type spawns and
+    // when. The Warrior row reproduces the Milestone-1 numbers EXACTLY (hp 30 = 3 hits to
+    // kill; range ~= one body width so the front line meets edge-to-edge). The rest are
+    // sensible starting points to tune by playing. Weapon×armour counters, the Archer's
+    // arrow, and the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
         { key: 'warrior', art: 'warrior', role: 'melee',
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
-          weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8, spawnWeight: 3 },
+          weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
         { key: 'pawn', art: 'pawn', role: 'melee',
           hp: 20, damage: 6, range: 60, attackInterval: 500, moveSpeed: 82,
-          weapon: 'Light', armour: 'Unarmored', scale: 0.72, footAnchor: 0.8, spawnWeight: 4 },
+          weapon: 'Light', armour: 'Unarmored', scale: 0.72, footAnchor: 0.8 },
         { key: 'lancer', art: 'lancer', role: 'melee',
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
-          weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61, spawnWeight: 1 },
+          weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61 },
         { key: 'archer', art: 'archer', role: 'ranged',
           hp: 18, damage: 8, range: 240, attackInterval: 750, moveSpeed: 76,
-          weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 2 },
+          weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
         { key: 'monk', art: 'monk', role: 'support',
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
-          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 1,
+          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
     ] as UnitType[],
 
@@ -133,14 +134,28 @@ export const CONFIG = {
         strength: 50, // px/sec; max nudge applied per unit per frame
     },
 
-    // Spawning ramps each side up to a horde. The per-side caps are ASYMMETRIC on purpose:
-    // there is no player input yet, so equal armies just stalemate in the middle and nobody
-    // ever wins. A denser side wins the attrition and breaks through (player edge -> you
-    // tend to WIN). Kept small (~50 each) so the lane stays readable.
+    // Per-side soft cap on living units. This is a performance guard now — the buildings
+    // below are the real spawn driver. The caps stay ASYMMETRIC on purpose so equal
+    // production still resolves to a winner: the denser side breaks through (player edge ->
+    // you tend to WIN). Kept small (~50 each) so the lane stays readable.
     spawn: {
-        spawnInterval: 300, // ms between spawns, per side
-        unitsTarget: { player: 55, enemy: 45 }, // soft cap of active living units per side
-        laneDistribution: [1], // relative spawn weight per lane (one lane now)
+        unitsTarget: { player: 55, enemy: 45 },
+    },
+
+    // Production buildings. Each side fields one building per unit type that emits its unit
+    // every `every` ms (scaled live by `rateScale` from the Dev panel). `dx`/`dy` place the
+    // building art relative to its keep centre (dx −=toward the back edge, +=toward the lane;
+    // dy from the lane centre) — purely cosmetic; units muster at the keep front. `art` is
+    // the pack building file; `scale` sizes it. (The Castle keep is drawn separately.)
+    production: {
+        rateScale: 1,
+        buildings: [
+            { produces: 'pawn',    art: 'House1',    every: 1400, dx: -40,  dy: -320, scale: 1.0 },
+            { produces: 'warrior', art: 'Barracks',  every: 2200, dx: 90,   dy: -230, scale: 0.9 },
+            { produces: 'monk',    art: 'Monastery', every: 4200, dx: -130, dy: 0,    scale: 0.8 },
+            { produces: 'archer',  art: 'Archery',   every: 2600, dx: 90,   dy: 230,  scale: 0.9 },
+            { produces: 'lancer',  art: 'Tower',     every: 3200, dx: -40,  dy: 320,  scale: 0.9 },
+        ],
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

@@ -48,7 +48,7 @@ export class DevPanel {
 
         // The tunables exposed. Structural ones (live:false) rebuild on restart.
         this.settings = [
-            { label: 'Spawn ms', get: () => CONFIG.spawn.spawnInterval, set: (v) => (CONFIG.spawn.spawnInterval = v), step: 25, min: 50, max: 800, live: true },
+            { label: 'Prod rate', get: () => CONFIG.production.rateScale, set: (v) => (CONFIG.production.rateScale = v), step: 0.25, min: 0.25, max: 4, live: true, fmt: (v) => `${v}×` },
             { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Map width', get: () => CONFIG.world.width, set: (v) => (CONFIG.world.width = v), step: 500, min: 2000, max: 8000, live: false },

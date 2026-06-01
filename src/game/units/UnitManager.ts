@@ -64,8 +64,6 @@ export class UnitManager {
     private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
-    private readonly typeCumWeight: Float32Array; // cumulative spawn weights for picking
-    private readonly typeWeightTotal: number;
 
     private readonly nTypes: number;
     // Counter matrix resolved for this roster: pairMul[attacker*nTypes + target] is the
@@ -77,12 +75,9 @@ export class UnitManager {
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
     private readonly laneY: Float32Array;
     private readonly laneHalf: Float32Array;  // half-band the unit may roam within
-    private readonly laneCumWeight: Float32Array; // cumulative spawn weights for picking
-    private readonly laneWeightTotal: number;
 
-    // Pool + spawn cadence.
+    // Sprite pool.
     private readonly freeSprites: Phaser.GameObjects.Sprite[] = [];
-    private readonly spawnAcc: [number, number] = [0, 0];
     private reacquireAcc = 0;
 
     // Targeting buckets (reused each acquire to avoid allocation).
@@ -153,9 +148,7 @@ export class UnitManager {
         this.typeRanged = new Uint8Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
-        this.typeCumWeight = new Float32Array(nTypes);
         let maxRange = 1;
-        let cumType = 0;
         for (let t = 0; t < nTypes; t++) {
             const ut = types[t];
             this.typeArt[t] = ut.art;
@@ -172,11 +165,8 @@ export class UnitManager {
             this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
-            cumType += Math.max(0, ut.spawnWeight);
-            this.typeCumWeight[t] = cumType;
             if (ut.range > maxRange) maxRange = ut.range;
         }
-        this.typeWeightTotal = cumType;
 
         // Resolve the weapon×armour matrix into a flat per-pair multiplier table (default 1
         // for any weapon/armour the matrix doesn't list — e.g. the Monk never attacks).
@@ -192,19 +182,14 @@ export class UnitManager {
             }
         }
 
-        // Derive lane geometry + a cumulative spawn-weight table from config.
+        // Derive lane geometry from config (one flat lane today).
         const lanes = CONFIG.lanes;
         this.laneY = new Float32Array(lanes.length);
         this.laneHalf = new Float32Array(lanes.length);
-        this.laneCumWeight = new Float32Array(lanes.length);
-        let cumLane = 0;
         for (let l = 0; l < lanes.length; l++) {
             this.laneY[l] = lanes[l].y;
             this.laneHalf[l] = lanes[l].thickness / 2 - 24; // keep feet inside the band
-            cumLane += CONFIG.spawn.laneDistribution[l] ?? 0;
-            this.laneCumWeight[l] = cumLane;
         }
-        this.laneWeightTotal = cumLane;
 
         // Build the whole sprite pool once. These never get destroyed. They live on the
         // world layer so the UI camera can ignore them. Origin/scale are set per spawn
@@ -248,8 +233,6 @@ export class UnitManager {
     }
 
     update(delta: number) {
-        this.handleSpawns(delta);
-
         this.reacquireAcc += delta;
         if (this.reacquireAcc >= CONFIG.combat.reacquireMs) {
             this.reacquireAcc = 0;
@@ -260,32 +243,26 @@ export class UnitManager {
         this.applySeparation(delta);
     }
 
-    // ---- Spawning ----
+    // ---- Spawning (driven externally by the production buildings) ----
 
-    private handleSpawns(delta: number) {
-        const { spawnInterval, unitsTarget } = CONFIG.spawn;
-        for (const f of [FACTION.player, FACTION.enemy] as const) {
-            this.spawnAcc[f] += delta;
-            if (this.spawnAcc[f] < spawnInterval) continue;
-            this.spawnAcc[f] = 0;
-            const cap = f === FACTION.player ? unitsTarget.player : unitsTarget.enemy;
-            if (this.livingByFaction[f] < cap) this.spawn(f);
-        }
-    }
-
-    private spawn(faction: Faction) {
+    // Spawn one unit of `typeIndex` for `faction` at (x, y); y is clamped into the lane band
+    // so the horde stays readable. Returns false if the side is at its cap or the pool is
+    // exhausted. Called by the Buildings system on each production beat.
+    spawnAt(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+        const cap = faction === FACTION.player
+            ? CONFIG.spawn.unitsTarget.player
+            : CONFIG.spawn.unitsTarget.enemy;
+        if (this.livingByFaction[faction] >= cap) return false;
         const sprite = this.freeSprites.pop();
-        if (!sprite) return; // pool exhausted (shouldn't happen given the cap)
+        if (!sprite) return false; // pool exhausted (shouldn't happen given the cap)
 
+        const t = typeIndex;
         const i = this.count++;
-        const t = this.pickType();
-        const laneIdx = this.pickLane();
-        const half = this.laneHalf[laneIdx];
-        const y = this.laneY[laneIdx] + Phaser.Math.FloatBetween(-half, half);
-        const x = faction === FACTION.player ? this.playerKeepX : this.enemyKeepX;
+        const half = this.laneHalf[0];
+        const yClamped = Phaser.Math.Clamp(y, this.laneY[0] - half, this.laneY[0] + half);
 
         this.x[i] = x;
-        this.y[i] = y;
+        this.y[i] = yClamped;
         this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
         this.hp[i] = this.typeHp[t];
         this.faction[i] = faction;
@@ -293,7 +270,7 @@ export class UnitManager {
         this.target[i] = -1;
         this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
         this.deathTimer[i] = 0;
-        this.lane[i] = laneIdx;
+        this.lane[i] = 0;
         this.type[i] = t;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
@@ -303,32 +280,13 @@ export class UnitManager {
             .setActive(true)
             .setVisible(true)
             .setAlpha(1)
-            .setScale(this.typeScale[t])           // per type (a recycled sprite may differ)
+            .setScale(this.typeScale[t])            // per type (a recycled sprite may differ)
             .setOrigin(0.5, this.typeFootAnchor[t]) // feet on the lane line
-            .setPosition(x, y)
-            .setDepth(y) // lower on screen draws in front, so ranks overlap correctly
-            .setFlipX(faction === FACTION.enemy) // right-facing art; enemy marches left
+            .setPosition(x, yClamped)
+            .setDepth(yClamped) // lower on screen draws in front, so ranks overlap correctly
+            .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
-    }
-
-    // Weighted random unit-type pick (CONFIG.unitTypes[].spawnWeight). Buildings take over
-    // the spawn source in Phase 3; this is the interim mix.
-    private pickType(): number {
-        const r = Phaser.Math.FloatBetween(0, this.typeWeightTotal);
-        for (let t = 0; t < this.typeCumWeight.length; t++) {
-            if (r <= this.typeCumWeight[t]) return t;
-        }
-        return this.typeCumWeight.length - 1;
-    }
-
-    // Weighted random lane pick (CONFIG.spawn.laneDistribution). One lane today, but the
-    // machinery stays so spawn weighting survives if lanes return.
-    private pickLane(): number {
-        const r = Phaser.Math.FloatBetween(0, this.laneWeightTotal);
-        for (let l = 0; l < this.laneCumWeight.length; l++) {
-            if (r <= this.laneCumWeight[l]) return l;
-        }
-        return this.laneCumWeight.length - 1;
+        return true;
     }
 
     // ---- Targeting (bucketed by lane x; only nearby cells are tested) ----

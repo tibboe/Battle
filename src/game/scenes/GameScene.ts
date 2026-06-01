@@ -1,9 +1,10 @@
 import * as Phaser from 'phaser';
-import { CONFIG, laneBottom, laneTop } from '../config';
+import { CONFIG } from '../config';
 import { CameraController } from '../controls/CameraController';
 import { DevPanel } from '../controls/DevPanel';
 import { loadProjectiles, loadUnitAtlas, registerUnitAnimations } from '../units/animations';
 import { Projectiles } from '../units/Projectiles';
+import { Buildings, loadBuildings } from '../structures/buildings';
 import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
@@ -21,6 +22,7 @@ export class GameScene extends Phaser.Scene {
     private units!: UnitManager;
     private floatingText!: FloatingText;
     private projectiles!: Projectiles;
+    private buildings!: Buildings;
     private unitPanel!: UnitPanel;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
@@ -47,6 +49,7 @@ export class GameScene extends Phaser.Scene {
     preload() {
         loadUnitAtlas(this);
         loadProjectiles(this);
+        loadBuildings(this);
         loadTerrainTileset(this);
         loadEnvironment(this);
     }
@@ -86,6 +89,9 @@ export class GameScene extends Phaser.Scene {
             (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
             (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
         );
+
+        // Production buildings (incl. the Castle keeps) emit their unit on a timer.
+        this.buildings = new Buildings(this, this.worldLayer, this.units);
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
@@ -151,52 +157,19 @@ export class GameScene extends Phaser.Scene {
         this.uiLayer.add([dim, title, restart]);
     }
 
-    // The battlefield: a flat grass island on open water (Tiny Swords tileset + decos),
-    // with a placeholder drawn keep flanking each end of the lane.
+    // The battlefield: a flat grass island on open water (Tiny Swords tileset + decos).
+    // The keeps are Castle sprites drawn by the Buildings system (created after the units).
     private drawBackdrop() {
-        const { world, keep } = CONFIG;
+        const { world } = CONFIG;
 
-        // Flat grass island on open water (leveling parked).
         this.terrain = new TerrainRenderer(this, this.worldLayer);
         this.terrain.draw();
 
-        // Keeps drawn on one static Graphics (modest command count, default depth 0 so
-        // it sits above terrain but below the units, which use world-y as depth).
+        // Subtle vignette so the world edge is felt, not a hard line.
         const g = this.add.graphics();
         this.worldLayer.add(g);
-
-        this.drawKeep(g, keep.margin, CONFIG.faction.player.tint);
-        this.drawKeep(g, world.width - keep.margin, CONFIG.faction.enemy.tint);
-
-        // Subtle vignette so the world edge is felt, not a hard line.
         g.lineStyle(10, 0x000000, 0.22);
         g.strokeRect(0, 0, world.width, world.height);
-    }
-
-    // A tall fortified keep flanking the lane: a stone wall with crenellations, a gate
-    // facing the lane, and a faction-coloured banner. Units of that side spawn in front of
-    // it and feed its single HP pool.
-    private drawKeep(g: Phaser.GameObjects.Graphics, cx: number, tint: number) {
-        const { keep, colors, lanes } = CONFIG;
-        const w = keep.size;
-        const top = laneTop() - 40;
-        const bottom = laneBottom() + 30;
-        const left = cx - w / 2;
-        const merlon = w / 6;
-
-        g.fillStyle(0x000000, 0.22).fillEllipse(cx, bottom, w * 1.1, 50);
-        g.fillStyle(colors.stone, 1).fillRect(left, top, w, bottom - top);
-        g.fillStyle(colors.stoneDark, 1).fillRect(left, bottom - 22, w, 22);
-        // Crenellations across the top.
-        g.fillStyle(colors.stone, 1);
-        for (let i = 0; i <= 6; i += 2) g.fillRect(left + i * merlon, top - merlon, merlon, merlon);
-        // A gate facing each lane.
-        g.fillStyle(colors.stoneDark, 1);
-        for (const lane of lanes) g.fillRect(cx - merlon * 0.6, lane.y - 42, merlon * 1.2, 84);
-        // Banner pole + faction flag at the top.
-        const poleTop = top - merlon - 70;
-        g.fillStyle(colors.trunk, 1).fillRect(cx - 2, poleTop, 4, 72);
-        g.fillStyle(tint, 1).fillTriangle(cx + 2, poleTop, cx + 42, poleTop + 11, cx + 2, poleTop + 24);
     }
 
     private buildHud() {
@@ -265,6 +238,7 @@ export class GameScene extends Phaser.Scene {
 
     update(_time: number, delta: number) {
         if (!this.gameOver) {
+            this.buildings.update(delta);
             this.units.update(delta);
         }
         this.floatingText.update(delta);
