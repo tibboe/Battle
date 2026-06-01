@@ -75,6 +75,13 @@ export class TerrainRenderer {
         this.layer.add(lift);
         this.grassEdge(x0, x1, top, true);
 
+        // 2b) Left/right grass side-edges, running from just under the top rim down to the
+        //     front cliff, so the level is enclosed on the sides instead of bleeding into
+        //     the field. The top corners come from the rim above; the bottom corners are
+        //     the ramps below, so the side runs stop one row short of the cliff.
+        this.vrun(TILES.grassLeft, x0, top + ts, cliffY - ts, DEPTH_EDGE);
+        this.vrun(TILES.grassRight, x1 - ts, top + ts, cliffY - ts, DEPTH_EDGE);
+
         // 3) Front edge as one mound profile  /---\ : a single UP-ramp "/" (the stairLeft
         //    half — grass low-left rising to high-right) at the LEFT corner, the open stone
         //    cliff "---" across the middle, and a single DOWN-ramp "\" (the stairRight half)
@@ -89,6 +96,12 @@ export class TerrainRenderer {
         this.tile(TILES.stairRightTop, cr, cliffY - ts, DEPTH_STAIR); // "\" down, right corner
         this.tile(TILES.stairRightBot, cr, cliffY, DEPTH_STAIR);
     }
+    // A vertical column of one tile frame from y0..y1 at column-left x.
+    private vrun(frame: number, x: number, y0: number, y1: number, depth: number) {
+        const ts = this.ts;
+        for (let y = y0; y < y1; y += ts) this.tile(frame, x, y, depth);
+    }
+
     private grassEdge(L: number, R: number, y: number, back: boolean) {
         const ts = this.ts;
         const [l, m, r] = back
