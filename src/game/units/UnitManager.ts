@@ -2,16 +2,22 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { animKey, FactionName, POOL_TEXTURE } from './animations';
 
-// Data-oriented horde with sprite pooling + neighbour-based combat (Milestone 1
-// architecture requirements).
+// Data-oriented horde with sprite pooling + neighbour-based combat.
 //
 //  - Units are plain records in parallel typed arrays (struct-of-arrays), kept compact
 //    via swap-remove. No per-unit class instances, no per-unit update loop.
 //  - A fixed pool of sprites is created ONCE up front; spawning borrows one and exit/
 //    death returns it. Nothing is created or destroyed mid-battle.
+//  - Each unit carries a `type` (index into CONFIG.unitTypes). Stats, art, and the spawn
+//    mix are all read from that table, so adding/retuning a unit type is data-only. The
+//    table is mirrored into typed lookup arrays so the hot loops stay allocation-free.
 //  - Movement is plain position maths along the lane; no physics bodies.
 //  - Targeting buckets units by lane position and only tests nearby cells — never an
 //    all-pairs O(n^2) scan. Targets are re-acquired a few times a second, not per frame.
+//
+// Combat is plain melee-nearest for every type right now; the weapon/armour counter
+// matrix, ranged arrows, and the Monk's heal arrive in Phase 2. Support units (the Monk)
+// never engage — they just march.
 
 export const FACTION = { player: 0, enemy: 1 } as const;
 export type Faction = (typeof FACTION)[keyof typeof FACTION];
@@ -40,7 +46,23 @@ export class UnitManager {
     private readonly attackCd: Float32Array; // ms until next strike
     private readonly deathTimer: Float32Array; // ms left of death anim before recycle
     private readonly lane: Uint8Array;        // which lane index this unit marches on
+    private readonly type: Uint8Array;        // index into the roster lookups below
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
+
+    // Roster lookups: a typed-array mirror of CONFIG.unitTypes, indexed by unit type, so
+    // the per-frame loops read scalars instead of walking config objects.
+    private readonly typeArt: string[];
+    private readonly typeHp: Int16Array;
+    private readonly typeDamage: Int16Array;
+    private readonly typeRange2: Float32Array;   // engage distance squared
+    private readonly typeReach2: Float32Array;   // strike-validity distance squared (range + slack)
+    private readonly typeAttackInterval: Float32Array;
+    private readonly typeMoveSpeed: Float32Array;
+    private readonly typeScale: Float32Array;
+    private readonly typeFootAnchor: Float32Array;
+    private readonly typeCanAttack: Uint8Array;  // 0 = never engages (support / no range)
+    private readonly typeCumWeight: Float32Array; // cumulative spawn weights for picking
+    private readonly typeWeightTotal: number;
 
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
     private readonly laneY: Float32Array;
@@ -90,37 +112,74 @@ export class UnitManager {
         this.attackCd = new Float32Array(this.capacity);
         this.deathTimer = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
+        this.type = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
+
+        // Mirror the unit roster into typed lookups + a cumulative spawn-weight table.
+        const types = CONFIG.unitTypes;
+        const nTypes = types.length;
+        this.typeArt = new Array(nTypes);
+        this.typeHp = new Int16Array(nTypes);
+        this.typeDamage = new Int16Array(nTypes);
+        this.typeRange2 = new Float32Array(nTypes);
+        this.typeReach2 = new Float32Array(nTypes);
+        this.typeAttackInterval = new Float32Array(nTypes);
+        this.typeMoveSpeed = new Float32Array(nTypes);
+        this.typeScale = new Float32Array(nTypes);
+        this.typeFootAnchor = new Float32Array(nTypes);
+        this.typeCanAttack = new Uint8Array(nTypes);
+        this.typeCumWeight = new Float32Array(nTypes);
+        let maxRange = 1;
+        let cumType = 0;
+        for (let t = 0; t < nTypes; t++) {
+            const ut = types[t];
+            this.typeArt[t] = ut.art;
+            this.typeHp[t] = ut.hp;
+            this.typeDamage[t] = ut.damage;
+            this.typeRange2[t] = ut.range * ut.range;
+            this.typeReach2[t] = (ut.range + 8) * (ut.range + 8);
+            this.typeAttackInterval[t] = ut.attackInterval;
+            this.typeMoveSpeed[t] = ut.moveSpeed;
+            this.typeScale[t] = ut.scale;
+            this.typeFootAnchor[t] = ut.footAnchor;
+            // Support units (and anything with no range) never engage — they only march.
+            this.typeCanAttack[t] = ut.role !== 'support' && ut.range > 0 ? 1 : 0;
+            cumType += Math.max(0, ut.spawnWeight);
+            this.typeCumWeight[t] = cumType;
+            if (ut.range > maxRange) maxRange = ut.range;
+        }
+        this.typeWeightTotal = cumType;
 
         // Derive lane geometry + a cumulative spawn-weight table from config.
         const lanes = CONFIG.lanes;
         this.laneY = new Float32Array(lanes.length);
         this.laneHalf = new Float32Array(lanes.length);
         this.laneCumWeight = new Float32Array(lanes.length);
-        let cum = 0;
+        let cumLane = 0;
         for (let l = 0; l < lanes.length; l++) {
             this.laneY[l] = lanes[l].y;
             this.laneHalf[l] = lanes[l].thickness / 2 - 24; // keep feet inside the band
-            cum += CONFIG.spawn.laneDistribution[l] ?? 0;
-            this.laneCumWeight[l] = cum;
+            cumLane += CONFIG.spawn.laneDistribution[l] ?? 0;
+            this.laneCumWeight[l] = cumLane;
         }
-        this.laneWeightTotal = cum;
+        this.laneWeightTotal = cumLane;
 
         // Build the whole sprite pool once. These never get destroyed. They live on the
-        // world layer so the UI camera can ignore them.
+        // world layer so the UI camera can ignore them. Origin/scale are set per spawn
+        // (types differ); the first type's values are a sane default for the idle pool.
         for (let i = 0; i < this.capacity; i++) {
             const s = scene.add.sprite(0, 0, POOL_TEXTURE)
-                .setOrigin(0.5, CONFIG.unit.footAnchor) // feet on the lane line
-                .setScale(CONFIG.unit.renderScale)
+                .setOrigin(0.5, this.typeFootAnchor[0])
+                .setScale(this.typeScale[0])
                 .setActive(false)
                 .setVisible(false);
             layer.add(s);
             this.freeSprites.push(s);
         }
 
-        // Cells must be at least as wide as the engage range so the ±1 neighbour scan
-        // never misses an in-range enemy.
-        this.cellSize = CONFIG.unit.range;
+        // Cells must be at least as wide as the LONGEST engage range so the ±1 neighbour
+        // scan never misses an in-range enemy for any unit type.
+        this.cellSize = maxRange;
         this.numCells = Math.ceil(CONFIG.world.width / this.cellSize) + 1;
         this.buckets = Array.from({ length: this.numCells }, () => []);
 
@@ -134,7 +193,7 @@ export class UnitManager {
         this.enemyKeepX = CONFIG.world.width - CONFIG.keep.margin;
 
         // Tiny Swords has no death animation, so death is a synthesised fade of this length.
-        this.deathDuration = CONFIG.unit.deathFadeMs;
+        this.deathDuration = CONFIG.combat.deathFadeMs;
     }
 
     get activeCount(): number {
@@ -172,6 +231,7 @@ export class UnitManager {
         if (!sprite) return; // pool exhausted (shouldn't happen given the cap)
 
         const i = this.count++;
+        const t = this.pickType();
         const laneIdx = this.pickLane();
         const half = this.laneHalf[laneIdx];
         const y = this.laneY[laneIdx] + Phaser.Math.FloatBetween(-half, half);
@@ -179,14 +239,15 @@ export class UnitManager {
 
         this.x[i] = x;
         this.y[i] = y;
-        this.speed[i] = CONFIG.unit.moveSpeed * Phaser.Math.FloatBetween(0.9, 1.1);
-        this.hp[i] = CONFIG.unit.hp;
+        this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
+        this.hp[i] = this.typeHp[t];
         this.faction[i] = faction;
         this.state[i] = STATE.walk;
         this.target[i] = -1;
-        this.attackCd[i] = Phaser.Math.FloatBetween(0, CONFIG.unit.attackInterval); // desync
+        this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
         this.deathTimer[i] = 0;
         this.lane[i] = laneIdx;
+        this.type[i] = t;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
 
@@ -194,10 +255,22 @@ export class UnitManager {
             .setActive(true)
             .setVisible(true)
             .setAlpha(1)
+            .setScale(this.typeScale[t])           // per type (a recycled sprite may differ)
+            .setOrigin(0.5, this.typeFootAnchor[t]) // feet on the lane line
             .setPosition(x, y)
             .setDepth(y) // lower on screen draws in front, so ranks overlap correctly
             .setFlipX(faction === FACTION.enemy) // right-facing art; enemy marches left
-            .play(animKey(FACTION_NAME[faction], 'walk'));
+            .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
+    }
+
+    // Weighted random unit-type pick (CONFIG.unitTypes[].spawnWeight). Buildings take over
+    // the spawn source in Phase 3; this is the interim mix.
+    private pickType(): number {
+        const r = Phaser.Math.FloatBetween(0, this.typeWeightTotal);
+        for (let t = 0; t < this.typeCumWeight.length; t++) {
+            if (r <= this.typeCumWeight[t]) return t;
+        }
+        return this.typeCumWeight.length - 1;
     }
 
     // Weighted random lane pick (CONFIG.spawn.laneDistribution). One lane today, but the
@@ -215,17 +288,24 @@ export class UnitManager {
     private acquireTargets() {
         for (let c = 0; c < this.numCells; c++) this.buckets[c].length = 0;
 
-        // Bucket living units by x-cell.
+        // Bucket living units by x-cell (support units included — they are valid targets).
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             const c = this.cellOf(i);
             this.buckets[c].push(i);
         }
 
-        // Single melee engage distance (flat field — no elevation).
-        const range2 = CONFIG.unit.range * CONFIG.unit.range;
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
+
+            // Support / non-attacking units never engage — keep them marching.
+            if (!this.typeCanAttack[this.type[i]]) {
+                this.target[i] = -1;
+                this.setState(i, STATE.walk);
+                continue;
+            }
+
+            const range2 = this.typeRange2[this.type[i]];
             const ci = this.cellOf(i);
             let best = -1;
             let bestD2 = Infinity;
@@ -259,8 +339,6 @@ export class UnitManager {
 
     private step(delta: number) {
         const dt = delta / 1000;
-        // Strike-validity distance (a little slack on the engage range).
-        const meleeReach2 = (CONFIG.unit.range + 8) * (CONFIG.unit.range + 8);
         // Backwards because despawn() swap-removes from the tail.
         for (let i = this.count - 1; i >= 0; i--) {
             const st = this.state[i];
@@ -287,7 +365,7 @@ export class UnitManager {
                 continue;
             }
 
-            // STATE.attack
+            // STATE.attack — strike with this unit type's damage on its own cadence.
             this.attackCd[i] -= delta;
             if (this.attackCd[i] > 0) continue;
             const t = this.target[i];
@@ -296,9 +374,9 @@ export class UnitManager {
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
-                if (dx * dx + dy * dy <= meleeReach2) {
-                    this.attackCd[i] += CONFIG.unit.attackInterval;
-                    this.hp[t] -= CONFIG.unit.damage;
+                if (dx * dx + dy * dy <= this.typeReach2[this.type[i]]) {
+                    this.attackCd[i] += this.typeAttackInterval[this.type[i]];
+                    this.hp[t] -= this.typeDamage[this.type[i]];
                     if (this.hp[t] <= 0) this.kill(t);
                     continue;
                 }
@@ -357,7 +435,7 @@ export class UnitManager {
             this.pushY[i] = py;
         }
 
-        // Apply, capped to maxStep px this frame, keeping units within the lane band.
+        // Apply, capped to maxStep px this frame, keeping units within their lane band.
         const maxStep = CONFIG.separation.strength * (delta / 1000);
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
@@ -403,11 +481,12 @@ export class UnitManager {
         if (this.state[i] === next) return;
         this.state[i] = next;
         const sprite = this.sprites[i]!;
+        const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
         if (next === STATE.attack) {
-            sprite.play(animKey(name, 'attack')); // loops while engaged
+            sprite.play(animKey(art, name, 'attack')); // loops while engaged
         } else if (next === STATE.walk) {
-            sprite.play(animKey(name, 'walk'));
+            sprite.play(animKey(art, name, 'walk'));
         }
     }
 
@@ -431,6 +510,7 @@ export class UnitManager {
             this.attackCd[i] = this.attackCd[last];
             this.deathTimer[i] = this.deathTimer[last];
             this.lane[i] = this.lane[last];
+            this.type[i] = this.type[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

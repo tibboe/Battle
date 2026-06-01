@@ -1,6 +1,33 @@
 // All tunable game numbers live here so later milestones extend this one object
 // instead of hunting magic numbers through the code. Edit values, not logic.
 
+// Counter-matrix axes. A unit's weapon type is checked against its target's armour type
+// to scale damage — the matrix itself and its application arrive in Phase 2. Monk has no
+// weapon ('None') because it never attacks.
+export type Weapon = 'Blade' | 'Pierce' | 'Blunt' | 'Light' | 'None';
+export type Armour = 'Unarmored' | 'Light' | 'Medium' | 'Heavy';
+// Behaviour class: melee/ranged fight; support never attacks (the Monk heals in Phase 2).
+export type UnitRole = 'melee' | 'ranged' | 'support';
+
+// One row of the unit roster. Stats are the director's to tune; `art` names the sprite
+// set wired in units/animations.ts (which also owns the SOURCE frame size, since that is
+// fixed by the art, not a gameplay knob).
+export interface UnitType {
+    key: string;
+    art: string;
+    role: UnitRole;
+    hp: number;
+    damage: number;
+    range: number;          // centre-to-centre engage distance (px)
+    attackInterval: number; // ms between strikes
+    moveSpeed: number;      // px/sec along the lane
+    weapon: Weapon;
+    armour: Armour;
+    scale: number;          // display scale applied to the source frame
+    footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
+    spawnWeight: number;    // relative chance to be the next unit spawned (until Phase 3)
+}
+
 export const CONFIG = {
     // The battlefield is much larger than the phone viewport; the camera shows a
     // slice of it and can zoom out to frame the whole thing. Aspect (~2.1:1) is close
@@ -41,22 +68,31 @@ export const CONFIG = {
         size: 320,
     },
 
-    // One melee unit type: the Tiny Swords "Warrior" (faces right; blue art for the player,
-    // red for the enemy — see units/animations.ts). Source frames are 192x192 with the
-    // character centred and feet ~80% down the frame.
-    unit: {
-        hp: 30,
-        damage: 10,           // 3 hits to kill at 30 hp
-        range: 64,            // centre-to-centre engage distance. ~= the knight's body
-                              // width at this scale, so the front line meets edge-to-edge
-                              // instead of piling up. Raise for more spacing, lower to scrum.
-        attackInterval: 600,  // ms between attacks
-        moveSpeed: 70,        // px per second along the lane
-        frameSize: 192,       // source frame px — never mix sizes
-        renderScale: 0.8,     // display scale; visible knight ~= 80px tall on screen
-        footAnchor: 0.8,      // y within the frame where the feet sit (sprite origin.y)
-        deathFadeMs: 400,     // synthesised death fade-out (pack has no death animation)
-    },
+    // The unit roster — all five Tiny Swords types, data-driven. UnitManager reads these
+    // rather than hard-coded numbers; each spawn picks a type weighted by `spawnWeight`.
+    // The Warrior row reproduces the Milestone-1 numbers EXACTLY (hp 30 = 3 hits to kill;
+    // range ~= one body width so the front line meets edge-to-edge instead of piling up).
+    // The other four are sensible starting points to tune by playing. Combat is plain melee
+    // for now — the weapon/armour counter matrix, the Archer's arrow, and the Monk's heal
+    // all arrive in Phase 2; until then the Monk simply marches (it has no attack) and the
+    // Archer "shoots" at melee range.
+    unitTypes: [
+        { key: 'warrior', art: 'warrior', role: 'melee',
+          hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
+          weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8, spawnWeight: 3 },
+        { key: 'pawn', art: 'pawn', role: 'melee',
+          hp: 20, damage: 6, range: 60, attackInterval: 500, moveSpeed: 82,
+          weapon: 'Light', armour: 'Unarmored', scale: 0.72, footAnchor: 0.8, spawnWeight: 4 },
+        { key: 'lancer', art: 'lancer', role: 'melee',
+          hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
+          weapon: 'Pierce', armour: 'Medium', scale: 0.5, footAnchor: 0.78, spawnWeight: 1 },
+        { key: 'archer', art: 'archer', role: 'ranged',
+          hp: 18, damage: 8, range: 72, attackInterval: 700, moveSpeed: 76,
+          weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 2 },
+        { key: 'monk', art: 'monk', role: 'support',
+          hp: 24, damage: 0, range: 0, attackInterval: 0, moveSpeed: 72,
+          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 1 },
+    ] as UnitType[],
 
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in
     // terrain/tileset.ts; swap the loaded variant there (Tilemap_color1..5) to recolour.
@@ -67,6 +103,7 @@ export const CONFIG = {
     // Combat tuning.
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
+        deathFadeMs: 400, // synthesised death fade-out (the pack has no death animation)
     },
 
     // Soft separation: units nudge away from any neighbour (friend or foe) closer than
