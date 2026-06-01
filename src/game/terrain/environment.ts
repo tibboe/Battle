@@ -52,12 +52,12 @@ export const WATER_ROCKS = Array.from({ length: 4 }, (_, i) => ({
     anim: `anim-wrock-${i + 1}`,
 }));
 
-// Animated trees — sway loops. Tree1/2 are firs (256² × 6), Tree3/4 are leafy (192² × 8).
+// Animated trees — sway loops, all 192px wide × 8 frames (firs are 256 tall, leafy 192).
 export const TREES = [
-    { key: 'env-tree-1', file: `${BASE}/Resources/Wood/Trees/Tree1.png`, size: 256, frames: 6, rate: 6, anim: 'anim-tree-1' },
-    { key: 'env-tree-2', file: `${BASE}/Resources/Wood/Trees/Tree2.png`, size: 256, frames: 6, rate: 6, anim: 'anim-tree-2' },
-    { key: 'env-tree-3', file: `${BASE}/Resources/Wood/Trees/Tree3.png`, size: 192, frames: 8, rate: 7, anim: 'anim-tree-3' },
-    { key: 'env-tree-4', file: `${BASE}/Resources/Wood/Trees/Tree4.png`, size: 192, frames: 8, rate: 7, anim: 'anim-tree-4' },
+    { key: 'env-tree-1', file: `${BASE}/Resources/Wood/Trees/Tree1.png`, w: 192, h: 256, frames: 8, rate: 7, anim: 'anim-tree-1' },
+    { key: 'env-tree-2', file: `${BASE}/Resources/Wood/Trees/Tree2.png`, w: 192, h: 256, frames: 8, rate: 7, anim: 'anim-tree-2' },
+    { key: 'env-tree-3', file: `${BASE}/Resources/Wood/Trees/Tree3.png`, w: 192, h: 192, frames: 8, rate: 7, anim: 'anim-tree-3' },
+    { key: 'env-tree-4', file: `${BASE}/Resources/Wood/Trees/Tree4.png`, w: 192, h: 192, frames: 8, rate: 7, anim: 'anim-tree-4' },
 ];
 
 // Static tree stumps — 4 variants, 192×256 (base at bottom-centre).
@@ -85,7 +85,7 @@ export function loadEnvironment(scene: Phaser.Scene) {
     for (const s of STUMPS) scene.load.image(s.key, encodeURI(s.file));
     for (const b of BUSHES) scene.load.spritesheet(b.key, encodeURI(b.file), { frameWidth: b.size, frameHeight: b.size });
     for (const w of WATER_ROCKS) scene.load.spritesheet(w.key, encodeURI(w.file), { frameWidth: w.size, frameHeight: w.size });
-    for (const t of TREES) scene.load.spritesheet(t.key, encodeURI(t.file), { frameWidth: t.size, frameHeight: t.size });
+    for (const t of TREES) scene.load.spritesheet(t.key, encodeURI(t.file), { frameWidth: t.w, frameHeight: t.h });
 }
 
 // `yoyo` plays the strip forward then backward so a one-directional sway eases back
