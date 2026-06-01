@@ -205,8 +205,9 @@ export class UnitManager {
         }
 
         // Cells must be at least as wide as the LONGEST engage range so the ±1 neighbour
-        // scan never misses an in-range enemy for any unit type.
-        this.cellSize = maxRange;
+        // scan never misses an in-range enemy. Headroom (500) lets range be tuned UP live
+        // without rebuilding the grid; the Range editor is clamped under it.
+        this.cellSize = Math.max(maxRange, 500);
         this.numCells = Math.ceil(CONFIG.world.width / this.cellSize) + 1;
         this.buckets = Array.from({ length: this.numCells }, () => []);
 
@@ -225,6 +226,26 @@ export class UnitManager {
 
     get activeCount(): number {
         return this.count;
+    }
+
+    // Re-read per-type stats from CONFIG into the typed lookups, so live edits from the unit
+    // panel take effect without a restart. Damage / range / attack cadence apply to all
+    // units immediately; hp / speed / scale / anchor apply to units spawned from now on.
+    refreshFromConfig() {
+        const types = CONFIG.unitTypes;
+        for (let t = 0; t < this.nTypes; t++) {
+            const ut = types[t];
+            this.typeHp[t] = ut.hp;
+            this.typeDamage[t] = ut.damage;
+            this.typeRange2[t] = ut.range * ut.range;
+            this.typeReach2[t] = (ut.range + 8) * (ut.range + 8);
+            this.typeAttackInterval[t] = ut.attackInterval;
+            this.typeMoveSpeed[t] = ut.moveSpeed;
+            this.typeScale[t] = ut.scale;
+            this.typeFootAnchor[t] = ut.footAnchor;
+            this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
+            this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
+        }
     }
 
     // Living (non-dying) units of a given type on a given side — for the unit panel.

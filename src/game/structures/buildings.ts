@@ -32,10 +32,10 @@ export function loadBuildings(scene: Phaser.Scene) {
 interface Producer {
     faction: Faction;
     typeIndex: number;
-    x: number;      // where the unit musters (the keep front)
-    y: number;      // band-clamped spawn y, biased to the building's position
-    every: number;  // ms between emits
-    acc: number;    // accumulator
+    x: number;            // where the unit musters (the keep front)
+    y: number;            // band-clamped spawn y, biased to the building's position
+    cfg: { every: number }; // the config building (read live so edits apply instantly)
+    acc: number;          // accumulator
 }
 
 export class Buildings {
@@ -68,7 +68,7 @@ export class Buildings {
                     typeIndex,
                     x: keepX, // units enter at the keep front for consistent marching
                     y: Phaser.Math.Clamp(by, bandTop, bandBottom),
-                    every: b.every,
+                    cfg: b, // live reference — editing every applies without a restart
                     acc: Phaser.Math.FloatBetween(0, b.every), // desync the first emit
                 });
             }
@@ -96,8 +96,8 @@ export class Buildings {
         const scale = Math.max(0.05, CONFIG.production.rateScale); // higher = faster
         for (const p of this.producers) {
             p.acc += delta * scale;
-            if (p.acc >= p.every) {
-                p.acc -= p.every;
+            if (p.acc >= p.cfg.every) {
+                p.acc -= p.cfg.every;
                 this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y);
             }
         }
