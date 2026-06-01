@@ -389,9 +389,23 @@ export class UnitManager {
             }
 
             if (st === STATE.walk) {
+                const sprite = this.sprites[i]!;
+                // Funnel: drift toward the lane-path centre until within the tight path,
+                // so the streams from the spread-out buildings merge into one lane. Read
+                // live from config so the Dev panel's "Lane width" applies instantly.
+                const lane = CONFIG.lanes[this.lane[i]];
+                const half = lane.pathWidth * 0.5;
+                const off = this.laneY[this.lane[i]] - this.y[i]; // +ve = unit is above centre
+                if (off > half || off < -half) {
+                    const pull = lane.funnelSpeed * dt;
+                    const room = Math.abs(off) - half; // don't overshoot the path edge
+                    this.y[i] += Math.sign(off) * Math.min(pull, room);
+                    sprite.y = this.y[i];
+                    sprite.setDepth(this.y[i]);
+                }
                 const dir = this.faction[i] === FACTION.player ? 1 : -1;
                 this.x[i] += dir * this.speed[i] * dt;
-                this.sprites[i]!.x = this.x[i];
+                sprite.x = this.x[i];
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
                 if (reachedEnd) {
                     // Damage the opposing keep, then recycle this unit.

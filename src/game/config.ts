@@ -39,11 +39,12 @@ export const CONFIG = {
         height: 1900,
     },
 
-    // ONE flat horizontal lane the armies march along (left↔right). Elevation is parked
-    // (the pack can't do broad stairs), so the field is a single flat plain. `y` is the
-    // lane centre; `thickness` is the band the horde spreads within.
+    // ONE flat horizontal lane the armies march along (left↔right). `y` is the lane centre.
+    // `thickness` is the OUTER band — the max vertical spread / hard clamp, wide enough to
+    // hold the buildings' spawn heights. `pathWidth` is the TIGHT path units funnel into as
+    // they march (the "Lane width" knob); `funnelSpeed` is how fast (px/s) they drift to it.
     lanes: [
-        { y: 950, thickness: 420 },
+        { y: 950, thickness: 700, pathWidth: 200, funnelSpeed: 70 },
     ],
 
     // The battlefield is a flat grass ISLAND on open water. `margin` = px of water framing

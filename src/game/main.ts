@@ -1,5 +1,6 @@
 import { AUTO, Game, Scale, Types } from 'phaser';
 import { GameScene } from './scenes/GameScene';
+import { applySavedSettings } from './settings';
 
 // Single-scene game that fills the browser window (landscape on the phone). The
 // camera shows a slice of a much larger world; see config.ts for the world size.
@@ -19,6 +20,8 @@ const config: Types.Core.GameConfig = {
 };
 
 const StartGame = (parent: string) => {
+    // Re-apply the director's saved tunables over CONFIG before the scene reads it.
+    applySavedSettings();
     return new Game({ ...config, parent });
 };
 

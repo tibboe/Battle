@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
+import { resetSettings, saveSettings } from '../settings';
 
 // A lightweight on-screen DEV tuning panel for finding the feel on the phone without
 // rebuilding. It edits the same CONFIG numbers you'd otherwise change in config.ts.
@@ -49,6 +50,7 @@ export class DevPanel {
         // The tunables exposed. Structural ones (live:false) rebuild on restart.
         this.settings = [
             { label: 'Prod rate', get: () => CONFIG.production.rateScale, set: (v) => (CONFIG.production.rateScale = v), step: 0.25, min: 0.25, max: 4, live: true, fmt: (v) => `${v}×` },
+            { label: 'Lane width', get: () => CONFIG.lanes[0].pathWidth, set: (v) => (CONFIG.lanes[0].pathWidth = v), step: 20, min: 40, max: 600, live: true },
             { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Map width', get: () => CONFIG.world.width, set: (v) => (CONFIG.world.width = v), step: 500, min: 2000, max: 8000, live: false },
@@ -98,12 +100,17 @@ export class DevPanel {
             this.layer.add([label, value, minus, plus]);
         });
 
-        // Restart row at the bottom.
+        // Restart + Reset row at the bottom.
         const restartY = top + 30 + this.settings.length * rowH;
-        const restartBtn = this.mkButton('↻ Restart battle', x + 10, restartY, () => this.restart());
+        const restartBtn = this.mkButton('↻ Restart', x + 10, restartY, () => this.restart());
         restartBtn.setBackgroundColor('#2a6cd6');
-        this.rowObjects.push(restartBtn);
-        this.layer.add(restartBtn);
+        const resetBtn = this.mkButton('⊘ Reset saved', x + 110, restartY, () => {
+            resetSettings();
+            window.location.reload(); // back to config.ts defaults
+        });
+        resetBtn.setBackgroundColor('#6a3a3a');
+        this.rowObjects.push(restartBtn, resetBtn);
+        this.layer.add([restartBtn, resetBtn]);
 
         this.refresh();
         this.setOpen(panelOpen);
@@ -130,6 +137,7 @@ export class DevPanel {
         const s = this.settings[i];
         if (s.bool) {
             s.set(s.get() > 0 ? 0 : 1); // either −/+ flips an ON/OFF toggle
+            saveSettings();
             this.refresh();
             return;
         }
@@ -140,6 +148,7 @@ export class DevPanel {
         );
         if (next === s.get()) return;
         s.set(next);
+        saveSettings();
         if (s.live) {
             this.refresh();
         } else {
