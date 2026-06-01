@@ -16,20 +16,23 @@ export const CONFIG = {
     // any boundary where two lanes differ in level. Lanes are DATA — change levels here
     // and spawning, movement, targeting, terrain and the high-ground rule all follow.
     //
-    // Default layout: a TERRACED staircase — highest lane at the back (top of screen)
-    // stepping down to the front, each tier dropping via a cliff that faces the viewer.
-    // This is how the Tiny Swords pack is built to terrace (cliffs only face down/front),
-    // and it's what STAIRS plug into: in M3, stairs cut into each cliff face connect the
-    // tiers (the pack's Example 2). No upward-facing "rise" tile exists, so we don't fake
-    // one.
+    // Default layout: a RAISED MIDDLE plateau between two ground lanes, built honestly
+    // from the pack's own pieces (no faked upside-down cliff):
+    //   • grass plateau surface on the middle lane,
+    //   • a stone CLIFF on its FRONT edge (the drop down to the bottom lane),
+    //   • the pack's grassy SLOPED-CORNER pieces at the plateau's left/right ends
+    //     (frames 36/45 and 39/48 — the diagonal grass-to-stone "ramp" ends),
+    //   • a grass BACK-FRINGE on the up-slope edge toward the top lane, because the
+    //     pack has no upward-facing stone cliff — elevation there reads from the
+    //     fringe + level shading rather than a stone face.
     //
     // The y/thickness/cliffHeight numbers are tied together: the GAP between two
     // adjacent lane bands must equal `elevation.cliffHeight` so the 2-tile cliff art
     // fits exactly. Spacing between lane centres = thickness + cliffHeight (300+128=428).
     lanes: [
-        { y: 522, level: 2, thickness: 300 },  // high ground (top of screen)
-        { y: 950, level: 1, thickness: 300 },  // middle terrace
-        { y: 1378, level: 0, thickness: 300 }, // low ground (bottom)
+        { y: 522, level: 0, thickness: 300 },  // ground (top of screen)
+        { y: 950, level: 1, thickness: 300 },  // raised plateau (middle)
+        { y: 1378, level: 0, thickness: 300 }, // ground (bottom)
     ],
 
     // Elevation between lanes: the cliff face the upper plateau drops down to the lane

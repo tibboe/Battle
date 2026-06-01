@@ -101,9 +101,10 @@ export class TerrainRenderer {
         const g = this.scene.add.graphics().setDepth(DEPTH_CAST_SHADOW);
         const bands = 6;
         for (const b of this.boundaries()) {
-            // Foot of the cliff, and the direction the shadow spills (away from the plateau).
-            const footY = b.flip ? b.gapTop : b.gapTop + 2 * ts;
-            const dir = b.flip ? -1 : 1;
+            if (b.flip) continue; // rise edges have no stone cliff to cast a shadow
+            // Foot of the 1-tile ground cliff, and the direction the shadow spills south.
+            const footY = b.gapTop + ts;
+            const dir = 1;
             for (let s = 0; s < bands; s++) {
                 const t = s / bands;
                 const sliceH = castShadowDepth / bands + 1;
@@ -115,11 +116,15 @@ export class TerrainRenderer {
         this.layer.add(g);
     }
 
-    // One 2-tile cliff filling the gap [gapTop, gapTop + 2·ts]. When `flip` is false the
-    // higher (north) lane drops down: grass-capped row on top, foot row below, with a
-    // grass lip overhanging the plateau above. When `flip` is true the higher (south)
-    // lane rises up: the rows are swapped and flipped vertically (foot at the top, grass
-    // crest at the bottom), with a grass back-fringe on the plateau below.
+    // A boundary where the two lanes differ in level. The pack only draws stone cliffs
+    // that FACE THE VIEWER (a downward drop), so we treat the two directions differently:
+    //   • DROP (flip=false, higher lane on top): a 2-tile stone cliff fills the gap, its
+    //     left/right ENDS replaced by the pack's grassy sloped-corner pieces so the
+    //     plateau ramps down to the ground at its ends instead of stopping at a hard
+    //     wall. A grass lip overhangs on the plateau above.
+    //   • RISE (flip=true, higher lane below): there is no upward-facing stone tile, so we
+    //     don't fake one — the raised plateau's back edge is capped with a grass
+    //     back-fringe and the elevation reads from that fringe plus the level shading.
     private drawCliff(b: { gapTop: number; flip: boolean }) {
         const ts = this.ts;
         const L = CONFIG.elevation.rampInset;
@@ -127,23 +132,21 @@ export class TerrainRenderer {
         const topY = b.gapTop;
         const botY = b.gapTop + ts;
 
-        if (!b.flip) {
-            this.cliffRow(L, R, topY, TILES.cliffTopLeft, TILES.cliffTopMid, TILES.cliffTopRight, false);
-            this.cliffRow(L, R, botY, TILES.cliffBotLeft, TILES.cliffBotMid, TILES.cliffBotRight, false);
-            this.grassEdge(L, R, b.gapTop - ts, false); // lip overhang on the plateau above
-        } else {
-            this.cliffRow(L, R, topY, TILES.cliffBotLeft, TILES.cliffBotMid, TILES.cliffBotRight, true);
-            this.cliffRow(L, R, botY, TILES.cliffTopLeft, TILES.cliffTopMid, TILES.cliffTopRight, true);
-            this.grassEdge(L, R, b.gapTop + 2 * ts, true); // back-fringe on the plateau below
+        if (b.flip) {
+            // Up-slope edge of the plateau below: grass back-fringe only, no stone.
+            this.grassEdge(L, R, b.gapTop + 2 * ts, true);
+            return;
         }
-    }
 
-    // A row of the cliff face: rounded left cap + tiled middle run + rounded right cap.
-    private cliffRow(L: number, R: number, y: number, left: number, mid: number, right: number, flip: boolean) {
-        const ts = this.ts;
-        this.tile(left, L, y, DEPTH_CLIFF, flip);
-        this.tileRun(mid, L + ts, R - ts, y, DEPTH_CLIFF, flip);
-        this.tile(right, R - ts, y, DEPTH_CLIFF, flip);
+        // Front drop, GROUND style: only the grass-capped stone cliff TOP row (frames
+        // 41/42/43). The pack's lower cliff row + the diagonal slope ends carry a watery
+        // foam base (they're the water-island pieces), so we leave them out on our
+        // landlocked field — this is a clean 1-tile ground cliff with rounded stone ends.
+        this.tile(TILES.cliffTopLeft, L, topY, DEPTH_CLIFF);
+        this.tileRun(TILES.cliffTopMid, L + ts, R - ts, topY, DEPTH_CLIFF);
+        this.tile(TILES.cliffTopRight, R - ts, topY, DEPTH_CLIFF);
+        // Grass lip overhanging the cliff top, rounded at both ends.
+        this.grassEdge(L, R, b.gapTop - ts, false);
     }
 
     // The grass edge framing a cliff: the front-lip overhang (flip=false) above a drop,
