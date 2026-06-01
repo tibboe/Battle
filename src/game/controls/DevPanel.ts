@@ -1,14 +1,14 @@
 import * as Phaser from 'phaser';
-import { CONFIG, makeLanes } from '../config';
+import { CONFIG } from '../config';
 
 // A lightweight on-screen DEV tuning panel for finding the feel on the phone without
 // rebuilding. It edits the same CONFIG numbers you'd otherwise change in config.ts.
 //
-//   • "live" settings (spawn rate, high-ground bonus) are read by the systems every
-//     frame, so they take effect instantly.
-//   • "structural" settings (army size, map width, lane count) change how the world is
-//     built, so the panel restarts the battle to apply them. CONFIG is the single
-//     source of truth, so the new values survive the restart.
+//   • "live" settings (spawn rate) are read by the systems every frame, so they take
+//     effect instantly.
+//   • "structural" settings (army size, map width, water edge, forest, clouds) change how
+//     the world is built, so the panel restarts the battle to apply them. CONFIG is the
+//     single source of truth, so the new values survive the restart.
 //
 // Purely a builder/test tool — not a game menu. Lives on the UI layer (fixed to the
 // screen, ignored by world zoom/pan), drawn from plain Phaser text + rectangles.
@@ -48,11 +48,12 @@ export class DevPanel {
         // The tunables exposed. Structural ones (live:false) rebuild on restart.
         this.settings = [
             { label: 'Spawn ms', get: () => CONFIG.spawn.spawnInterval, set: (v) => (CONFIG.spawn.spawnInterval = v), step: 25, min: 50, max: 800, live: true },
-            { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 20, min: 20, max: 400, live: false },
-            { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 20, min: 20, max: 400, live: false },
+            { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
+            { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Map width', get: () => CONFIG.world.width, set: (v) => (CONFIG.world.width = v), step: 500, min: 2000, max: 8000, live: false },
-            { label: 'Lanes', get: () => CONFIG.lanes.length, set: (v) => (CONFIG.lanes = makeLanes(v)), step: 1, min: 1, max: 4, live: false },
-            { label: 'High-grnd', get: () => CONFIG.combat.highGround.damageMult, set: (v) => (CONFIG.combat.highGround.damageMult = v), step: 0.25, min: 1, max: 4, live: true, fmt: (v) => `${v.toFixed(2)}x` },
+            { label: 'Water edge', get: () => CONFIG.island.margin, set: (v) => (CONFIG.island.margin = v), step: 32, min: 64, max: 640, live: false },
+            { label: 'Forest', get: () => CONFIG.decorations.forest, set: (v) => (CONFIG.decorations.forest = v), step: 4, min: 0, max: 120, live: false },
+            { label: 'Clouds', get: () => CONFIG.clouds.count, set: (v) => (CONFIG.clouds.count = v), step: 2, min: 0, max: 30, live: false },
         ];
 
         this.build();
