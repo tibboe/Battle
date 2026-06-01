@@ -52,6 +52,14 @@ export const WATER_ROCKS = Array.from({ length: 4 }, (_, i) => ({
     anim: `anim-wrock-${i + 1}`,
 }));
 
+// Animated trees — sway loops. Tree1/2 are firs (256² × 6), Tree3/4 are leafy (192² × 8).
+export const TREES = [
+    { key: 'env-tree-1', file: `${BASE}/Resources/Wood/Trees/Tree1.png`, size: 256, frames: 6, rate: 6, anim: 'anim-tree-1' },
+    { key: 'env-tree-2', file: `${BASE}/Resources/Wood/Trees/Tree2.png`, size: 256, frames: 6, rate: 6, anim: 'anim-tree-2' },
+    { key: 'env-tree-3', file: `${BASE}/Resources/Wood/Trees/Tree3.png`, size: 192, frames: 8, rate: 7, anim: 'anim-tree-3' },
+    { key: 'env-tree-4', file: `${BASE}/Resources/Wood/Trees/Tree4.png`, size: 192, frames: 8, rate: 7, anim: 'anim-tree-4' },
+];
+
 // Animated rubber duck — 32² × 3 frames.
 export const DUCK = {
     key: 'env-duck',
@@ -70,6 +78,7 @@ export function loadEnvironment(scene: Phaser.Scene) {
     for (const r of ROCKS) scene.load.image(r.key, encodeURI(r.file));
     for (const b of BUSHES) scene.load.spritesheet(b.key, encodeURI(b.file), { frameWidth: b.size, frameHeight: b.size });
     for (const w of WATER_ROCKS) scene.load.spritesheet(w.key, encodeURI(w.file), { frameWidth: w.size, frameHeight: w.size });
+    for (const t of TREES) scene.load.spritesheet(t.key, encodeURI(t.file), { frameWidth: t.size, frameHeight: t.size });
 }
 
 function makeAnim(scene: Phaser.Scene, key: string, tex: string, frames: number, rate: number) {
@@ -87,4 +96,5 @@ export function registerEnvironmentAnims(scene: Phaser.Scene) {
     makeAnim(scene, DUCK.anim, DUCK.key, DUCK.frames, DUCK.rate);
     for (const b of BUSHES) makeAnim(scene, b.anim, b.key, b.frames, b.rate);
     for (const w of WATER_ROCKS) makeAnim(scene, w.anim, w.key, w.frames, w.rate);
+    for (const t of TREES) makeAnim(scene, t.anim, t.key, t.frames, t.rate);
 }

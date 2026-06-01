@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { TILES, TILESET } from './tileset';
-import { BUSHES, CLOUDS, DUCK, FOAM, ROCKS, WATER, WATER_ROCKS } from './environment';
+import { BUSHES, CLOUDS, DUCK, FOAM, ROCKS, TREES, WATER, WATER_ROCKS } from './environment';
 
 // Draws the battlefield: a flat grass ISLAND on an open sea. Bottom-up:
 //   • water background tiled over the whole world,
@@ -38,7 +38,40 @@ export class TerrainRenderer {
         this.drawFoam();
         this.drawGrassIsland();
         this.drawDecorations();
+        this.drawTreeLines();
         this.drawClouds();
+    }
+
+    // A fringe of trees (with a few bushes mixed in) lined along the TOP and BOTTOM grass
+    // edges, evenly spaced with jitter and clear of the central lane. Trees animate (sway)
+    // and sort by world-y so the bottom row overlaps units correctly.
+    private drawTreeLines() {
+        const rnd = Phaser.Math.RND;
+        const ts = this.ts;
+        const x0 = this.islandLeft + ts;
+        const x1 = this.islandRight - ts;
+        const n = CONFIG.decorations.treesPerLine;
+        const step = (x1 - x0) / n;
+        const lines = [this.islandTop + ts * 1.2, this.islandBottom - ts * 0.4];
+        for (const yBase of lines) {
+            for (let i = 0; i < n; i++) {
+                const x = x0 + step * (i + 0.5) + rnd.between(-step * 0.3, step * 0.3);
+                const y = yBase + rnd.between(-14, 14);
+                if (rnd.frac() < 0.72) {
+                    const t = TREES[rnd.between(0, TREES.length - 1)];
+                    const s = this.scene.add.sprite(x, y, t.key).setOrigin(0.5, 0.92).setScale(0.8).play(t.anim);
+                    s.anims.setProgress(rnd.frac());
+                    s.setDepth(y);
+                    this.layer.add(s);
+                } else {
+                    const b = BUSHES[rnd.between(0, BUSHES.length - 1)];
+                    const s = this.scene.add.sprite(x, y, b.key).setOrigin(0.5, 0.85).play(b.anim);
+                    s.anims.setProgress(rnd.frac());
+                    s.setDepth(y);
+                    this.layer.add(s);
+                }
+            }
+        }
     }
 
     // Snap the island to the tile grid inside the requested water margin.

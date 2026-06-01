@@ -26,8 +26,9 @@ export const CONFIG = {
     island: { margin: 320 },
 
     // Scatter decoration counts: bushes/rocks on the grass (kept clear of the lane) and
-    // water rocks / the odd duck out at sea.
-    decorations: { land: 36, sea: 28 },
+    // water rocks / the odd duck out at sea. `treesPerLine` trees+bushes are lined along
+    // the TOP and BOTTOM grass edges (a forest fringe), clear of the central lane.
+    decorations: { land: 18, sea: 28, treesPerLine: 12 },
 
     // Drifting clouds over the sea, along the TOP/LEFT/RIGHT edges only. `count` is the
     // top-band cloud count; the side bands use roughly half that each.
