@@ -82,7 +82,8 @@ const UNIT_ART: Record<string, UnitArt> = {
         frameSize: 192,
         states: {
             walk: { file: 'Run.png', frames: 4, frameRate: 14 },
-            // No attack strip — Monk is support. Heal (Heal.png, 11 frames) wires in Phase 2.
+            // No attack strip — Monk is support; it plays its heal gesture instead.
+            heal: { file: 'Heal.png', frames: 11, frameRate: 12 },
         },
     },
 };

@@ -26,6 +26,9 @@ export interface UnitType {
     scale: number;          // display scale applied to the source frame
     footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
     spawnWeight: number;    // relative chance to be the next unit spawned (until Phase 3)
+    // Support healers only: top up the lowest-HP ally within `range` by `amount` every
+    // `interval` ms (capped at the ally's max HP). Combat units omit this.
+    heal?: { amount: number; interval: number };
 }
 
 export const CONFIG = {
@@ -90,8 +93,9 @@ export const CONFIG = {
           hp: 18, damage: 8, range: 240, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 2 },
         { key: 'monk', art: 'monk', role: 'support',
-          hp: 24, damage: 0, range: 0, attackInterval: 0, moveSpeed: 72,
-          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 1 },
+          hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
+          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8, spawnWeight: 1,
+          heal: { amount: 6, interval: 1200 } },
     ] as UnitType[],
 
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in

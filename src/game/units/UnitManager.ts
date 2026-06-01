@@ -62,6 +62,8 @@ export class UnitManager {
     private readonly typeFootAnchor: Float32Array;
     private readonly typeCanAttack: Uint8Array;  // 0 = never engages (support / no range)
     private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
+    private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
+    private readonly typeHealInterval: Float32Array; // ms between heals
     private readonly typeCumWeight: Float32Array; // cumulative spawn weights for picking
     private readonly typeWeightTotal: number;
 
@@ -105,6 +107,8 @@ export class UnitManager {
     private readonly onDamage?: (x: number, y: number, amount: number) => void;
     // Emitted when a ranged unit strikes, so the scene can fly a (cosmetic) projectile.
     private readonly onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    // Emitted when a healer tops up an ally, so the scene can pop a (green) heal number.
+    private readonly onHeal?: (x: number, y: number, amount: number) => void;
 
     constructor(
         scene: Phaser.Scene,
@@ -112,10 +116,12 @@ export class UnitManager {
         onReachKeep: (attacker: Faction) => void,
         onDamage?: (x: number, y: number, amount: number) => void,
         onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
+        onHeal?: (x: number, y: number, amount: number) => void,
     ) {
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
         this.onShoot = onShoot;
+        this.onHeal = onHeal;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -145,6 +151,8 @@ export class UnitManager {
         this.typeFootAnchor = new Float32Array(nTypes);
         this.typeCanAttack = new Uint8Array(nTypes);
         this.typeRanged = new Uint8Array(nTypes);
+        this.typeHealAmount = new Float32Array(nTypes);
+        this.typeHealInterval = new Float32Array(nTypes);
         this.typeCumWeight = new Float32Array(nTypes);
         let maxRange = 1;
         let cumType = 0;
@@ -162,6 +170,8 @@ export class UnitManager {
             // Support units (and anything with no range) never engage — they only march.
             this.typeCanAttack[t] = ut.role !== 'support' && ut.range > 0 ? 1 : 0;
             this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
+            this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
+            this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
             cumType += Math.max(0, ut.spawnWeight);
             this.typeCumWeight[t] = cumType;
             if (ut.range > maxRange) maxRange = ut.range;
@@ -336,10 +346,14 @@ export class UnitManager {
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
 
-            // Support / non-attacking units never engage — keep them marching.
+            // Non-combat units don't engage; a support healer instead seeks a hurt ally.
             if (!this.typeCanAttack[this.type[i]]) {
-                this.target[i] = -1;
-                this.setState(i, STATE.walk);
+                if (this.typeHealAmount[this.type[i]] > 0) {
+                    this.acquireHealTarget(i);
+                } else {
+                    this.target[i] = -1;
+                    this.setState(i, STATE.walk);
+                }
                 continue;
             }
 
@@ -367,6 +381,33 @@ export class UnitManager {
             this.target[i] = best;
             this.setState(i, best >= 0 ? STATE.attack : STATE.walk);
         }
+    }
+
+    // Pick the lowest-HP wounded ally within heal range (reuses the targeting buckets).
+    private acquireHealTarget(i: number) {
+        const range2 = this.typeRange2[this.type[i]];
+        const ci = this.cellOf(i);
+        let best = -1;
+        let bestHp = Infinity;
+        for (let dc = -1; dc <= 1; dc++) {
+            const c = ci + dc;
+            if (c < 0 || c >= this.numCells) continue;
+            const bucket = this.buckets[c];
+            for (let k = 0; k < bucket.length; k++) {
+                const j = bucket[k];
+                if (j === i || this.faction[j] !== this.faction[i]) continue;
+                if (this.hp[j] >= this.typeHp[this.type[j]]) continue; // already full
+                const dx = this.x[j] - this.x[i];
+                const dy = this.y[j] - this.y[i];
+                if (dx * dx + dy * dy > range2) continue;
+                if (this.hp[j] < bestHp) {
+                    bestHp = this.hp[j];
+                    best = j;
+                }
+            }
+        }
+        this.target[i] = best;
+        this.setState(i, best >= 0 ? STATE.attack : STATE.walk);
     }
 
     private cellOf(i: number): number {
@@ -404,28 +445,58 @@ export class UnitManager {
                 continue;
             }
 
-            // STATE.attack — strike with this unit type's damage on its own cadence.
+            // STATE.attack == "acting": a combat strike, or a heal for support healers,
+            // applied on this unit type's own cadence.
             this.attackCd[i] -= delta;
             if (this.attackCd[i] > 0) continue;
+            const acting = this.type[i];
             const t = this.target[i];
+
+            if (this.typeHealAmount[acting] > 0) {
+                // Healer: top up the lowest-HP ally if it is still hurt and in range.
+                const maxHp = t >= 0 && t < this.count ? this.typeHp[this.type[t]] : 0;
+                const okHeal =
+                    t >= 0 && t < this.count && this.state[t] !== STATE.dying &&
+                    this.faction[t] === this.faction[i] && this.hp[t] < maxHp;
+                if (okHeal) {
+                    const dx = this.x[t] - this.x[i];
+                    const dy = this.y[t] - this.y[i];
+                    if (dx * dx + dy * dy <= this.typeRange2[acting]) {
+                        this.attackCd[i] += this.typeHealInterval[acting];
+                        const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
+                        this.hp[t] += healed;
+                        if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
+                            this.onHeal(this.x[t], this.y[t] - 50, healed);
+                        }
+                        // Re-trigger the heal gesture each beat.
+                        this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[this.faction[i]], 'heal'));
+                        continue;
+                    }
+                }
+                this.target[i] = -1;
+                this.attackCd[i] = 0;
+                this.setState(i, STATE.walk);
+                continue;
+            }
+
+            // Combat strike.
             const validTarget =
                 t >= 0 && t < this.count && this.state[t] !== STATE.dying && this.faction[t] !== this.faction[i];
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
-                if (dx * dx + dy * dy <= this.typeReach2[this.type[i]]) {
-                    const atk = this.type[i];
-                    this.attackCd[i] += this.typeAttackInterval[atk];
+                if (dx * dx + dy * dy <= this.typeReach2[acting]) {
+                    this.attackCd[i] += this.typeAttackInterval[acting];
                     // Base damage scaled by the counter matrix; always at least 1.
                     const dmg = Math.max(1, Math.round(
-                        this.typeDamage[atk] * this.pairMul[atk * this.nTypes + this.type[t]],
+                        this.typeDamage[acting] * this.pairMul[acting * this.nTypes + this.type[t]],
                     ));
                     this.hp[t] -= dmg;
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
                         this.onDamage(this.x[t], this.y[t] - 50, dmg);
                     }
                     // Ranged units fly a cosmetic arrow toward the struck target.
-                    if (this.typeRanged[atk] && this.onShoot) {
+                    if (this.typeRanged[acting] && this.onShoot) {
                         this.onShoot(this.x[i], this.y[i] - 40, this.x[t], this.y[t] - 40, this.faction[i] as Faction);
                     }
                     if (this.hp[t] <= 0) this.kill(t);
@@ -536,7 +607,9 @@ export class UnitManager {
         const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
         if (next === STATE.attack) {
-            sprite.play(animKey(art, name, 'attack')); // loops while engaged
+            // Combat units loop their attack; support healers play their heal gesture.
+            const act = this.typeHealAmount[this.type[i]] > 0 ? 'heal' : 'attack';
+            sprite.play(animKey(art, name, act));
         } else if (next === STATE.walk) {
             sprite.play(animKey(art, name, 'walk'));
         }

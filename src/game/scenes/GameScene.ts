@@ -84,6 +84,7 @@ export class GameScene extends Phaser.Scene {
             (attacker) => this.onReachKeep(attacker),
             (x, y, amount) => this.floatingText.pop(x, y, amount),
             (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
+            (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
         );
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
