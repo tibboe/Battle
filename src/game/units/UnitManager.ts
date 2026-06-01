@@ -64,6 +64,11 @@ export class UnitManager {
     private readonly typeCumWeight: Float32Array; // cumulative spawn weights for picking
     private readonly typeWeightTotal: number;
 
+    private readonly nTypes: number;
+    // Counter matrix resolved for this roster: pairMul[attacker*nTypes + target] is the
+    // weapon×armour multiplier, so the strike loop does one array read and no string work.
+    private readonly pairMul: Float32Array;
+
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
     private readonly laneY: Float32Array;
     private readonly laneHalf: Float32Array;  // half-band the unit may roam within
@@ -93,13 +98,17 @@ export class UnitManager {
 
     // Called when a unit reaches the opposing keep (so the scene can damage it).
     private readonly onReachKeep: (attacker: Faction) => void;
+    // Emitted on each applied strike (post-matrix damage) so the scene can pop a number.
+    private readonly onDamage?: (x: number, y: number, amount: number) => void;
 
     constructor(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         onReachKeep: (attacker: Faction) => void,
+        onDamage?: (x: number, y: number, amount: number) => void,
     ) {
         this.onReachKeep = onReachKeep;
+        this.onDamage = onDamage;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -149,6 +158,19 @@ export class UnitManager {
             if (ut.range > maxRange) maxRange = ut.range;
         }
         this.typeWeightTotal = cumType;
+
+        // Resolve the weapon×armour matrix into a flat per-pair multiplier table (default 1
+        // for any weapon/armour the matrix doesn't list — e.g. the Monk never attacks).
+        this.nTypes = nTypes;
+        this.pairMul = new Float32Array(nTypes * nTypes);
+        const matrix = CONFIG.combat.matrix;
+        for (let a = 0; a < nTypes; a++) {
+            const row = matrix[types[a].weapon];
+            for (let d = 0; d < nTypes; d++) {
+                const m = row ? row[types[d].armour] : undefined;
+                this.pairMul[a * nTypes + d] = m ?? 1;
+            }
+        }
 
         // Derive lane geometry + a cumulative spawn-weight table from config.
         const lanes = CONFIG.lanes;
@@ -375,8 +397,16 @@ export class UnitManager {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
                 if (dx * dx + dy * dy <= this.typeReach2[this.type[i]]) {
-                    this.attackCd[i] += this.typeAttackInterval[this.type[i]];
-                    this.hp[t] -= this.typeDamage[this.type[i]];
+                    const atk = this.type[i];
+                    this.attackCd[i] += this.typeAttackInterval[atk];
+                    // Base damage scaled by the counter matrix; always at least 1.
+                    const dmg = Math.max(1, Math.round(
+                        this.typeDamage[atk] * this.pairMul[atk * this.nTypes + this.type[t]],
+                    ));
+                    this.hp[t] -= dmg;
+                    if (this.onDamage && CONFIG.debug.damageNumbers) {
+                        this.onDamage(this.x[t], this.y[t] - 50, dmg);
+                    }
                     if (this.hp[t] <= 0) this.kill(t);
                     continue;
                 }

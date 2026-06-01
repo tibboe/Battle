@@ -104,6 +104,21 @@ export const CONFIG = {
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
         deathFadeMs: 400, // synthesised death fade-out (the pack has no death animation)
+        // Counter matrix: a strike's final damage = base × matrix[weapon][targetArmour],
+        // rounded. Starting values from MILESTONE_3 (tune by playing). The doc's table left
+        // out a row for the Pawn's 'Light' weapon — added here; 'Blunt' is kept ready for a
+        // future unit. The Monk ('None') never attacks, so it needs no row.
+        matrix: {
+            Blade:  { Unarmored: 1.0,  Light: 1.5,  Medium: 1.0,  Heavy: 0.75 },
+            Pierce: { Unarmored: 1.0,  Light: 0.75, Medium: 1.0,  Heavy: 1.5  },
+            Blunt:  { Unarmored: 1.5,  Light: 1.0,  Medium: 1.0,  Heavy: 0.75 },
+            Light:  { Unarmored: 1.25, Light: 1.0,  Medium: 0.75, Heavy: 0.5  },
+        } as Partial<Record<Weapon, Record<Armour, number>>>,
+    },
+
+    // Debug / visibility aids, toggled live from the Dev panel. Not gameplay.
+    debug: {
+        damageNumbers: true, // float the damage dealt above the unit that was hit
     },
 
     // Soft separation: units nudge away from any neighbour (friend or foe) closer than

@@ -24,6 +24,7 @@ interface Setting {
     min: number;
     max: number;
     live: boolean; // true = applies instantly; false = needs a battle restart
+    bool?: boolean; // render as an ON/OFF toggle (either −/+ flips it)
     fmt?: (v: number) => string;
 }
 
@@ -54,6 +55,7 @@ export class DevPanel {
             { label: 'Water edge', get: () => CONFIG.island.margin, set: (v) => (CONFIG.island.margin = v), step: 32, min: 64, max: 640, live: false },
             { label: 'Forest', get: () => CONFIG.decorations.forest, set: (v) => (CONFIG.decorations.forest = v), step: 4, min: 0, max: 120, live: false },
             { label: 'Clouds', get: () => CONFIG.clouds.count, set: (v) => (CONFIG.clouds.count = v), step: 2, min: 0, max: 30, live: false },
+            { label: 'Dmg numbers', get: () => (CONFIG.debug.damageNumbers ? 1 : 0), set: (v) => (CONFIG.debug.damageNumbers = v > 0), step: 1, min: 0, max: 1, live: true, bool: true, fmt: (v) => (v ? 'ON' : 'OFF') },
         ];
 
         this.build();
@@ -126,6 +128,11 @@ export class DevPanel {
 
     private bump(i: number, dir: number) {
         const s = this.settings[i];
+        if (s.bool) {
+            s.set(s.get() > 0 ? 0 : 1); // either −/+ flips an ON/OFF toggle
+            this.refresh();
+            return;
+        }
         const next = Phaser.Math.Clamp(
             Math.round((s.get() + dir * s.step) * 100) / 100,
             s.min,
