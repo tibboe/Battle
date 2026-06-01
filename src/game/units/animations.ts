@@ -117,6 +117,19 @@ export function loadUnitAtlas(scene: Phaser.Scene) {
     }
 }
 
+// Texture key for a faction's arrow projectile.
+export function arrowKey(faction: FactionName) {
+    return `arrow-${faction}`;
+}
+
+// Load the Archer's arrow sprite for both factions (a single 64×64 image, not a strip).
+export function loadProjectiles(scene: Phaser.Scene) {
+    for (const faction of FACTIONS) {
+        const path = encodeURI(`${BASE}/${FACTION_DIR[faction]}/Archer/Arrow.png`);
+        scene.load.image(arrowKey(faction), path);
+    }
+}
+
 // Build one animation per art-set + faction + state from each strip's frame numbers.
 export function registerUnitAnimations(scene: Phaser.Scene) {
     for (const art of ART_KEYS) {

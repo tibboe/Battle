@@ -61,6 +61,7 @@ export class UnitManager {
     private readonly typeScale: Float32Array;
     private readonly typeFootAnchor: Float32Array;
     private readonly typeCanAttack: Uint8Array;  // 0 = never engages (support / no range)
+    private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
     private readonly typeCumWeight: Float32Array; // cumulative spawn weights for picking
     private readonly typeWeightTotal: number;
 
@@ -102,15 +103,19 @@ export class UnitManager {
     private readonly onReachKeep: (attacker: Faction) => void;
     // Emitted on each applied strike (post-matrix damage) so the scene can pop a number.
     private readonly onDamage?: (x: number, y: number, amount: number) => void;
+    // Emitted when a ranged unit strikes, so the scene can fly a (cosmetic) projectile.
+    private readonly onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
 
     constructor(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         onReachKeep: (attacker: Faction) => void,
         onDamage?: (x: number, y: number, amount: number) => void,
+        onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
     ) {
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
+        this.onShoot = onShoot;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -139,6 +144,7 @@ export class UnitManager {
         this.typeScale = new Float32Array(nTypes);
         this.typeFootAnchor = new Float32Array(nTypes);
         this.typeCanAttack = new Uint8Array(nTypes);
+        this.typeRanged = new Uint8Array(nTypes);
         this.typeCumWeight = new Float32Array(nTypes);
         let maxRange = 1;
         let cumType = 0;
@@ -155,6 +161,7 @@ export class UnitManager {
             this.typeFootAnchor[t] = ut.footAnchor;
             // Support units (and anything with no range) never engage — they only march.
             this.typeCanAttack[t] = ut.role !== 'support' && ut.range > 0 ? 1 : 0;
+            this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
             cumType += Math.max(0, ut.spawnWeight);
             this.typeCumWeight[t] = cumType;
             if (ut.range > maxRange) maxRange = ut.range;
@@ -416,6 +423,10 @@ export class UnitManager {
                     this.hp[t] -= dmg;
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
                         this.onDamage(this.x[t], this.y[t] - 50, dmg);
+                    }
+                    // Ranged units fly a cosmetic arrow toward the struck target.
+                    if (this.typeRanged[atk] && this.onShoot) {
+                        this.onShoot(this.x[i], this.y[i] - 40, this.x[t], this.y[t] - 40, this.faction[i] as Faction);
                     }
                     if (this.hp[t] <= 0) this.kill(t);
                     continue;

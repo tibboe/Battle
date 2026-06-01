@@ -2,7 +2,8 @@ import * as Phaser from 'phaser';
 import { CONFIG, laneBottom, laneTop } from '../config';
 import { CameraController } from '../controls/CameraController';
 import { DevPanel } from '../controls/DevPanel';
-import { loadUnitAtlas, registerUnitAnimations } from '../units/animations';
+import { loadProjectiles, loadUnitAtlas, registerUnitAnimations } from '../units/animations';
+import { Projectiles } from '../units/Projectiles';
 import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
@@ -19,6 +20,7 @@ export class GameScene extends Phaser.Scene {
     private cameraController!: CameraController;
     private units!: UnitManager;
     private floatingText!: FloatingText;
+    private projectiles!: Projectiles;
     private unitPanel!: UnitPanel;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
@@ -44,6 +46,7 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         loadUnitAtlas(this);
+        loadProjectiles(this);
         loadTerrainTileset(this);
         loadEnvironment(this);
     }
@@ -70,8 +73,9 @@ export class GameScene extends Phaser.Scene {
         // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
         new DevPanel(this, this.uiLayer, () => this.scene.restart());
 
-        // Floating combat numbers live in world space, above the units.
+        // World-space effects: floating numbers + arrow projectiles, above the units.
         this.floatingText = new FloatingText(this, this.worldLayer);
+        this.projectiles = new Projectiles(this, this.worldLayer);
 
         // Both keeps spawn a horde; units that reach the far keep damage it.
         this.units = new UnitManager(
@@ -79,6 +83,7 @@ export class GameScene extends Phaser.Scene {
             this.worldLayer,
             (attacker) => this.onReachKeep(attacker),
             (x, y, amount) => this.floatingText.pop(x, y, amount),
+            (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
         );
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
@@ -262,6 +267,7 @@ export class GameScene extends Phaser.Scene {
             this.units.update(delta);
         }
         this.floatingText.update(delta);
+        this.projectiles.update(delta);
         this.unitPanel.update();
 
         const fps = Math.round(this.game.loop.actualFps);
