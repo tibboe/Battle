@@ -10,38 +10,31 @@ export const CONFIG = {
         height: 1900,
     },
 
-    // Milestone 2: the battlefield is STACKED into several horizontal lanes at
-    // different elevations. Each lane is a grass plateau the armies march along
-    // (left↔right); higher `level` = higher ground = drawn brighter, with a cliff at
-    // any boundary where two lanes differ in level. Lanes are DATA — change levels here
-    // and spawning, movement, targeting, terrain and the high-ground rule all follow.
-    //
-    // Default layout: a RAISED MIDDLE plateau between two ground lanes, built honestly
-    // from the pack's own pieces (no faked upside-down cliff):
-    //   • grass plateau surface on the middle lane,
-    //   • a stone CLIFF on its FRONT edge (the drop down to the bottom lane),
-    //   • the pack's grassy SLOPED-CORNER pieces at the plateau's left/right ends
-    //     (frames 36/45 and 39/48 — the diagonal grass-to-stone "ramp" ends),
-    //   • a grass BACK-FRINGE on the up-slope edge toward the top lane, because the
-    //     pack has no upward-facing stone cliff — elevation there reads from the
-    //     fringe + level shading rather than a stone face.
-    //
-    // The y/thickness/cliffHeight numbers are tied together: the GAP between two
-    // adjacent lane bands must equal `elevation.cliffHeight` so the 2-tile cliff art
-    // fits exactly. Spacing between lane centres = thickness + cliffHeight (300+128=428).
+    // SIMPLIFIED layout (rebuild step): ONE horizontal lane the armies march along
+    // (left↔right). Elevation now runs ALONG the lane, not between stacked lanes — see
+    // `plateau` below. The lane sits at world-centre with a generous band so the smaller
+    // horde has room to spread.
     lanes: [
-        { y: 522, level: 0, thickness: 300 },  // ground (top of screen)
-        { y: 950, level: 1, thickness: 300 },  // raised plateau (middle)
-        { y: 1378, level: 0, thickness: 300 }, // ground (bottom)
+        { y: 950, level: 0, thickness: 420 }, // the single lane, ground level
     ],
 
-    // Elevation between lanes: the cliff face the upper plateau drops down to the lane
-    // below, and how far the cliff stops short of the keeps.
+    // A single raised PLATEAU occupying the left-centre of the lane: from the left the
+    // ground is flat, STAIRS climb up onto the plateau, it runs to the middle, then
+    // STAIRS drop back down to flat ground — the right half has no plateau. Pixels are in
+    // world space (world is 4000 wide; middle = 2000). Vertical extent follows the lane
+    // band; the stone cliff drops off its front (south) edge with a Shadow beneath for
+    // depth, exactly as the Tiny Swords guide layers it.
+    plateau: {
+        x0: 700,      // left edge — where the "up" stairs are (just past the player keep)
+        x1: 2000,     // right edge at the middle — where the "down" stairs are
+        cliffTiles: 1, // height of the front cliff in tiles (grass-capped stone; no foam)
+    },
+
+    // Elevation tunables. cliffHeight is the visual drop height; rampInset is unused by
+    // the single-plateau layout but kept for the high-ground combat reach maths.
     elevation: {
-        cliffHeight: 128, // px drop between adjacent lanes — MUST equal the band gap
-                          // (== 2 tiles tall, the height of the cliff-face art).
-        rampInset: 420,   // px from each world edge where the cliff ends, leaving open
-                          // grass near the keeps as the implied access onto the high ground.
+        cliffHeight: 128,
+        rampInset: 420,
     },
 
     // Keeps sit at each end of the lane. Player on the left, enemy on the right.
@@ -119,11 +112,13 @@ export const CONFIG = {
     // middle and nobody ever wins. A denser side wins the attrition and breaks through.
     // Default: player advantage -> you tend to WIN. Swap the numbers to test a LOSE.
     spawn: {
-        spawnInterval: 150, // ms between spawns, per side
-        unitsTarget: { player: 300, enemy: 220 }, // soft cap of active living units per side
-        // Relative likelihood a new unit spawns into each lane (index matches `lanes`).
-        // Equal = the horde spreads evenly over every elevation. Tune to favour a lane.
-        laneDistribution: [1, 1, 1],
+        spawnInterval: 300, // ms between spawns, per side
+        // Soft cap of active living units per side — kept small (~50 each) so the lane
+        // stays readable while we lock the look in. Player edge avoids a permanent
+        // stalemate (equal armies just jam in the middle and nobody breaks through).
+        unitsTarget: { player: 55, enemy: 45 },
+        // Relative spawn likelihood per lane (index matches `lanes`). One lane now.
+        laneDistribution: [1],
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

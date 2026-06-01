@@ -76,21 +76,31 @@ export const TILES = {
     cliffBotRight: 52,
     cliffBotNarrow: 53,
 
-    // ── Ramp / sloped plateau ends (left block, bottom rows) ──
-    // Grass tapering diagonally down to stone — the angled end of a plateau,
-    // used as the "ramp visual" near the keeps. Each is 2 tiles tall.
-    rampLeftTop: 36, // platform's LEFT end, sloping down-left
-    rampLeftBot: 45,
-    rampRightTop: 39, // platform's RIGHT end, sloping down-right (mirror)
-    rampRightBot: 48,
+    // ── Stairs (left block, bottom rows) ──
+    // The pack's STAIRS: grass-topped steps that connect lower ground up onto an
+    // Elevated Ground plateau (the diagonal pieces labelled "Stairs" in the guide).
+    // Each is 1 tile wide, 2 tiles tall; left/right variants for each side.
+    stairLeftTop: 36, // left-side stair (top half: grass lip)
+    stairLeftBot: 45, // left-side stair (bottom half: stone steps)
+    stairRightTop: 39, // right-side stair (mirror)
+    stairRightBot: 48,
 } as const;
 
 export type TileName = keyof typeof TILES;
 
-// Load the tileset as a spritesheet so any tile is addressable by frame index.
+// The Shadow sprite (separate PNG): a soft dark blob the guide places UNDER each
+// Elevated Ground layer, offset one tile downward, to fake height. Loaded as a plain
+// image; the renderer stretches/places it beneath the plateau.
+export const SHADOW = {
+    key: 'terrain-shadow',
+    file: 'assets/environment/tiny-swords/Tileset/Shadow.png',
+} as const;
+
+// Load the tileset as a spritesheet (any tile addressable by frame index) + the Shadow.
 export function loadTerrainTileset(scene: Phaser.Scene) {
     scene.load.spritesheet(TILESET.key, TILESET.file, {
         frameWidth: TILESET.tileSize,
         frameHeight: TILESET.tileSize,
     });
+    scene.load.image(SHADOW.key, SHADOW.file);
 }
