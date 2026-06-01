@@ -75,27 +75,19 @@ export class TerrainRenderer {
         this.layer.add(lift);
         this.grassEdge(x0, x1, top, true);
 
-        // 3) Front edge, left→right: one STAIR (up), the OPEN CLIFF, one STAIR (down).
-        //    A staircase is exactly two tiles wide (left wall + right wall, steps meeting
-        //    in the centre) — there is no middle stair piece in the pack.
-        const sw = 2 * ts; // one staircase
-        const cl = x0 + sw; // open cliff starts after the up-stair
-        const cr = x1 - sw; // …and ends before the down-stair
+        // 3) Front edge as one mound profile  /---\ : a single UP-ramp "/" (the stairLeft
+        //    half — grass low-left rising to high-right) at the LEFT corner, the open stone
+        //    cliff "---" across the middle, and a single DOWN-ramp "\" (the stairRight half)
+        //    at the RIGHT corner. Each ramp is 1 tile wide, 2 tiles tall (grass top, steps).
+        const cl = x0 + ts; // open cliff starts after the up-ramp
+        const cr = x1 - ts; // …and ends before the down-ramp
         this.tile(TILES.cliffTopLeft, cl, cliffY, DEPTH_CLIFF);
         this.tileRun(TILES.cliffTopMid, cl + ts, cr - ts, cliffY, DEPTH_CLIFF);
         this.tile(TILES.cliffTopRight, cr - ts, cliffY, DEPTH_CLIFF);
-        this.stair(x0, cliffY - ts); // up, at the left end
-        this.stair(cr, cliffY - ts); // down, at the right end
-    }
-
-    // One staircase: two tiles wide (left wall, right wall) by two tiles tall (grass top,
-    // stone steps). The steps row sits at the cliff line; the grass top sits on the platform.
-    private stair(x: number, yTop: number) {
-        const ts = this.ts;
-        this.tile(TILES.stairLeftTop, x, yTop, DEPTH_STAIR); // left wall of the staircase
-        this.tile(TILES.stairLeftBot, x, yTop + ts, DEPTH_STAIR);
-        this.tile(TILES.stairRightTop, x + ts, yTop, DEPTH_STAIR); // right wall; steps meet centre
-        this.tile(TILES.stairRightBot, x + ts, yTop + ts, DEPTH_STAIR);
+        this.tile(TILES.stairLeftTop, x0, cliffY - ts, DEPTH_STAIR); // "/" up, left corner
+        this.tile(TILES.stairLeftBot, x0, cliffY, DEPTH_STAIR);
+        this.tile(TILES.stairRightTop, cr, cliffY - ts, DEPTH_STAIR); // "\" down, right corner
+        this.tile(TILES.stairRightBot, cr, cliffY, DEPTH_STAIR);
     }
     private grassEdge(L: number, R: number, y: number, back: boolean) {
         const ts = this.ts;
