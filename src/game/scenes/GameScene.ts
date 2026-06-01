@@ -8,6 +8,7 @@ import { loadTerrainTileset } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { FloatingText } from '../ui/FloatingText';
+import { UnitPanel } from '../ui/UnitPanel';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
 const HUD_DEPTH = 1_000_000;
@@ -18,6 +19,7 @@ export class GameScene extends Phaser.Scene {
     private cameraController!: CameraController;
     private units!: UnitManager;
     private floatingText!: FloatingText;
+    private unitPanel!: UnitPanel;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -78,6 +80,9 @@ export class GameScene extends Phaser.Scene {
             (attacker) => this.onReachKeep(attacker),
             (x, y, amount) => this.floatingText.pop(x, y, amount),
         );
+
+        // Right-edge unit roster/inspector: live counts + tap-for-stats.
+        this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
 
         // UI camera renders only the HUD; the main camera renders only the world.
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
@@ -240,6 +245,7 @@ export class GameScene extends Phaser.Scene {
     private onResize() {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.layoutHud();
+        this.unitPanel.layout();
         this.cameraController.handleResize();
     }
 
@@ -256,6 +262,7 @@ export class GameScene extends Phaser.Scene {
             this.units.update(delta);
         }
         this.floatingText.update(delta);
+        this.unitPanel.update();
 
         const fps = Math.round(this.game.loop.actualFps);
         this.hudText.setText(`FPS: ${fps}    Units: ${this.units.activeCount}`);

@@ -68,6 +68,8 @@ export class UnitManager {
     // Counter matrix resolved for this roster: pairMul[attacker*nTypes + target] is the
     // weapon×armour multiplier, so the strike loop does one array read and no string work.
     private readonly pairMul: Float32Array;
+    // Live (non-dying) count per [typeIndex*2 + faction] — drives the unit-panel readout.
+    private readonly livingByType: Int32Array;
 
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
     private readonly laneY: Float32Array;
@@ -163,6 +165,7 @@ export class UnitManager {
         // for any weapon/armour the matrix doesn't list — e.g. the Monk never attacks).
         this.nTypes = nTypes;
         this.pairMul = new Float32Array(nTypes * nTypes);
+        this.livingByType = new Int32Array(nTypes * 2);
         const matrix = CONFIG.combat.matrix;
         for (let a = 0; a < nTypes; a++) {
             const row = matrix[types[a].weapon];
@@ -222,6 +225,11 @@ export class UnitManager {
         return this.count;
     }
 
+    // Living (non-dying) units of a given type on a given side — for the unit panel.
+    livingTypeCount(typeIndex: number, faction: Faction): number {
+        return this.livingByType[typeIndex * 2 + faction];
+    }
+
     update(delta: number) {
         this.handleSpawns(delta);
 
@@ -272,6 +280,7 @@ export class UnitManager {
         this.type[i] = t;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
+        this.livingByType[t * 2 + faction]++;
 
         sprite
             .setActive(true)
@@ -382,6 +391,7 @@ export class UnitManager {
                     // Damage the opposing keep, then recycle this unit.
                     this.onReachKeep(this.faction[i] as Faction);
                     this.livingByFaction[this.faction[i]]--;
+                    this.livingByType[this.type[i] * 2 + this.faction[i]]--;
                     this.despawn(i);
                 }
                 continue;
@@ -498,6 +508,7 @@ export class UnitManager {
     private kill(i: number) {
         if (this.state[i] === STATE.dying) return;
         this.livingByFaction[this.faction[i]]--;
+        this.livingByType[this.type[i] * 2 + this.faction[i]]--;
         this.state[i] = STATE.dying;
         this.target[i] = -1;
         this.deathTimer[i] = this.deathDuration;
