@@ -73,13 +73,16 @@ export class TerrainRenderer {
         const lift = this.scene.add.graphics().setDepth(DEPTH_PLATEAU + 1);
         lift.fillStyle(0xffffff, 0.06).fillRect(x0, top, w, cliffY - top);
         this.layer.add(lift);
-        this.grassEdge(x0, x1, top, true);
+        // Top rim: the plain "cliff looking over" tile (grassTop, ^) across the MIDDLE only
+        //    — no corner pieces. The top corners stay plain grass; the side stairs start one
+        //    row below this rim.
+        this.tileRun(TILES.grassTop, x0 + ts, x1 - ts, top, DEPTH_EDGE);
 
-        // 2b) The SIDES are stairs, full height: an UP-stair "/" column down the LEFT edge
-        //     and a DOWN-stair "\" column down the RIGHT edge (the pack's 2-tile stair unit
-        //     repeated). So units climb up the left side and down the right side.
-        this.stairColumn(TILES.stairLeftTop, TILES.stairLeftBot, x0, top, cliffY + ts);
-        this.stairColumn(TILES.stairRightTop, TILES.stairRightBot, x1 - ts, top, cliffY + ts);
+        // 2b) The SIDES are stairs: an UP-stair "/" column down the LEFT edge and a DOWN-stair
+        //     "\" column down the RIGHT edge (the pack's 2-tile stair unit repeated), starting
+        //     one row below the rim. So units climb up the left side and down the right side.
+        this.stairColumn(TILES.stairLeftTop, TILES.stairLeftBot, x0, top + ts, cliffY + ts);
+        this.stairColumn(TILES.stairRightTop, TILES.stairRightBot, x1 - ts, top + ts, cliffY + ts);
 
         // 3) Bottom-middle is the stone cliff face ("looking up at it"), between the two
         //    stair columns; the top-middle rim ("looking over the edge") is drawn above.
