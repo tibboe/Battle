@@ -75,26 +75,29 @@ export class TerrainRenderer {
         this.layer.add(lift);
         this.grassEdge(x0, x1, top, true);
 
-        // 2b) Left/right grass side-edges, running from just under the top rim down to the
-        //     front cliff, so the level is enclosed on the sides instead of bleeding into
-        //     the field. The top corners come from the rim above; the bottom corners are
-        //     the ramps below, so the side runs stop one row short of the cliff.
-        this.vrun(TILES.grassLeft, x0, top + ts, cliffY - ts, DEPTH_EDGE);
-        this.vrun(TILES.grassRight, x1 - ts, top + ts, cliffY - ts, DEPTH_EDGE);
+        // 2b) The SIDES are stairs, full height: an UP-stair "/" column down the LEFT edge
+        //     and a DOWN-stair "\" column down the RIGHT edge (the pack's 2-tile stair unit
+        //     repeated). So units climb up the left side and down the right side.
+        this.stairColumn(TILES.stairLeftTop, TILES.stairLeftBot, x0, top, cliffY + ts);
+        this.stairColumn(TILES.stairRightTop, TILES.stairRightBot, x1 - ts, top, cliffY + ts);
 
-        // 3) Front edge as one mound profile  /---\ : a single UP-ramp "/" (the stairLeft
-        //    half — grass low-left rising to high-right) at the LEFT corner, the open stone
-        //    cliff "---" across the middle, and a single DOWN-ramp "\" (the stairRight half)
-        //    at the RIGHT corner. Each ramp is 1 tile wide, 2 tiles tall (grass top, steps).
-        const cl = x0 + ts; // open cliff starts after the up-ramp
-        const cr = x1 - ts; // …and ends before the down-ramp
+        // 3) Bottom-middle is the stone cliff face ("looking up at it"), between the two
+        //    stair columns; the top-middle rim ("looking over the edge") is drawn above.
+        const cl = x0 + ts; // cliff spans between the side stair columns
+        const cr = x1 - ts;
         this.tile(TILES.cliffTopLeft, cl, cliffY, DEPTH_CLIFF);
         this.tileRun(TILES.cliffTopMid, cl + ts, cr - ts, cliffY, DEPTH_CLIFF);
         this.tile(TILES.cliffTopRight, cr - ts, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.stairLeftTop, x0, cliffY - ts, DEPTH_STAIR); // "/" up, left corner
-        this.tile(TILES.stairLeftBot, x0, cliffY, DEPTH_STAIR);
-        this.tile(TILES.stairRightTop, cr, cliffY - ts, DEPTH_STAIR); // "\" down, right corner
-        this.tile(TILES.stairRightBot, cr, cliffY, DEPTH_STAIR);
+    }
+
+    // A column of the pack's 2-tile stair unit (grass top + stone steps) repeated from y0
+    // down to y1, at column-left x. Alternating top/bottom frames tile without gaps.
+    private stairColumn(topF: number, botF: number, x: number, y0: number, y1: number) {
+        const ts = this.ts;
+        let i = 0;
+        for (let y = y0; y < y1; y += ts, i++) {
+            this.tile(i % 2 === 0 ? topF : botF, x, y, DEPTH_STAIR);
+        }
     }
     // A vertical column of one tile frame from y0..y1 at column-left x.
     private vrun(frame: number, x: number, y0: number, y1: number, depth: number) {
