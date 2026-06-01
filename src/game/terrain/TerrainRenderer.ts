@@ -39,9 +39,9 @@ export class TerrainRenderer {
         this.drawPlateau();
     }
 
-    // The raised plateau in the left-centre of the lane. Built bottom-up in the pack's
-    // layer order so the height illusion reads: Shadow (offset down) → plateau grass on
-    // top of it → front cliff → grass lip/fringe → stairs.
+    // The raised level: ONE platform in the left-centre of the lane, read left→right as
+    // STAIR UP → OPEN CLIFF → STAIR DOWN, exactly as the level rule says. No side/back
+    // walls — just the platform's front edge, with a Shadow under it for height.
     private drawPlateau() {
         const p = CONFIG.plateau;
         if (!p) return;
@@ -49,12 +49,12 @@ export class TerrainRenderer {
         const lane = CONFIG.lanes[0];
         const x0 = p.x0;
         const x1 = p.x1;
-        const top = lane.y - lane.thickness / 2; // north edge (back of the plateau)
-        const cliffY = lane.y + lane.thickness / 2; // south edge — top row of the cliff
+        const top = lane.y - lane.thickness / 2; // back of the platform
+        const cliffY = lane.y + lane.thickness / 2; // front edge — the cliff/stair row
         const w = x1 - x0;
 
-        // 1) Shadow: a soft dark blob under the plateau footprint, shifted one tile DOWN
-        //    so it peeks out below the front cliff and sells the height (guide's method).
+        // 1) Shadow under the platform footprint, shifted one cell DOWN (guide's method),
+        //    so it peeks out below the front edge and reads as height.
         const shadow = this.scene.add
             .image(x0, top + ts, SHADOW.key)
             .setOrigin(0, 0)
@@ -63,8 +63,8 @@ export class TerrainRenderer {
         shadow.setDisplaySize(w, cliffY - top);
         this.layer.add(shadow);
 
-        // 2) Plateau grass laid OPAQUE on top of the shadow (so the shadow only peeks out
-        //    around/below it), nudged a touch brighter to read as higher ground.
+        // 2) Platform grass laid opaque on top of the shadow, a touch brighter (higher
+        //    ground), with a light bushy back-fringe so the top edge isn't a hard seam.
         const grass = this.scene.add
             .tileSprite(x0, top, w, cliffY - top, TILESET.key, TILES.grassFill)
             .setOrigin(0, 0)
@@ -73,49 +73,30 @@ export class TerrainRenderer {
         const lift = this.scene.add.graphics().setDepth(DEPTH_PLATEAU + 1);
         lift.fillStyle(0xffffff, 0.06).fillRect(x0, top, w, cliffY - top);
         this.layer.add(lift);
-
-        // 3) Front (south) cliff: the grass-capped stone TOP row (frames 41-43). This tile
-        //    already carries its own grass cap, so we do NOT add a separate grass lip on
-        //    top of it (that double edge was the wrong-looking top). Rounded stone ends.
-        this.tile(TILES.cliffTopLeft, x0, cliffY, DEPTH_CLIFF);
-        this.tileRun(TILES.cliffTopMid, x0 + ts, x1 - ts, cliffY, DEPTH_CLIFF);
-        this.tile(TILES.cliffTopRight, x1 - ts, cliffY, DEPTH_CLIFF);
-
-        // 4) Frame the level so it reads as an enclosed plateau: a bushy back-fringe along
-        //    the north edge and grass side-fringes down the west/east edges.
         this.grassEdge(x0, x1, top, true);
-        this.vrun(TILES.grassLeft, x0, top + ts, cliffY, DEPTH_EDGE);
-        this.vrun(TILES.grassRight, x1 - ts, top + ts, cliffY, DEPTH_EDGE);
 
-        // 5) Stairs: the pack's stair pieces, STACKED several wide to make a broad opening
-        //    cut into the front cliff — the "up" stair at the left end, the "down" stair
-        //    at the right/middle end. Each is 2 tiles tall (grass top + stone steps).
-        const n = p.stairTiles ?? 4;
-        this.stairRun(x0, n, cliffY - ts);
-        this.stairRun(x1 - n * ts, n, cliffY - ts);
+        // 3) Front edge, left→right: one STAIR (up), the OPEN CLIFF, one STAIR (down).
+        //    A staircase is exactly two tiles wide (left wall + right wall, steps meeting
+        //    in the centre) — there is no middle stair piece in the pack.
+        const sw = 2 * ts; // one staircase
+        const cl = x0 + sw; // open cliff starts after the up-stair
+        const cr = x1 - sw; // …and ends before the down-stair
+        this.tile(TILES.cliffTopLeft, cl, cliffY, DEPTH_CLIFF);
+        this.tileRun(TILES.cliffTopMid, cl + ts, cr - ts, cliffY, DEPTH_CLIFF);
+        this.tile(TILES.cliffTopRight, cr - ts, cliffY, DEPTH_CLIFF);
+        this.stair(x0, cliffY - ts); // up, at the left end
+        this.stair(cr, cliffY - ts); // down, at the right end
     }
 
-    // A run of `n` stair columns starting at x, alternating left/right pieces so the steps
-    // read as one wide staircase. Each column is 2 tiles tall (top grass, bottom steps).
-    private stairRun(x: number, n: number, yTop: number) {
+    // One staircase: two tiles wide (left wall, right wall) by two tiles tall (grass top,
+    // stone steps). The steps row sits at the cliff line; the grass top sits on the platform.
+    private stair(x: number, yTop: number) {
         const ts = this.ts;
-        for (let k = 0; k < n; k++) {
-            const left = k % 2 === 0;
-            const topF = left ? TILES.stairLeftTop : TILES.stairRightTop;
-            const botF = left ? TILES.stairLeftBot : TILES.stairRightBot;
-            this.tile(topF, x + k * ts, yTop, DEPTH_STAIR);
-            this.tile(botF, x + k * ts, yTop + ts, DEPTH_STAIR);
-        }
+        this.tile(TILES.stairLeftTop, x, yTop, DEPTH_STAIR); // left wall of the staircase
+        this.tile(TILES.stairLeftBot, x, yTop + ts, DEPTH_STAIR);
+        this.tile(TILES.stairRightTop, x + ts, yTop, DEPTH_STAIR); // right wall; steps meet centre
+        this.tile(TILES.stairRightBot, x + ts, yTop + ts, DEPTH_STAIR);
     }
-
-    // A vertical column of one tile frame from y0..y1 at column-left x.
-    private vrun(frame: number, x: number, y0: number, y1: number, depth: number) {
-        const ts = this.ts;
-        for (let y = y0; y < y1; y += ts) this.tile(frame, x, y, depth);
-    }
-
-    // The grass edge framing the plateau: the front-lip overhang (back=false) above the
-    // cliff, or the bushy back-fringe (back=true) at the north edge — rounded at the ends.
     private grassEdge(L: number, R: number, y: number, back: boolean) {
         const ts = this.ts;
         const [l, m, r] = back
