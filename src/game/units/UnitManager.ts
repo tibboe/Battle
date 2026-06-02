@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
-import { armourMult, critChanceFor, damageBonusFor, hpBonusFor, rangeBonusFor } from '../upgrades';
+import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
 import { animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
@@ -86,6 +86,7 @@ export class UnitManager {
     private readonly pReach2: Float32Array;
     private readonly pDamageBonus: Int16Array;
     private readonly pCritChance: Float32Array;
+    private readonly pHealAoe: Uint8Array; // player Monk: heal hits an area instead of one ally
     private pArmourMult = 1;
 
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
@@ -169,6 +170,7 @@ export class UnitManager {
         this.pReach2 = new Float32Array(nTypes);
         this.pDamageBonus = new Int16Array(nTypes);
         this.pCritChance = new Float32Array(nTypes);
+        this.pHealAoe = new Uint8Array(nTypes);
         this.typeHp = new Int16Array(nTypes);
         this.typeDamage = new Int16Array(nTypes);
         this.typeRange2 = new Float32Array(nTypes);
@@ -279,6 +281,7 @@ export class UnitManager {
             this.pReach2[t] = (r + 8) * (r + 8);
             this.pDamageBonus[t] = damageBonusFor(key);
             this.pCritChance[t] = critChanceFor(key);
+            this.pHealAoe[t] = healAoeFor(key);
         }
         this.pArmourMult = armourMult();
     }
@@ -343,6 +346,33 @@ export class UnitManager {
         this.hp[best] -= dmg;
         if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
         if (this.hp[best] <= 0) this.kill(best);
+    }
+
+    // Max HP of a unit, including the player's +Health upgrade (so heals top up to the
+    // real maximum, not the base value).
+    private maxHpOf(j: number): number {
+        return this.typeHp[this.type[j]] + (this.faction[j] === FACTION.player ? this.pHpBonus[this.type[j]] : 0);
+    }
+
+    // Monk Heal-area upgrade: top up every wounded ally within heal range (pops a green
+    // number on each), including the Monk itself.
+    private areaHeal(healer: number, acting: number) {
+        const f = this.faction[healer];
+        const r2 = this.typeRange2[acting];
+        const amt = this.typeHealAmount[acting];
+        const xi = this.x[healer];
+        const yi = this.y[healer];
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] !== f) continue;
+            const maxHp = this.maxHpOf(j);
+            if (this.hp[j] >= maxHp) continue;
+            const dx = this.x[j] - xi;
+            const dy = this.y[j] - yi;
+            if (dx * dx + dy * dy > r2) continue;
+            const healed = Math.min(amt, maxHp - this.hp[j]);
+            this.hp[j] += healed;
+            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[j], this.y[j] - 50, healed);
+        }
     }
 
     get activeCount(): number {
@@ -579,24 +609,35 @@ export class UnitManager {
             const t = this.target[i];
 
             if (this.typeHealAmount[acting] > 0) {
-                // Healer: top up the lowest-HP ally if it is still hurt and in range.
-                const maxHp = t >= 0 && t < this.count ? this.typeHp[this.type[t]] : 0;
-                const okHeal =
-                    t >= 0 && t < this.count && this.state[t] !== STATE.dying &&
-                    this.faction[t] === this.faction[i] && this.hp[t] < maxHp;
-                if (okHeal) {
-                    const dx = this.x[t] - this.x[i];
-                    const dy = this.y[t] - this.y[i];
-                    if (dx * dx + dy * dy <= this.typeRange2[acting]) {
+                const f = this.faction[i];
+                // Player Monk with the Heal-area upgrade tops up everyone nearby; otherwise
+                // it heals the single lowest-HP ally it acquired.
+                if (f === FACTION.player && this.pHealAoe[acting]) {
+                    const hasTarget = t >= 0 && t < this.count && this.state[t] !== STATE.dying && this.faction[t] === f;
+                    if (hasTarget) {
                         this.attackCd[i] += this.typeHealInterval[acting];
-                        const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
-                        this.hp[t] += healed;
-                        if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
-                            this.onHeal(this.x[t], this.y[t] - 50, healed);
-                        }
-                        // Re-trigger the heal gesture each beat.
-                        this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[this.faction[i]], 'heal'));
+                        this.areaHeal(i, acting);
+                        this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
                         continue;
+                    }
+                } else {
+                    const maxHp = t >= 0 && t < this.count ? this.maxHpOf(t) : 0;
+                    const okHeal =
+                        t >= 0 && t < this.count && this.state[t] !== STATE.dying &&
+                        this.faction[t] === f && this.hp[t] < maxHp;
+                    if (okHeal) {
+                        const dx = this.x[t] - this.x[i];
+                        const dy = this.y[t] - this.y[i];
+                        if (dx * dx + dy * dy <= this.typeRange2[acting]) {
+                            this.attackCd[i] += this.typeHealInterval[acting];
+                            const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
+                            this.hp[t] += healed;
+                            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
+                                this.onHeal(this.x[t], this.y[t] - 50, healed);
+                            }
+                            this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
+                            continue;
+                        }
                     }
                 }
                 this.target[i] = -1;
