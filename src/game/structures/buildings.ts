@@ -64,8 +64,10 @@ export class Buildings {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly units: UnitManager;
-    private readonly onTap?: (kind: string) => void;
-    private readonly onSlotTap?: (faction: Faction, spot: number) => void;
+    // Selection callbacks (the SelectionHud): a building/Castle/House was tapped (tag = unit key
+    // | 'general' | 'house', plus its world position for the highlight), or an empty slot was.
+    private readonly onSelect?: (tag: string, x: number, y: number) => void;
+    private readonly onSelectSlot?: (faction: Faction, spot: number, x: number, y: number) => void;
 
     private readonly producers: Producer[] = [];
     private readonly sites: ConstructionSite[] = [];
@@ -95,14 +97,14 @@ export class Buildings {
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         units: UnitManager,
-        onTap?: (kind: string) => void,                         // tap a producer → its upgrades
-        onSlotTap?: (faction: Faction, spot: number) => void,   // tap an empty slot → build menu
+        onSelect?: (tag: string, x: number, y: number) => void,                  // tap building/Castle/House
+        onSelectSlot?: (faction: Faction, spot: number, x: number, y: number) => void, // tap empty slot
     ) {
         this.scene = scene;
         this.layer = layer;
         this.units = units;
-        this.onTap = onTap;
-        this.onSlotTap = onSlotTap;
+        this.onSelect = onSelect;
+        this.onSelectSlot = onSelectSlot;
 
         const g = CONFIG.grid;
         this.pitchX = g.cellW + g.gap;
@@ -124,7 +126,7 @@ export class Buildings {
             // upgrades building.
             const kp = this.slotPos(f, g.keepSpot);
             const kimg = this.place(buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
-            if (f === FACTION.player) this.makeTappable(kimg, () => this.onTap?.('general'));
+            if (f === FACTION.player) this.makeTappable(kimg, () => this.onSelect?.('general', kp.x, kp.y));
             this.keepPos[f] = { x: kp.x, y: kp.y };
             occ.add(g.keepSpot);
 
@@ -165,10 +167,10 @@ export class Buildings {
         this.layer.add(plinth);
         this.plinths.set(`${faction}:${spot}`, plinth);
         // Only the player can build; make their empty slots tappable, with a faint "＋" hint.
-        if (faction === FACTION.player && this.onSlotTap) {
+        if (faction === FACTION.player && this.onSelectSlot) {
             plinth.setInteractive({ useHandCursor: true });
             plinth.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-                if (pointer.getDistance() < 14) this.onSlotTap!(faction, spot);
+                if (pointer.getDistance() < 14) this.onSelectSlot!(faction, spot, p.x, p.y);
             });
             const hint = this.scene.add.text(p.x, p.y, '＋', {
                 fontFamily: 'monospace', fontSize: '40px', color: '#ffffff',
@@ -187,7 +189,7 @@ export class Buildings {
 
         if (def.produces) {
             // Combat producer: tappable for upgrades (player), and emits on a timer.
-            if (faction === FACTION.player) this.makeTappable(img, () => this.onTap?.(def.produces!));
+            if (faction === FACTION.player) this.makeTappable(img, () => this.onSelect?.(def.produces!, p.x, p.y));
             const typeIndex = CONFIG.unitTypes.findIndex((u) => u.key === def.produces);
             if (typeIndex >= 0) {
                 this.producers.push({
@@ -200,8 +202,10 @@ export class Buildings {
                 });
             }
         } else {
-            // House: a peasant source — register it for the PeasantManager to staff.
+            // House: a peasant source — register it for the PeasantManager to staff, and make
+            // the player's tappable for peasant upgrades.
             this.housePos[faction].push({ x: p.x, y: p.y });
+            if (faction === FACTION.player) this.makeTappable(img, () => this.onSelect?.('house', p.x, p.y));
         }
     }
 

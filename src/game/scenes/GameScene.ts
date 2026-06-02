@@ -14,8 +14,7 @@ import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
-import { UpgradePanel } from '../ui/UpgradePanel';
-import { BuildMenu } from '../ui/BuildMenu';
+import { SelectionHud } from '../ui/SelectionHud';
 import { Hud, loadHud } from '../ui/Hud';
 import { EnemyAI } from '../ai/EnemyAI';
 import { resetUpgrades } from '../upgrades';
@@ -32,8 +31,7 @@ export class GameScene extends Phaser.Scene {
     private projectiles!: Projectiles;
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
-    private upgradePanel!: UpgradePanel;
-    private buildMenu!: BuildMenu;
+    private selectionHud!: SelectionHud;
     private devPanel!: DevPanel;
     private hud!: Hud;
     private resources!: ResourceStore;
@@ -124,19 +122,24 @@ export class GameScene extends Phaser.Scene {
         this.resources = new ResourceStore();
         resetUpgrades();
 
-        // Building upgrade popup (opened by tapping a player building) — now charges resources.
-        this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units, this.resources);
-
-        // Buildings: the Castle keeps, the shared-upgrades building, each side's starting
-        // buildings, and the empty build slots. Tapping a player producer opens its upgrades;
-        // tapping an empty player slot opens the build menu.
+        // Buildings: the Castle keeps, each side's starting buildings, and the empty build slots.
+        // Tapping a player building/slot selects it; the SelectionHud (below) shows its options.
         this.buildings = new Buildings(
             this,
             this.worldLayer,
             this.units,
-            (kind) => this.upgradePanel.toggle(kind),
-            (faction, spot) => this.buildMenu.open(faction, spot),
+            (tag, x, y) => this.selectionHud.selectUpgrades(tag, x, y),
+            (faction, spot, x, y) => this.selectionHud.selectBuild(faction, spot, x, y),
         );
+
+        // Unified bottom selection HUD (replaces the old upgrade + build popups).
+        this.selectionHud = new SelectionHud(this, this.uiLayer, this.worldLayer, this.units, this.resources, this.buildings);
+
+        // Tap blank ground to clear the selection (a tap, not a camera-drag).
+        const catcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
+            .setOrigin(0, 0).setDepth(-100).setInteractive();
+        this.worldLayer.add(catcher);
+        catcher.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectionHud.clear(); });
 
         // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
         // Peasants bank at each side's Castle and (Phase 2) build new structures on slots.
@@ -145,9 +148,6 @@ export class GameScene extends Phaser.Scene {
 
         // The enemy's scripted build economy (spends its gathered income on a build order).
         this.enemyAI = new EnemyAI(this.buildings, this.resources);
-
-        // The build menu (opened by tapping an empty player slot).
-        this.buildMenu = new BuildMenu(this, this.uiLayer, this.buildings, this.resources);
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
@@ -242,8 +242,7 @@ export class GameScene extends Phaser.Scene {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.hud.layout();
         this.unitPanel.layout();
-        this.upgradePanel.layout();
-        this.buildMenu.layout();
+        this.selectionHud.layout();
         this.cameraController.handleResize();
     }
 
@@ -273,8 +272,7 @@ export class GameScene extends Phaser.Scene {
         // its affordability / greyed-out states stay live.
         if (this.resources.rev !== this.lastResRev) {
             this.lastResRev = this.resources.rev;
-            this.buildMenu.refresh();
-            this.upgradePanel.refresh();
+            this.selectionHud.refresh();
         }
     }
 }
