@@ -23,6 +23,9 @@ export const UPGRADES: UpgradeDef[] = [
     { key: 'armour', kind: 'general', label: 'Armour', desc: 'Your units take less damage' },
     { key: 'melee', kind: 'general', label: 'Melee atk', desc: '+damage, your melee units' },
     { key: 'ranged', kind: 'general', label: 'Ranged atk', desc: '+damage, your ranged units' },
+    { key: 'peasantSpeed', kind: 'house', label: '+Worker speed', desc: 'Peasants move faster' },
+    { key: 'peasantCarry', kind: 'house', label: '+Carry', desc: 'Peasants carry +5 per trip' },
+    { key: 'peasantFlee', kind: 'house', label: 'Flee burst', desc: 'Peasants sprint when fleeing' },
 ];
 
 // Owned level per upgrade key (0 or 1 for now). Player side only.
@@ -77,3 +80,9 @@ export const critChanceFor = (unitKey: string) =>
 // Player-only: does this unit's heal hit an area instead of one ally?
 export const healAoeFor = (unitKey: string) =>
     unitKey === 'monk' && upgradeActive('monkAoe') ? 1 : 0;
+
+// ---- Peasant upgrades (player workers only; read by PeasantManager) ----
+
+export const peasantSpeedBonus = () => (upgradeActive('peasantSpeed') ? CONFIG.upgrades.peasantSpeed : 0);
+export const peasantCarryBonus = () => (upgradeActive('peasantCarry') ? CONFIG.upgrades.peasantCarry : 0);
+export const peasantFleeBurst = () => upgradeActive('peasantFlee');

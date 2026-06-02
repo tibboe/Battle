@@ -4,6 +4,7 @@ import { FACTION, Faction, UnitManager } from './UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
 import { Buildings, ConstructionSite } from '../structures/buildings';
+import { peasantCarryBonus, peasantFleeBurst, peasantSpeedBonus } from '../upgrades';
 
 // Peasants (Milestone 4) — the repurposed Pawn, now a pure WORKER, kept deliberately apart
 // from the optimized combat UnitManager. There are only a handful per side, so each is a
@@ -93,6 +94,8 @@ interface Peasant {
     hp: number;           // workers can be cut down by a nearby enemy army (Phase 4)
     dead: boolean;        // killed this frame; pruned after the step loop
     anim: WorkerAnim;
+    burst: number;        // ms of flee speed-burst remaining (peasantFlee upgrade)
+    burstCd: number;      // ms until the flee burst can trigger again
 }
 
 export class PeasantManager {
@@ -236,6 +239,8 @@ export class PeasantManager {
             hp: CONFIG.peasant.hp,
             dead: false,
             anim: 'walk',
+            burst: 0,
+            burstCd: 0,
         });
         this.alive[faction][house]++;
     }
@@ -295,6 +300,9 @@ export class PeasantManager {
     }
 
     private step(p: Peasant, delta: number, dt: number) {
+        if (p.burst > 0) p.burst -= delta;
+        if (p.burstCd > 0) p.burstCd -= delta;
+
         // Harassment (Phase 4): a nearby enemy combat unit bleeds the worker and makes it flee.
         const threatened = this.units.threatNear(p.faction, p.x, p.y, CONFIG.peasant.dangerRadius);
         if (threatened) {
@@ -306,6 +314,11 @@ export class PeasantManager {
                 p.node = undefined;
                 p.carrying = 0;
                 p.state = State.Flee;
+                // Flee-burst upgrade (player): sprint away if it's off cooldown.
+                if (p.faction === FACTION.player && peasantFleeBurst() && p.burstCd <= 0) {
+                    p.burst = CONFIG.abilities.peasantFlee.duration;
+                    p.burstCd = CONFIG.abilities.peasantFlee.cooldown;
+                }
             }
         }
 
@@ -335,7 +348,9 @@ export class PeasantManager {
                 if (!p.node || !p.node.alive) { p.state = State.Seek; p.node = undefined; break; }
                 p.timer += delta;
                 if (p.timer >= CONFIG.peasant.gatherTime) {
-                    const got = this.nodes.harvest(p.node, CONFIG.peasant.carryAmount);
+                    const want = CONFIG.peasant.carryAmount
+                        + (p.faction === FACTION.player ? peasantCarryBonus() : 0);
+                    const got = this.nodes.harvest(p.node, want);
                     if (got <= 0) { p.state = State.Seek; p.node = undefined; break; }
                     p.carrying = got;
                     p.state = State.Return;
@@ -412,7 +427,7 @@ export class PeasantManager {
         const dy = ty - p.y;
         const dist = Math.hypot(dx, dy);
         if (dist <= arrive) return true;
-        const stepDist = CONFIG.peasant.moveSpeed * dt;
+        const stepDist = this.speedOf(p) * dt;
         const k = Math.min(stepDist, dist) / dist;
         p.x += dx * k;
         p.y += dy * k;
@@ -424,6 +439,14 @@ export class PeasantManager {
     private faceTo(p: Peasant, tx: number) {
         // Art faces right; flip when the target is to the left.
         p.sprite.setFlipX(tx < p.x);
+    }
+
+    // Effective walk speed: base + the player's worker-speed upgrade, ×burst while fleeing.
+    private speedOf(p: Peasant): number {
+        let s = CONFIG.peasant.moveSpeed;
+        if (p.faction === FACTION.player) s += peasantSpeedBonus();
+        if (p.burst > 0) s *= CONFIG.abilities.peasantFlee.mult;
+        return s;
     }
 
     private setAnim(p: Peasant, anim: WorkerAnim) {

@@ -334,6 +334,8 @@ export const CONFIG = {
         armour: 0.8,       // your units take ×this incoming damage (lower = tougher)
         melee: 4,          // + damage for your melee units
         ranged: 4,         // + damage for your ranged units
+        peasantSpeed: 28,  // + move speed (px/s) for your peasants
+        peasantCarry: 5,   // + resource carried per trip by your peasants
     },
 
     // Price of each upgrade (Phase 3), keyed by the upgrade key in upgrades.ts. Buying deducts
@@ -347,6 +349,9 @@ export const CONFIG = {
         armour:      { gold: 80, stone: 60, wood: 20 },
         melee:       { gold: 70, stone: 40, wood: 30 },
         ranged:      { gold: 70, stone: 20, wood: 50 },
+        peasantSpeed: { gold: 30, stone: 20, wood: 40 },
+        peasantCarry: { gold: 40, stone: 30, wood: 30 },
+        peasantFlee:  { gold: 50, stone: 20, wood: 30 },
     } as Record<string, Cost>,
 
     // Unit special abilities (Phase 4). The default abilities are innate to BOTH sides; the
@@ -359,6 +364,9 @@ export const CONFIG = {
         // beyond normal reach). It only damages an enemy within `hitRadius` of where it
         // lands; `spread` is the aim scatter (bigger = more misses); `speed` the lob travel.
         longshot: { bonusRange: 2000, cooldown: 3000, spread: 55, hitRadius: 36, speed: 1300 },
+        // Peasant flee-burst upgrade: while fleeing a nearby enemy, sprint at ×mult for
+        // `duration` ms, then `cooldown` ms before it can burst again.
+        peasantFlee: { mult: 1.9, duration: 1500, cooldown: 6000 },
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
