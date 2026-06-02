@@ -93,7 +93,7 @@ export const CONFIG = {
         { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61 },
-        { key: 'archer', art: 'archer', role: 'ranged',
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot',
           hp: 18, damage: 8, range: 240, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
         { key: 'monk', art: 'monk', role: 'support',
@@ -196,6 +196,10 @@ export const CONFIG = {
         knockback: { distance: 110, cooldown: 5000 }, // Lancer shoves its target back, on a cd
         crit: { chance: 0.25, mult: 2 },              // Lancer upgrade: chance to deal ×mult damage
         block: { chance: 0.2 },                       // Warrior: chance to fully negate a hit it takes
+        // Archer: every `cooldown` ms lob an arc arrow at a far enemy (base range + bonus,
+        // beyond normal reach). It only damages an enemy within `hitRadius` of where it
+        // lands; `spread` is the aim scatter (bigger = more misses); `speed` the lob travel.
+        longshot: { bonusRange: 2000, cooldown: 3000, spread: 55, hitRadius: 36, speed: 1300 },
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

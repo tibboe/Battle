@@ -66,11 +66,14 @@ export class UnitManager {
     private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
     private readonly typeKnockback: Uint8Array;  // 1 = shoves its target back on a cooldown
     private readonly typeBlockChance: Float32Array; // chance to fully negate an incoming hit
+    private readonly typeLongshot: Uint8Array;   // 1 = lobs a long-shot arrow on a cooldown
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
 
     private readonly nTypes: number;
     private readonly typeKey: string[];
+    private longshotType = -1;              // type index that has the long shot (or -1)
+    private readonly longScratch: number[] = []; // reused candidate buffer for long-shot aim
     // Counter matrix resolved for this roster: pairMul[attacker*nTypes + target] is the
     // weapon×armour multiplier, so the strike loop does one array read and no string work.
     private readonly pairMul: Float32Array;
@@ -120,6 +123,9 @@ export class UnitManager {
     private readonly onHeal?: (x: number, y: number, amount: number) => void;
     // Emitted when a unit blocks a hit, so the scene can pop a "block" indicator.
     private readonly onBlock?: (x: number, y: number) => void;
+    // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
+    // landing calls back into resolveLongShotHit.
+    private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
 
     constructor(
         scene: Phaser.Scene,
@@ -129,12 +135,14 @@ export class UnitManager {
         onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
         onHeal?: (x: number, y: number, amount: number) => void,
         onBlock?: (x: number, y: number) => void,
+        onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
     ) {
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
         this.onShoot = onShoot;
         this.onHeal = onHeal;
         this.onBlock = onBlock;
+        this.onLongShot = onLongShot;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -173,6 +181,7 @@ export class UnitManager {
         this.typeRanged = new Uint8Array(nTypes);
         this.typeKnockback = new Uint8Array(nTypes);
         this.typeBlockChance = new Float32Array(nTypes);
+        this.typeLongshot = new Uint8Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
         let maxRange = 1;
@@ -193,6 +202,8 @@ export class UnitManager {
             this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
             this.typeKnockback[t] = ut.ability === 'knockback' ? 1 : 0;
             this.typeBlockChance[t] = ut.ability === 'block' ? CONFIG.abilities.block.chance : 0;
+            this.typeLongshot[t] = ut.ability === 'longshot' ? 1 : 0;
+            if (ut.ability === 'longshot') this.longshotType = t;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
             if (ut.range > maxRange) maxRange = ut.range;
@@ -272,6 +283,68 @@ export class UnitManager {
         this.pArmourMult = armourMult();
     }
 
+    // Archer special: lob an arc arrow at a far enemy (beyond normal reach), with aim
+    // scatter so it can miss. Damage is resolved where it lands (resolveLongShotHit).
+    private fireLongShot(i: number) {
+        const ls = CONFIG.abilities.longshot;
+        const f = this.faction[i];
+        const dir = f === FACTION.player ? 1 : -1;
+        const minDist = CONFIG.unitTypes[this.type[i]].range; // shoot past normal range
+        const min2 = minDist * minDist;
+        const reach = minDist + ls.bonusRange;
+        const max2 = reach * reach;
+        const xi = this.x[i];
+        const yi = this.y[i];
+
+        const cand = this.longScratch;
+        cand.length = 0;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === f) continue;
+            const dx = this.x[j] - xi;
+            if (dx * dir <= 0) continue; // must be ahead of the archer
+            const dy = this.y[j] - yi;
+            const d2 = dx * dx + dy * dy;
+            if (d2 < min2 || d2 > max2) continue;
+            cand.push(j);
+        }
+        if (!cand.length) {
+            this.abilityCd[i] = 300; // nothing far to shoot — try again soon
+            return;
+        }
+        const target = cand[(Math.random() * cand.length) | 0];
+        const lx = this.x[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        const ly = this.y[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        if (this.onLongShot) this.onLongShot(xi, yi - 40, lx, ly, f as Faction);
+        this.abilityCd[i] = ls.cooldown;
+    }
+
+    // Called when a long-shot arrow lands: damage the nearest enemy at the impact point if
+    // one is within hitRadius (otherwise it simply missed).
+    resolveLongShotHit(x: number, y: number, attacker: Faction) {
+        const ls = CONFIG.abilities.longshot;
+        let best = -1;
+        let bestD2 = ls.hitRadius * ls.hitRadius;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === attacker) continue;
+            const dx = this.x[j] - x;
+            const dy = this.y[j] - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= bestD2) {
+                bestD2 = d2;
+                best = j;
+            }
+        }
+        if (best < 0) return; // missed — no unit where it landed
+        const at = this.longshotType >= 0 ? this.longshotType : 0;
+        const base = this.typeDamage[at] + (attacker === FACTION.player ? this.pDamageBonus[at] : 0);
+        let scaled = base * this.pairMul[at * this.nTypes + this.type[best]];
+        if (this.faction[best] === FACTION.player) scaled *= this.pArmourMult;
+        const dmg = Math.max(1, Math.round(scaled));
+        this.hp[best] -= dmg;
+        if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
+        if (this.hp[best] <= 0) this.kill(best);
+    }
+
     get activeCount(): number {
         return this.count;
     }
@@ -341,7 +414,9 @@ export class UnitManager {
         this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
         this.abilityCd[i] = this.typeKnockback[t]
             ? Phaser.Math.FloatBetween(0, CONFIG.abilities.knockback.cooldown)
-            : 0;
+            : this.typeLongshot[t]
+                ? Phaser.Math.FloatBetween(0, CONFIG.abilities.longshot.cooldown)
+                : 0;
         this.deathTimer[i] = 0;
         this.lane[i] = 0;
         this.type[i] = t;
@@ -464,6 +539,8 @@ export class UnitManager {
             }
 
             if (this.abilityCd[i] > 0) this.abilityCd[i] -= delta; // tick special-ability cd
+            // Archers lob a long shot when ready, whether walking or engaged.
+            if (this.typeLongshot[this.type[i]] && this.abilityCd[i] <= 0) this.fireLongShot(i);
 
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;

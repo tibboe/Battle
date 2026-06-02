@@ -91,6 +91,9 @@ export class GameScene extends Phaser.Scene {
             (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
             (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
             (x, y) => this.floatingText.pop(x, y, 'block', '#bcd4e6'), // block indicator
+            (x0, y0, x1, y1, faction) =>
+                this.projectiles.lob(x0, y0, x1, y1, faction, CONFIG.abilities.longshot.speed,
+                    (lx, ly, f) => this.units.resolveLongShotHit(lx, ly, f as Faction)),
         );
 
         // Building upgrade popup (opened by tapping a player building).
