@@ -317,6 +317,17 @@ export class Buildings {
     housePositions(faction: Faction): { x: number; y: number }[] {
         return this.housePos[faction];
     }
+
+    // Empty, buildable spots for a side (not the keep/general/a building/under construction).
+    // Used by the enemy build AI to choose where to construct.
+    freeSlots(faction: Faction): number[] {
+        const spotCount = CONFIG.grid.cols * CONFIG.grid.rows;
+        const free: number[] = [];
+        for (let spot = 1; spot <= spotCount; spot++) {
+            if (!this.occupied[faction].has(spot)) free.push(spot);
+        }
+        return free;
+    }
 }
 
 function catalogDef(key: string): BuildingDef | undefined {

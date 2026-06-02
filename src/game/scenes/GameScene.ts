@@ -16,6 +16,7 @@ import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { UpgradePanel } from '../ui/UpgradePanel';
 import { BuildMenu } from '../ui/BuildMenu';
+import { EnemyAI } from '../ai/EnemyAI';
 import { resetUpgrades } from '../upgrades';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
@@ -35,6 +36,7 @@ export class GameScene extends Phaser.Scene {
     private resources!: ResourceStore;
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
+    private enemyAI!: EnemyAI;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -134,7 +136,10 @@ export class GameScene extends Phaser.Scene {
         // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
         // Peasants bank at each side's Castle and (Phase 2) build new structures on slots.
         this.resourceNodes = new ResourceNodes(this, this.worldLayer);
-        this.peasants = new PeasantManager(this, this.worldLayer, this.resources, this.resourceNodes, this.buildings);
+        this.peasants = new PeasantManager(this, this.worldLayer, this.resources, this.resourceNodes, this.buildings, this.units);
+
+        // The enemy's scripted build economy (spends its gathered income on a build order).
+        this.enemyAI = new EnemyAI(this.buildings, this.resources);
 
         // The build menu (opened by tapping an empty player slot).
         this.buildMenu = new BuildMenu(this, this.uiLayer, this.buildings, this.resources);
@@ -309,6 +314,7 @@ export class GameScene extends Phaser.Scene {
 
     update(_time: number, delta: number) {
         if (!this.gameOver) {
+            this.enemyAI.update(delta);
             this.units.update(delta);
             // Peasants advance any build site before the buildings system checks completion.
             this.peasants.update(delta);

@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG, ResourceType } from '../config';
-import { FACTION, Faction } from './UnitManager';
+import { FACTION, Faction, UnitManager } from './UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
 import { Buildings, ConstructionSite } from '../structures/buildings';
@@ -73,7 +73,7 @@ export function registerPeasantAnimations(scene: Phaser.Scene) {
 }
 
 // Plain const map (not a const enum — those are disallowed under isolatedModules).
-const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4 } as const;
+const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4, Flee: 5 } as const;
 type State = (typeof State)[keyof typeof State];
 
 // Each House's workers cycle through the resources in this order.
@@ -91,6 +91,8 @@ interface Peasant {
     site?: ConstructionSite; // the build job this worker is on (Build state)
     timer: number;        // ms accumulated in Harvest / Bank
     carrying: number;
+    hp: number;           // workers can be cut down by a nearby enemy army (Phase 4)
+    dead: boolean;        // killed this frame; pruned after the step loop
     anim: WorkerAnim;
 }
 
@@ -100,8 +102,10 @@ export class PeasantManager {
     private readonly store: ResourceStore;
     private readonly nodes: ResourceNodes;
     private readonly buildings: Buildings;
+    private readonly units: UnitManager;
 
-    private readonly peasants: Peasant[] = [];
+    private peasants: Peasant[] = [];
+    private removeDead = false; // set when a worker dies, so we prune the array after stepping
     // Per faction, per house: workers alive, the rotation cursor, and a refill timer used when
     // a House is below perHouse. `houseCount` tracks how many Houses we have staffed so far so
     // newly built Houses get picked up.
@@ -116,12 +120,14 @@ export class PeasantManager {
         store: ResourceStore,
         nodes: ResourceNodes,
         buildings: Buildings,
+        units: UnitManager,
     ) {
         this.scene = scene;
         this.layer = layer;
         this.store = store;
         this.nodes = nodes;
         this.buildings = buildings;
+        this.units = units;
 
         // Staff the Houses each side starts with.
         for (const f of [FACTION.player, FACTION.enemy] as const) this.reconcileHouses(f);
@@ -167,6 +173,8 @@ export class PeasantManager {
             site: undefined,
             timer: 0,
             carrying: 0,
+            hp: CONFIG.peasant.hp,
+            dead: false,
             anim: 'walk',
         });
         this.alive[faction][house]++;
@@ -177,7 +185,11 @@ export class PeasantManager {
         this.dispatchBuilders();
         this.maintain(delta);
         const dt = delta / 1000;
-        for (const p of this.peasants) this.step(p, delta, dt);
+        for (const p of this.peasants) if (!p.dead) this.step(p, delta, dt);
+        if (this.removeDead) {
+            this.peasants = this.peasants.filter((p) => !p.dead);
+            this.removeDead = false;
+        }
     }
 
     // Assign the nearest free worker to any construction site that lacks a builder.
@@ -223,6 +235,20 @@ export class PeasantManager {
     }
 
     private step(p: Peasant, delta: number, dt: number) {
+        // Harassment (Phase 4): a nearby enemy combat unit bleeds the worker and makes it flee.
+        const threatened = this.units.threatNear(p.faction, p.x, p.y, CONFIG.peasant.dangerRadius);
+        if (threatened) {
+            p.hp -= CONFIG.peasant.harassDps * dt;
+            if (p.hp <= 0) { this.kill(p); return; }
+            if (p.state !== State.Flee) {
+                // Drop the current job and run for home.
+                if (p.site) { p.site.claimed = false; p.site = undefined; }
+                p.node = undefined;
+                p.carrying = 0;
+                p.state = State.Flee;
+            }
+        }
+
         switch (p.state) {
             case State.Seek: {
                 if (!p.node || !p.node.alive) p.node = this.nodes.nearest(p.resource, p.x, p.y);
@@ -285,7 +311,34 @@ export class PeasantManager {
                 }
                 break;
             }
+            case State.Flee: {
+                // Run to the Castle; once the threat has passed, get back to work.
+                if (!threatened) { p.state = State.Seek; this.setAnim(p, 'walk'); break; }
+                const bank = this.buildings.keepPosition(p.faction);
+                this.moveTo(p, bank.x, bank.y, CONFIG.peasant.bankArrive, dt);
+                this.setAnim(p, 'walk');
+                break;
+            }
         }
+    }
+
+    // A worker is cut down: free any build job, fade the sprite out, and let its House train a
+    // replacement (the alive count drops, so maintain() refills after trainTime).
+    private kill(p: Peasant) {
+        if (p.dead) return;
+        p.dead = true;
+        this.removeDead = true;
+        this.alive[p.faction][p.house]--;
+        if (p.site && !p.site.done) p.site.claimed = false;
+        const spr = p.sprite;
+        spr.anims.stop();
+        spr.setTint(0x6a6a6a);
+        this.scene.tweens.add({
+            targets: spr,
+            alpha: 0,
+            duration: CONFIG.peasant.deathFadeMs,
+            onComplete: () => spr.destroy(),
+        });
     }
 
     // Walk toward (tx, ty); returns true once within `arrive` px. Updates sprite + depth.

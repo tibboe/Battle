@@ -405,6 +405,20 @@ export class UnitManager {
         return this.livingByType[typeIndex * 2 + faction];
     }
 
+    // Is any OPPOSING combat unit within `radius` of (x, y)? Used by the peasant system so
+    // workers flee/die when an enemy army reaches their gathering line (Phase 4 harassment).
+    // `faction` is the worker's own side — units of that side don't threaten it.
+    threatNear(faction: Faction, x: number, y: number, radius: number): boolean {
+        const r2 = radius * radius;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === faction) continue;
+            const dx = this.x[j] - x;
+            const dy = this.y[j] - y;
+            if (dx * dx + dy * dy <= r2) return true;
+        }
+        return false;
+    }
+
     update(delta: number) {
         this.reacquireAcc += delta;
         if (this.reacquireAcc >= CONFIG.combat.reacquireMs) {

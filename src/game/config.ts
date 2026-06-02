@@ -209,21 +209,29 @@ export const CONFIG = {
             { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 4200, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
         ] as BuildingDef[],
 
-        // Pre-built at match start (free, instant), per side. The player gets ONLY a House so
-        // they must pick + build their first producer; the enemy gets a full base (its real
-        // economy / build AI is Phase 4). Spots reference the 3×3 grid (see `grid`).
+        // Pre-built at match start (free, instant), per side. BOTH sides start lean and build
+        // up from gathered income (Phase 4): the player gets one House (they pick + build their
+        // first producer); the enemy gets TWO Houses — a bigger gathering base to offset the
+        // player's upgrade + spawn-cap edge — and follows a scripted build order (enemyAI).
+        // Spots reference the 3×3 grid (see `grid`).
         start: {
             player: [
                 { key: 'house', spot: 1 },
             ],
             enemy: [
-                { key: 'house',     spot: 1 },
-                { key: 'barracks',  spot: 2 },
-                { key: 'tower',     spot: 3 },
-                { key: 'archery',   spot: 7 },
-                { key: 'monastery', spot: 8 },
+                { key: 'house', spot: 1 },
+                { key: 'house', spot: 7 },
             ],
         } as Record<'player' | 'enemy', { key: string; spot: number }[]>,
+    },
+
+    // Enemy build AI (Phase 4): the "hybrid" economy the director picked — enemy peasants
+    // gather for real (and are harassable), while its building choices are scripted here. Every
+    // `decideEvery` ms it tries to build the next item in `buildOrder` on a free slot, saving up
+    // until it can afford each (it never skips). Tune the order / cadence to harden the enemy.
+    enemyAI: {
+        decideEvery: 800,
+        buildOrder: ['barracks', 'archery', 'tower', 'monastery', 'barracks'],
     },
 
     // ── Economy (Milestone 4) ───────────────────────────────────────────────────────────
@@ -251,6 +259,14 @@ export const CONFIG = {
         trainTime: 3500,    // ms a House takes to train a replacement when below perHouse
         arrive: 48,         // px proximity that counts as "reached" a node
         bankArrive: 120,    // px proximity to the Castle that counts as "at the bank"
+        // Harassment (Phase 4): peasants are workers, not fighters — but they can be cut down.
+        // When an enemy combat unit comes within `dangerRadius`, a peasant drops its task,
+        // flees toward its Castle, and bleeds `harassDps` HP/sec; at 0 HP it dies and its House
+        // trains a replacement. So pushing your army into a gathering line starves that side.
+        hp: 26,
+        dangerRadius: 110,  // px; an enemy combat unit this close threatens the peasant
+        harassDps: 14,      // HP/sec drained while threatened (≈2s to kill if cornered)
+        deathFadeMs: 350,   // synthesised death fade (the pack has no worker death anim)
     },
 
     // Resource nodes on the island. Each: `type`, world x/y, and `finite` (deplete + vanish
