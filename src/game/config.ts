@@ -116,7 +116,7 @@ export const CONFIG = {
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
         { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
-          weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61 },
+          weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
         { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot',
           hp: 18, damage: 8, range: 240, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
@@ -169,7 +169,7 @@ export const CONFIG = {
     // frame so it never jitters. Raise strength for more spread; raise radius for bigger gaps.
     separation: {
         radius: 42,   // px; neighbours closer than this push apart
-        strength: 50, // px/sec; max nudge applied per unit per frame
+        strength: 70, // px/sec; max nudge applied per unit per frame (higher = fans out faster)
     },
 
     // Per-side soft cap on living units. This is a performance guard now — the buildings

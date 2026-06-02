@@ -807,6 +807,10 @@ export class UnitManager {
                         const w = (radius - d) / radius; // 1 when touching, 0 at the edge
                         px += (dx / d) * w;
                         py += (dy / d) * w;
+                        // Anti-column: two units nearly in single file (small vertical gap)
+                        // barely separate from the radial push alone, so the rear keeps bumping
+                        // the one ahead. Add a sideways nudge so they fan out and flow around.
+                        if (Math.abs(dy) < 10) py += (i < j ? -1 : 1) * w;
                     } else {
                         py += i < j ? -1 : 1; // exactly stacked: deterministic shove apart
                     }

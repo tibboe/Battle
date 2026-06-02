@@ -8,11 +8,13 @@ import { arrowKey } from './animations';
 //               touches down, so the caller can resolve area damage there (a real hit).
 // A fixed pool flies allocation-free; if every slot is busy the oldest is reused.
 
-const POOL = 64;
+const POOL = 96;          // larger pool since landed arrows linger before recycling
 const SPEED = 1500;       // px/sec for straight shots
 const MIN_MS = 60;        // floor so point-blank shots still read
 const SCALE = 0.7;
 const DEPTH = 1_500_000;  // above units (depth = world-y, ≤ ~1900), below floating numbers
+const LINGER_MS = 5000;   // a landed arrow sticks in the ground this long before vanishing
+const FADE_MS = 1200;     // …fading out over the final stretch of that linger
 
 type LandCb = (x: number, y: number, faction: number) => void;
 
@@ -25,6 +27,7 @@ export class Projectiles {
     private readonly elapsed = new Float32Array(POOL);
     private readonly dur = new Float32Array(POOL);
     private readonly arc = new Float32Array(POOL);   // 0 = straight; >0 = lob apex height
+    private readonly stuck = new Float32Array(POOL); // >0 = landed, ms of linger remaining
     private readonly pfac = new Int8Array(POOL);
     private readonly landCb: (LandCb | undefined)[] = new Array(POOL);
     private next = 0;
@@ -48,12 +51,15 @@ export class Projectiles {
         this.elapsed[i] = 0;
         this.dur[i] = Math.max(MIN_MS, dur);
         this.arc[i] = arc;
+        this.stuck[i] = 0;
         this.pfac[i] = faction;
         this.landCb[i] = onLand;
         this.sprites[i]
             .setTexture(this.keys[faction] ?? this.keys[0])
             .setRotation(Math.atan2(y1 - y0, x1 - x0)) // straight arrows keep this; lobs recompute
             .setPosition(x0, y0)
+            .setDepth(DEPTH)
+            .setAlpha(1)
             .setActive(true)
             .setVisible(true);
     }
@@ -75,6 +81,18 @@ export class Projectiles {
         for (let i = 0; i < POOL; i++) {
             const s = this.sprites[i];
             if (!s.active) continue;
+
+            // Landed arrow: hold it where it stuck, fade over the final stretch, then recycle.
+            if (this.stuck[i] > 0) {
+                this.stuck[i] -= delta;
+                if (this.stuck[i] <= 0) {
+                    s.setActive(false).setVisible(false).setAlpha(1);
+                } else if (this.stuck[i] < FADE_MS) {
+                    s.setAlpha(this.stuck[i] / FADE_MS);
+                }
+                continue;
+            }
+
             this.elapsed[i] += delta;
             const f = Math.min(1, this.elapsed[i] / this.dur[i]);
             const dxTotal = this.ex[i] - this.sx[i];
@@ -91,8 +109,11 @@ export class Projectiles {
             if (f >= 1) {
                 const cb = this.landCb[i];
                 this.landCb[i] = undefined;
-                s.setActive(false).setVisible(false);
                 if (cb) cb(this.ex[i], this.ey[i], this.pfac[i]);
+                // Plant the arrow where it landed and let it linger; sort it near the ground
+                // (depth ≈ landing y) so units pass in front of it.
+                s.setPosition(this.ex[i], this.ey[i]).setDepth(this.ey[i]);
+                this.stuck[i] = LINGER_MS;
             }
         }
     }
