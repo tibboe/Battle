@@ -208,9 +208,8 @@ export const CONFIG = {
         // pacing is easy to reason about. (Each catalog entry still carries an `every`, but it
         // is no longer what drives spawning — the cadence is global.)
         spawnSeconds: 10,
-        // The shared-upgrades building — hosts Armour/Melee/Ranged; produces no units.
-        // Pre-placed both sides (its upgrades become paid in Phase 3).
-        general: { art: 'House2', spot: 9, scale: 1.0 },
+        // (The shared Armour/Melee/Ranged upgrades — the 'general' set — are opened by tapping
+        // your Castle; there is no separate upgrades building.)
 
         // Build catalog (Phase 2): what a peasant can construct on an empty grid slot. A
         // House produces peasants (produces:null); the rest emit their combat unit every

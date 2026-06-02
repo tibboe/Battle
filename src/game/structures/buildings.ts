@@ -20,9 +20,9 @@ function buildingKey(faction: Faction, name: string) {
     return `bld-${faction}-${name}`;
 }
 
-// Every distinct building art referenced by config (keep + general + the whole catalog).
+// Every distinct building art referenced by config (the Castle keep + the whole catalog).
 function buildingNames(): string[] {
-    const set = new Set<string>([CONFIG.keep.art, CONFIG.production.general.art]);
+    const set = new Set<string>([CONFIG.keep.art]);
     for (const b of CONFIG.production.catalog) set.add(b.art);
     return [...set];
 }
@@ -119,18 +119,14 @@ export class Buildings {
             const flip = f === FACTION.enemy;
             const occ = this.occupied[f];
 
-            // Castle keep (bank / drop-off; HP tracked by the scene).
+            // Castle keep (bank / drop-off; HP tracked by the scene). Tapping YOUR Castle opens
+            // the shared Armour/Melee/Ranged ('general') upgrades — there is no separate
+            // upgrades building.
             const kp = this.slotPos(f, g.keepSpot);
-            this.place(buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
+            const kimg = this.place(buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
+            if (f === FACTION.player) this.makeTappable(kimg, () => this.onTap?.('general'));
             this.keepPos[f] = { x: kp.x, y: kp.y };
             occ.add(g.keepSpot);
-
-            // Shared-upgrades building (tappable on the player's side).
-            const gen = CONFIG.production.general;
-            const gp = this.slotPos(f, gen.spot);
-            const gimg = this.place(buildingKey(f, gen.art), gp.x, gp.y, gen.scale, flip);
-            if (f === FACTION.player) this.makeTappable(gimg, () => this.onTap?.('general'));
-            occ.add(gen.spot);
 
             // Pre-built starting buildings (free, instant).
             for (const s of CONFIG.production.start[f === FACTION.player ? 'player' : 'enemy']) {

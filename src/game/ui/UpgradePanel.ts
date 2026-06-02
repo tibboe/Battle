@@ -75,7 +75,7 @@ export class UpgradePanel {
         const y = 60;
 
         this.bg.setPosition(x, y).setSize(W, h).setVisible(true);
-        this.title.setText(kind === 'general' ? 'General upgrades' : `${cap(kind)} upgrades`)
+        this.title.setText(kind === 'general' ? 'Castle upgrades' : `${cap(kind)} upgrades`)
             .setPosition(x + PAD, y + 11).setVisible(true);
         this.closeBtn.setPosition(x + W - 34, y + 8).setVisible(true);
 
