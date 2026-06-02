@@ -77,13 +77,21 @@ broadly left↔right and we don't rely on units facing vertically.
 - Between runs, a simple shop spends points on **permanent upgrades** (e.g. +base HP,
   faster spawns, unlock a unit type, cheaper magic). Upgrades persist across runs.
 
-## Roadmap (build in this order — see milestone files for detail)
-1. **Milestone 1 — Core loop.** One lane, one melee unit type, two bases, win/lose,
-   restart. Proves the clash is fun. *(This is the current target.)*
-2. **Milestone 2 — Unit variety.** Add ranged and magic units + the RPS triangle.
-3. **Milestone 3 — Roguelite meta.** Points, a between-runs upgrade shop, persistent
-   upgrades, a multi-encounter run.
-4. **Milestone 4 — Multiple paths.** More than one lane, plus building/spawner choices.
+## Roadmap (actual milestone order — see the MILESTONE_*.md files for detail)
+1. **Milestone 1 — Horde Core.** One flat lane, a pooled melee horde, two keeps, win/lose,
+   restart. *(Complete.)*
+2. **Milestone 2 — Tiered elevation.** *(Parked — the Tiny Swords pack can't do broad
+   stairs; the field stays a single flat grass island on water.)*
+3. **Milestone 3 — Armies & Production.** Five unit types, a weapon×armour counter matrix,
+   buildings that produce on a 3×3 grid, tap-a-building upgrades & abilities. *(Complete.)*
+4. **Milestone 4 — Economy.** Peasants from Houses gather gold/stone/wood; buildings and
+   upgrades cost resources. *(Next.)*
+5. **Milestone 5 — Siege & Base Assault.** Sack buildings via their doors; out-of-commission
+   + repair instead of instant destruction.
+6. **Milestone 6 — Multiple paths.** More than one lane, plus building/spawner choices.
+
+(The earlier "roguelite meta" idea — points + a between-runs shop — is folded into the M4
+in-match economy for now; a separate between-runs meta can return as a later milestone.)
 
 ## Explicitly out of scope (for now)
 Multiplayer, online features, real art/animation, audio, accounts, monetisation, app-store
