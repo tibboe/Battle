@@ -72,7 +72,7 @@ export const CONFIG = {
         margin: 520,       // distance from the world edge to the keep's centre (on the island)
         size: 320,
         art: 'Castle',     // pack building drawn as the keep
-        scale: 1.2,        // display scale for the castle sprite
+        scale: 0.85,       // display scale for the castle sprite (sized to fit the grid)
     },
 
     // The unit roster — all five Tiny Swords types, data-driven. UnitManager reads these
@@ -143,19 +143,36 @@ export const CONFIG = {
         unitsTarget: { player: 55, enemy: 45 },
     },
 
-    // Production buildings. Each side fields one building per unit type that emits its unit
-    // every `every` ms (scaled live by `rateScale` from the Dev panel). `dx`/`dy` place the
-    // building art relative to its keep centre (dx −=toward the back edge, +=toward the lane;
-    // dy from the lane centre) — purely cosmetic; units muster at the keep front. `art` is
-    // the pack building file; `scale` sizes it. (The Castle keep is drawn separately.)
+    // Build grid: a 3×3 of spots beside each keep, numbered 1-9 left→right, top→bottom:
+    //   1 2 3
+    //   4 5 6
+    //   7 8 9
+    // The keep occupies `keepSpot` (4 = centre-left); production buildings sit on their
+    // `spot`; the remaining spots are clear (drawn as faint "build" plinths) and double as
+    // the gaps units march through. `cellW`/`cellH` set the spot spacing (tall buildings
+    // overflow upward), `gap` the path between spots. The player's grid fans toward the lane
+    // (right); the enemy's mirrors.
+    grid: {
+        cols: 3,
+        rows: 3,
+        cellW: 160,
+        cellH: 160,
+        gap: 80,
+        keepSpot: 4,
+    },
+
+    // Production buildings — one per unit type, each on a grid `spot`. Emits its unit every
+    // `every` ms (scaled live by the Dev panel's "Prod rate"). Units spawn at the building's
+    // spot and funnel into the lane. `art` is the pack building file; `scale` sizes it. (The
+    // Castle keep is drawn separately at keepSpot.)
     production: {
         rateScale: 1,
         buildings: [
-            { produces: 'pawn',    art: 'House1',    every: 1400, dx: -40,  dy: -320, scale: 1.0 },
-            { produces: 'warrior', art: 'Barracks',  every: 2200, dx: 90,   dy: -230, scale: 0.9 },
-            { produces: 'monk',    art: 'Monastery', every: 4200, dx: -130, dy: 0,    scale: 0.8 },
-            { produces: 'archer',  art: 'Archery',   every: 2600, dx: 90,   dy: 230,  scale: 0.9 },
-            { produces: 'lancer',  art: 'Tower',     every: 3200, dx: -40,  dy: 320,  scale: 0.9 },
+            { produces: 'pawn',    art: 'House1',    every: 1400, spot: 1, scale: 1.0 },
+            { produces: 'warrior', art: 'Barracks',  every: 2200, spot: 2, scale: 0.9 },
+            { produces: 'lancer',  art: 'Tower',     every: 3200, spot: 3, scale: 0.9 },
+            { produces: 'archer',  art: 'Archery',   every: 2600, spot: 7, scale: 0.9 },
+            { produces: 'monk',    art: 'Monastery', every: 4200, spot: 8, scale: 0.8 },
         ],
     },
 
