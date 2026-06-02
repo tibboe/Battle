@@ -142,8 +142,9 @@ export const CONFIG = {
         // (longer) range, so this only changes how the short-range melee close the gap.
         aggroRange: 220,
         // Global multiplier on every unit's time-between-strikes (the per-type attackInterval
-        // is the base; this scales them together). >1 = slower attacks. Live Dev knob.
-        attackIntervalScale: 1.5,
+        // is the base; this scales them together). >1 = slower attacks, with the unit resting
+        // in idle between swings. Live Dev "Atk interval" knob. (2× ≈ a clear swing-pause-swing.)
+        attackIntervalScale: 2,
         // Global multiplier on every unit's max HP (both sides). 2 = double health. Applies to
         // units spawned from now on when edited live. Live Dev knob.
         hpScale: 2,

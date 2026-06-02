@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
-import { animKey, FactionName, POOL_TEXTURE } from './animations';
+import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -70,6 +70,8 @@ export class UnitManager {
     private readonly typeLongshot: Uint8Array;   // 1 = lobs a long-shot arrow on a cooldown
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
+    private readonly typeAttackAnimMs: Float32Array; // one attack swing's animation length
+    private readonly typeHealAnimMs: Float32Array;   // one heal gesture's animation length
 
     private readonly nTypes: number;
     private readonly typeKey: string[];
@@ -192,6 +194,8 @@ export class UnitManager {
         this.typeLongshot = new Uint8Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
+        this.typeAttackAnimMs = new Float32Array(nTypes);
+        this.typeHealAnimMs = new Float32Array(nTypes);
         let maxRange = 1;
         for (let t = 0; t < nTypes; t++) {
             const ut = types[t];
@@ -214,6 +218,8 @@ export class UnitManager {
             if (ut.ability === 'longshot') this.longshotType = t;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
+            this.typeAttackAnimMs[t] = animDurationMs(ut.art, 'attack');
+            this.typeHealAnimMs[t] = animDurationMs(ut.art, 'heal');
             if (ut.range > maxRange) maxRange = ut.range;
         }
 
@@ -681,7 +687,7 @@ export class UnitManager {
                     if (hasTarget) {
                         this.attackCd[i] += this.typeHealInterval[acting];
                         this.areaHeal(i, acting);
-                        this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
+                        this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                         continue;
                     }
                 } else {
@@ -699,7 +705,7 @@ export class UnitManager {
                             if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
                                 this.onHeal(this.x[t], this.y[t] - 50, healed);
                             }
-                            this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
+                            this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                             continue;
                         }
                     }
@@ -720,6 +726,7 @@ export class UnitManager {
                 const dy = this.y[t] - this.y[i];
                 if (dx * dx + dy * dy <= reach2) {
                     this.attackCd[i] += this.typeAttackInterval[acting] * CONFIG.combat.attackIntervalScale;
+                    this.playOneShot(i, 'attack', this.typeAttackAnimMs[acting]); // one swing per beat
                     // Defender's block (innate, both sides): chance to fully negate the hit.
                     const blockChance = this.typeBlockChance[this.type[t]];
                     if (blockChance > 0 && Math.random() < blockChance) {
@@ -878,17 +885,15 @@ export class UnitManager {
         if (!sprite) return;
         const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
-        if (this.state[i] === STATE.attack) {
-            const act = this.typeHealAmount[this.type[i]] > 0 ? 'heal' : 'attack';
-            sprite.play(animKey(art, name, act));
-        } else {
-            sprite.play(animKey(art, name, 'walk')); // dying never reaches here
-        }
+        // Engaged units REST in idle between strikes/heals (each strike plays a one-shot swing);
+        // marching units run.
+        sprite.play(animKey(art, name, this.state[i] === STATE.attack ? 'idle' : 'walk'));
     }
 
-    // Play a brief one-shot pose (e.g. the Warrior's guard, the Archer's shoot) over the
-    // current state's loop; `durMs` is how long to hold it before resuming.
-    private playOneShot(i: number, anim: 'block' | 'attack', durMs: number) {
+    // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
+    // loop; `durMs` is how long to hold it before resuming idle/walk.
+    private playOneShot(i: number, anim: 'block' | 'attack' | 'heal', durMs: number) {
+        if (durMs <= 0) return;
         const sprite = this.sprites[i];
         if (!sprite || this.state[i] === STATE.dying) return;
         const key = animKey(this.typeArt[this.type[i]], FACTION_NAME[this.faction[i]], anim);
