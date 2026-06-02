@@ -12,7 +12,7 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 export function serializeSettings() {
     const lane = CONFIG.lanes[0];
     const every: Record<string, number> = {};
-    for (const b of CONFIG.production.buildings) every[b.produces] = b.every;
+    for (const b of CONFIG.production.catalog) if (b.produces) every[b.produces] = b.every;
     const units: Record<string, Record<string, number>> = {};
     for (const u of CONFIG.unitTypes) {
         const o: Record<string, number> = {
@@ -88,7 +88,8 @@ export function applySavedSettings() {
     if (s.production) {
         if (isNum(s.production.rateScale)) CONFIG.production.rateScale = s.production.rateScale;
         if (s.production.every) {
-            for (const b of CONFIG.production.buildings) {
+            for (const b of CONFIG.production.catalog) {
+                if (!b.produces) continue;
                 const e = s.production.every[b.produces];
                 if (isNum(e)) b.every = e;
             }

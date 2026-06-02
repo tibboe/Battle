@@ -13,6 +13,27 @@ export type UnitRole = 'melee' | 'ranged' | 'support';
 // and bank them; later phases spend them on buildings and upgrades.
 export type ResourceType = 'gold' | 'stone' | 'wood';
 
+// A resource price (Milestone 4). Spent from a side's stockpile to build or upgrade.
+export interface Cost {
+    gold: number;
+    stone: number;
+    wood: number;
+}
+
+// One entry in the build catalog (Milestone 4 Phase 2) — what a peasant can hammer up on an
+// empty grid slot. `produces` is the unit key it emits on a timer, or null for a House (which
+// makes peasants instead). `cost` deducts on purchase; `buildTime` is the hammering duration
+// once a builder reaches the slot.
+export interface BuildingDef {
+    key: string;
+    produces: string | null;
+    art: string;
+    scale: number;
+    every: number;     // spawn cadence (ms); 0 for a House
+    cost: Cost;
+    buildTime: number; // ms of hammering to finish
+}
+
 // One row of the unit roster. Stats are the director's to tune; `art` names the sprite
 // set wired in units/animations.ts (which also owns the SOURCE frame size, since that is
 // fixed by the art, not a gameplay knob).
@@ -173,19 +194,36 @@ export const CONFIG = {
     production: {
         rateScale: 1,
         // The shared-upgrades building — hosts Armour/Melee/Ranged; produces no units.
+        // Pre-placed both sides (its upgrades become paid in Phase 3).
         general: { art: 'House2', spot: 9, scale: 1.0 },
-        // Peasant houses (Milestone 4): each maintains up to CONFIG.peasant.perHouse workers
-        // and produces NO combat units. Pre-placed for Phase 1; player-built-and-paid on the
-        // grid's empty spots arrives in Phase 2.
-        houses: [
-            { art: 'House1', spot: 1, scale: 1.0 },
-        ],
-        buildings: [
-            { produces: 'warrior', art: 'Barracks',  every: 2200, spot: 2, scale: 0.9 },
-            { produces: 'lancer',  art: 'Tower',     every: 3200, spot: 3, scale: 0.9 },
-            { produces: 'archer',  art: 'Archery',   every: 2600, spot: 7, scale: 0.9 },
-            { produces: 'monk',    art: 'Monastery', every: 4200, spot: 8, scale: 0.8 },
-        ],
+
+        // Build catalog (Phase 2): what a peasant can construct on an empty grid slot. A
+        // House produces peasants (produces:null); the rest emit their combat unit every
+        // `every` ms. `cost` is deducted on purchase; `buildTime` is how long a builder
+        // hammers. Tune costs/times freely — they are the player's economic decisions.
+        catalog: [
+            { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,    cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
+            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 2200, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000 },
+            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 3200, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000 },
+            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 2600, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000 },
+            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 4200, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
+        ] as BuildingDef[],
+
+        // Pre-built at match start (free, instant), per side. The player gets ONLY a House so
+        // they must pick + build their first producer; the enemy gets a full base (its real
+        // economy / build AI is Phase 4). Spots reference the 3×3 grid (see `grid`).
+        start: {
+            player: [
+                { key: 'house', spot: 1 },
+            ],
+            enemy: [
+                { key: 'house',     spot: 1 },
+                { key: 'barracks',  spot: 2 },
+                { key: 'tower',     spot: 3 },
+                { key: 'archery',   spot: 7 },
+                { key: 'monastery', spot: 8 },
+            ],
+        } as Record<'player' | 'enemy', { key: string; spot: number }[]>,
     },
 
     // ── Economy (Milestone 4) ───────────────────────────────────────────────────────────
@@ -193,7 +231,9 @@ export const CONFIG = {
     // at the Castle; later phases spend them on buildings and upgrades. Per-match only (not
     // persisted) — `start` is the opening balance each side begins with.
     resources: {
-        start: { gold: 0, stone: 0, wood: 0 },
+        // Suggested opening balance (director to refine): enough to build one combat
+        // producer immediately so you pick your first unit, but not two at once.
+        start: { gold: 100, stone: 60, wood: 80 },
     },
 
     // Peasant (worker) tunables. Workers spawn from Houses, walk to the nearest node of their

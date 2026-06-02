@@ -1,14 +1,17 @@
 import * as Phaser from 'phaser';
-import { CONFIG, laneBottom, laneTop } from '../config';
+import { BuildingDef, CONFIG, laneBottom, laneTop } from '../config';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 
-// Production buildings + the Castle keep, laid out on a per-side 3×3 build grid (spots
-// numbered 1-9, left→right, top→bottom). The keep sits on CONFIG.grid.keepSpot; each
-// production building sits on its `spot`; the remaining spots are clear, drawn as faint
-// plinths and doubling as the gaps units march through. Every building emits its unit on
-// its own timer (read live from config) via UnitManager.spawnAt; units spawn at their
-// building's spot and funnel into the lane. The Castle is just the keep's art — its HP
-// lives in the scene. Sprites sort with the units by base-y depth.
+// The per-side 3×3 build grid (spots 1-9, left→right, top→bottom). The Castle keep sits on
+// CONFIG.grid.keepSpot and the shared-upgrades building on its spot; everything else is
+// data-driven from CONFIG.production:
+//   • `start` lists the buildings each side begins with (free, instant). The player gets just
+//     a House; the enemy gets a full base.
+//   • `catalog` is what a peasant can BUILD on an empty slot (Milestone 4 Phase 2). The player
+//     taps an empty slot → picks from the catalog → pays → a peasant hammers it up over its
+//     buildTime, then it activates (a producer starts emitting; a House starts making peasants).
+// Producers emit their unit on a timer; the Castle is just art (its HP lives in the scene).
+// Sprites sort with the units by base-y depth.
 
 const BASE = 'assets/environment/tiny-swords/buildings';
 const DIR = ['Blue Buildings', 'Red Buildings']; // indexed by faction
@@ -17,11 +20,10 @@ function buildingKey(faction: Faction, name: string) {
     return `bld-${faction}-${name}`;
 }
 
-// Every distinct building art referenced by config (keep + houses + producers).
+// Every distinct building art referenced by config (keep + general + the whole catalog).
 function buildingNames(): string[] {
     const set = new Set<string>([CONFIG.keep.art, CONFIG.production.general.art]);
-    for (const h of CONFIG.production.houses) set.add(h.art);
-    for (const b of CONFIG.production.buildings) set.add(b.art);
+    for (const b of CONFIG.production.catalog) set.add(b.art);
     return [...set];
 }
 
@@ -38,131 +40,256 @@ interface Producer {
     typeIndex: number;
     x: number;            // spawn x (the building's spot)
     y: number;            // band-clamped spawn y
-    cfg: { every: number }; // the config building (read live so edits apply instantly)
+    cfg: { every: number }; // the catalog entry (read live so edits apply instantly)
     acc: number;          // accumulator
 }
 
-export class Buildings {
-    private readonly units: UnitManager;
-    private readonly producers: Producer[] = [];
-    private readonly onTap?: (kind: string) => void;
+// A building being hammered up on a slot. Progress only advances while a builder peasant is
+// present (PeasantManager.hammerSite), so construction genuinely costs a worker's time.
+export interface ConstructionSite {
+    faction: Faction;
+    spot: number;
+    x: number;            // slot centre (where the builder stands / the building lands)
+    y: number;
+    def: BuildingDef;
+    progress: number;     // ms hammered so far
+    done: boolean;        // set when finished (lets the builder peasant release)
+    claimed: boolean;     // a peasant has been dispatched to build it
+    scaffold: Phaser.GameObjects.Image;
+    barBg: Phaser.GameObjects.Rectangle;
+    barFill: Phaser.GameObjects.Rectangle;
+    barWidth: number;
+}
 
-    // Base geometry the peasant system needs, captured per faction during layout: where the
-    // Castle (the bank / drop-off) sits and where each House spawns its workers.
+export class Buildings {
+    private readonly scene: Phaser.Scene;
+    private readonly layer: Phaser.GameObjects.Layer;
+    private readonly units: UnitManager;
+    private readonly onTap?: (kind: string) => void;
+    private readonly onSlotTap?: (faction: Faction, spot: number) => void;
+
+    private readonly producers: Producer[] = [];
+    private readonly sites: ConstructionSite[] = [];
+
+    // Per-faction base geometry the peasant system needs: the Castle (bank) and the live list
+    // of Houses (grows as the player builds more).
     private readonly keepPos: { x: number; y: number }[] = [];
     private readonly housePos: { x: number; y: number }[][] = [[], []];
+
+    // Build-slot plinths (+ the player's "＋" hint), keyed `${faction}:${spot}`, so we can
+    // remove them when the slot is built on.
+    private readonly plinths = new Map<string, Phaser.GameObjects.Rectangle>();
+    private readonly slotHints = new Map<string, Phaser.GameObjects.Text>();
+    // Which spots are taken (keep / general / built / under construction), per faction.
+    private readonly occupied: [Set<number>, Set<number>] = [new Set(), new Set()];
+
+    // Cached grid geometry (computed once; the grid never moves mid-match).
+    private readonly pitchX: number;
+    private readonly pitchY: number;
+    private readonly keepCol: number;
+    private readonly keepRow: number;
+    private readonly laneY: number;
+    private readonly bandTop: number;
+    private readonly bandBottom: number;
 
     constructor(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         units: UnitManager,
-        onTap?: (kind: string) => void, // tapping a player building opens its upgrades
+        onTap?: (kind: string) => void,                         // tap a producer → its upgrades
+        onSlotTap?: (faction: Faction, spot: number) => void,   // tap an empty slot → build menu
     ) {
+        this.scene = scene;
+        this.layer = layer;
         this.units = units;
         this.onTap = onTap;
+        this.onSlotTap = onSlotTap;
+
         const g = CONFIG.grid;
-        const pitchX = g.cellW + g.gap;
-        const pitchY = g.cellH + g.gap;
-        const keepCol = (g.keepSpot - 1) % g.cols;
-        const keepRow = Math.floor((g.keepSpot - 1) / g.cols);
-        const laneY = CONFIG.lanes[0].y;
-        const bandTop = laneTop() + 24;
-        const bandBottom = laneBottom() - 24;
+        this.pitchX = g.cellW + g.gap;
+        this.pitchY = g.cellH + g.gap;
+        this.keepCol = (g.keepSpot - 1) % g.cols;
+        this.keepRow = Math.floor((g.keepSpot - 1) / g.cols);
+        this.laneY = CONFIG.lanes[0].y;
+        this.bandTop = laneTop() + 24;
+        this.bandBottom = laneBottom() - 24;
+
         const spotCount = g.cols * g.rows;
 
         for (const f of [FACTION.player, FACTION.enemy] as const) {
-            const keepX = f === FACTION.player ? CONFIG.keep.margin : CONFIG.world.width - CONFIG.keep.margin;
-            const dir = f === FACTION.player ? 1 : -1; // grid fans toward the lane
             const flip = f === FACTION.enemy;
+            const occ = this.occupied[f];
 
-            // World centre of a spot (1-based), relative to the keep's spot.
-            const pos = (spot: number) => {
-                const col = (spot - 1) % g.cols;
-                const row = Math.floor((spot - 1) / g.cols);
-                return {
-                    x: keepX + dir * (col - keepCol) * pitchX,
-                    y: laneY + (row - keepRow) * pitchY,
-                };
-            };
-
-            const occupied = new Set<number>([g.keepSpot, CONFIG.production.general.spot]);
-            for (const h of CONFIG.production.houses) occupied.add(h.spot);
-            for (const b of CONFIG.production.buildings) occupied.add(b.spot);
-
-            // Faint plinths on the clear (buildable) spots — also the unit paths.
-            for (let spot = 1; spot <= spotCount; spot++) {
-                if (occupied.has(spot)) continue;
-                const p = pos(spot);
-                const plinth = scene.add.rectangle(p.x, p.y, g.cellW, g.cellH, 0xffffff, 0.05)
-                    .setOrigin(0.5, 0.5)
-                    .setStrokeStyle(2, 0xffffff, 0.16)
-                    .setDepth(3); // above terrain, below units (depth = world-y)
-                layer.add(plinth);
-            }
-
-            // The Castle keep (HP target; HP itself is tracked by the scene). Peasants bank
-            // their loads here, so remember its position for the peasant system.
-            const kp = pos(g.keepSpot);
-            this.place(scene, layer, buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
+            // Castle keep (bank / drop-off; HP tracked by the scene).
+            const kp = this.slotPos(f, g.keepSpot);
+            this.place(buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
             this.keepPos[f] = { x: kp.x, y: kp.y };
+            occ.add(g.keepSpot);
 
-            // The shared-upgrades building (no units). Tappable on the player's side.
+            // Shared-upgrades building (tappable on the player's side).
             const gen = CONFIG.production.general;
-            const gp = pos(gen.spot);
-            const gimg = this.place(scene, layer, buildingKey(f, gen.art), gp.x, gp.y, gen.scale, flip);
-            if (f === FACTION.player) this.makeTappable(gimg, 'general');
+            const gp = this.slotPos(f, gen.spot);
+            const gimg = this.place(buildingKey(f, gen.art), gp.x, gp.y, gen.scale, flip);
+            if (f === FACTION.player) this.makeTappable(gimg, () => this.onTap?.('general'));
+            occ.add(gen.spot);
 
-            // Peasant Houses (no combat units — they maintain workers via PeasantManager).
-            for (const h of CONFIG.production.houses) {
-                const hp = pos(h.spot);
-                this.place(scene, layer, buildingKey(f, h.art), hp.x, hp.y, h.scale, flip);
-                this.housePos[f].push({ x: hp.x, y: hp.y });
+            // Pre-built starting buildings (free, instant).
+            for (const s of CONFIG.production.start[f === FACTION.player ? 'player' : 'enemy']) {
+                const def = catalogDef(s.key);
+                if (def) this.placeBuilding(f, def, s.spot);
             }
 
-            // One production building per unit type, on its spot.
-            for (const b of CONFIG.production.buildings) {
-                const p = pos(b.spot);
-                const img = this.place(scene, layer, buildingKey(f, b.art), p.x, p.y, b.scale, flip);
-                if (f === FACTION.player) this.makeTappable(img, b.produces);
-
-                const typeIndex = CONFIG.unitTypes.findIndex((u) => u.key === b.produces);
-                if (typeIndex < 0) continue; // produces an unknown unit key — skip
-                this.producers.push({
-                    faction: f,
-                    typeIndex,
-                    x: p.x,
-                    y: Phaser.Math.Clamp(p.y, bandTop, bandBottom),
-                    cfg: b, // live reference — editing `every` applies without a restart
-                    acc: Phaser.Math.FloatBetween(0, b.every), // desync the first emit
-                });
+            // Remaining empty spots become build plinths (the player's are tappable build slots).
+            for (let spot = 1; spot <= spotCount; spot++) {
+                if (occ.has(spot)) continue;
+                this.addPlinth(f, spot);
             }
         }
     }
 
-    // A player building opens its upgrade popup when tapped (a tap, not a camera drag).
-    private makeTappable(img: Phaser.GameObjects.Image, kind: string) {
-        img.setInteractive({ useHandCursor: true });
-        img.on('pointerup', (pointer: Phaser.Input.Pointer) => {
-            if (this.onTap && pointer.getDistance() < 14) this.onTap(kind);
-        });
+    // World centre of a spot (1-based) for a faction; the grid fans toward the lane.
+    private slotPos(faction: Faction, spot: number) {
+        const g = CONFIG.grid;
+        const keepX = faction === FACTION.player ? CONFIG.keep.margin : CONFIG.world.width - CONFIG.keep.margin;
+        const dir = faction === FACTION.player ? 1 : -1;
+        const col = (spot - 1) % g.cols;
+        const row = Math.floor((spot - 1) / g.cols);
+        return {
+            x: keepX + dir * (col - this.keepCol) * this.pitchX,
+            y: this.laneY + (row - this.keepRow) * this.pitchY,
+        };
     }
 
-    private place(
-        scene: Phaser.Scene,
-        layer: Phaser.GameObjects.Layer,
-        key: string,
-        x: number,
-        y: number,
-        scale: number,
-        flip: boolean,
-    ): Phaser.GameObjects.Image {
-        const s = scene.add.image(x, y, key)
-            .setOrigin(0.5, 0.92) // base near the spot centre
+    private addPlinth(faction: Faction, spot: number) {
+        const g = CONFIG.grid;
+        const p = this.slotPos(faction, spot);
+        const plinth = this.scene.add.rectangle(p.x, p.y, g.cellW, g.cellH, 0xffffff, 0.05)
+            .setOrigin(0.5, 0.5)
+            .setStrokeStyle(2, 0xffffff, 0.16)
+            .setDepth(3);
+        this.layer.add(plinth);
+        this.plinths.set(`${faction}:${spot}`, plinth);
+        // Only the player can build; make their empty slots tappable, with a faint "＋" hint.
+        if (faction === FACTION.player && this.onSlotTap) {
+            plinth.setInteractive({ useHandCursor: true });
+            plinth.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+                if (pointer.getDistance() < 14) this.onSlotTap!(faction, spot);
+            });
+            const hint = this.scene.add.text(p.x, p.y, '＋', {
+                fontFamily: 'monospace', fontSize: '40px', color: '#ffffff',
+            }).setOrigin(0.5).setAlpha(0.28).setDepth(4);
+            this.layer.add(hint);
+            this.slotHints.set(`${faction}:${spot}`, hint);
+        }
+    }
+
+    // Place a finished building on a slot: art + (producer timer | House registration).
+    private placeBuilding(faction: Faction, def: BuildingDef, spot: number) {
+        const flip = faction === FACTION.enemy;
+        const p = this.slotPos(faction, spot);
+        const img = this.place(buildingKey(faction, def.art), p.x, p.y, def.scale, flip);
+        this.occupied[faction].add(spot);
+
+        if (def.produces) {
+            // Combat producer: tappable for upgrades (player), and emits on a timer.
+            if (faction === FACTION.player) this.makeTappable(img, () => this.onTap?.(def.produces!));
+            const typeIndex = CONFIG.unitTypes.findIndex((u) => u.key === def.produces);
+            if (typeIndex >= 0) {
+                this.producers.push({
+                    faction,
+                    typeIndex,
+                    x: p.x,
+                    y: Phaser.Math.Clamp(p.y, this.bandTop, this.bandBottom),
+                    cfg: def, // live reference — editing `every` applies without a restart
+                    acc: Phaser.Math.FloatBetween(0, def.every),
+                });
+            }
+        } else {
+            // House: a peasant source — register it for the PeasantManager to staff.
+            this.housePos[faction].push({ x: p.x, y: p.y });
+        }
+    }
+
+    // ---- Construction (Phase 2) ----
+
+    // Begin building `defKey` on a player/enemy slot. The caller has already paid. Draws a
+    // dim scaffold + a progress bar; a peasant advances it via hammerSite().
+    startConstruction(faction: Faction, spot: number, defKey: string): ConstructionSite | undefined {
+        const def = catalogDef(defKey);
+        if (!def || this.occupied[faction].has(spot)) return undefined;
+
+        // Remove the plinth (+ its hint) and reserve the spot.
+        const key = `${faction}:${spot}`;
+        this.plinths.get(key)?.destroy();
+        this.plinths.delete(key);
+        this.slotHints.get(key)?.destroy();
+        this.slotHints.delete(key);
+        this.occupied[faction].add(spot);
+
+        const flip = faction === FACTION.enemy;
+        const p = this.slotPos(faction, spot);
+        const scaffold = this.place(buildingKey(faction, def.art), p.x, p.y, def.scale, flip);
+        scaffold.setTint(0x5a6472).setAlpha(0.55); // "under construction" look
+
+        const barWidth = 64;
+        const barY = p.y - 70;
+        const barBg = this.scene.add.rectangle(p.x, barY, barWidth, 8, 0x000000, 0.6)
+            .setOrigin(0.5, 0.5).setDepth(10_000);
+        // Full-width fill, scaled on the X axis as progress climbs (reliable on Shapes).
+        const barFill = this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 6, 0x7be08a, 1)
+            .setOrigin(0, 0.5).setDepth(10_001);
+        barFill.scaleX = 0;
+        this.layer.add([barBg, barFill]);
+
+        const site: ConstructionSite = {
+            faction, spot, x: p.x, y: p.y, def,
+            progress: 0, done: false, claimed: false,
+            scaffold, barBg, barFill, barWidth,
+        };
+        this.sites.push(site);
+        return site;
+    }
+
+    // Advance a site while a builder hammers it (called by PeasantManager). Updates the bar.
+    hammerSite(site: ConstructionSite, delta: number) {
+        if (site.done) return;
+        site.progress = Math.min(site.def.buildTime, site.progress + delta);
+        site.barFill.scaleX = site.progress / site.def.buildTime;
+    }
+
+    // Active construction sites for a faction (for the peasant dispatcher).
+    sitesFor(faction: Faction): ConstructionSite[] {
+        return this.sites.filter((s) => s.faction === faction && !s.done);
+    }
+
+    private finishSite(site: ConstructionSite) {
+        site.done = true;
+        site.scaffold.destroy();
+        site.barBg.destroy();
+        site.barFill.destroy();
+        // The spot was reserved during construction; clear it so placeBuilding re-adds it.
+        this.occupied[site.faction].delete(site.spot);
+        this.placeBuilding(site.faction, site.def, site.spot);
+        const i = this.sites.indexOf(site);
+        if (i >= 0) this.sites.splice(i, 1);
+    }
+
+    private place(key: string, x: number, y: number, scale: number, flip: boolean): Phaser.GameObjects.Image {
+        const s = this.scene.add.image(x, y, key)
+            .setOrigin(0.5, 0.92)
             .setScale(scale)
-            .setDepth(y) // sort with the units by base-y
+            .setDepth(y)
             .setFlipX(flip);
-        layer.add(s);
+        this.layer.add(s);
         return s;
+    }
+
+    // A tap (not a camera drag) on a building fires `cb`.
+    private makeTappable(img: Phaser.GameObjects.Image, cb: () => void) {
+        img.setInteractive({ useHandCursor: true });
+        img.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+            if (pointer.getDistance() < 14) cb();
+        });
     }
 
     update(delta: number) {
@@ -174,6 +301,11 @@ export class Buildings {
                 this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y);
             }
         }
+        // Finish any site a peasant has hammered to completion (progress advanced elsewhere).
+        for (let i = this.sites.length - 1; i >= 0; i--) {
+            const s = this.sites[i];
+            if (!s.done && s.progress >= s.def.buildTime) this.finishSite(s);
+        }
     }
 
     // The Castle (bank / drop-off) position for a side — where peasants deposit.
@@ -181,8 +313,14 @@ export class Buildings {
         return this.keepPos[faction];
     }
 
-    // The House (worker spawn) positions for a side.
+    // The live list of House (worker spawn) positions for a side — grows as Houses are built.
     housePositions(faction: Faction): { x: number; y: number }[] {
         return this.housePos[faction];
     }
 }
+
+function catalogDef(key: string): BuildingDef | undefined {
+    return CONFIG.production.catalog.find((b) => b.key === key);
+}
+
+export { catalogDef };

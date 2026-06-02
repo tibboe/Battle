@@ -15,6 +15,7 @@ import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { UpgradePanel } from '../ui/UpgradePanel';
+import { BuildMenu } from '../ui/BuildMenu';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
 const HUD_DEPTH = 1_000_000;
@@ -29,6 +30,7 @@ export class GameScene extends Phaser.Scene {
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
     private upgradePanel!: UpgradePanel;
+    private buildMenu!: BuildMenu;
     private resources!: ResourceStore;
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
@@ -110,22 +112,27 @@ export class GameScene extends Phaser.Scene {
         // Building upgrade popup (opened by tapping a player building).
         this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units);
 
-        // Production buildings (incl. the Castle keeps + Houses) emit their unit on a timer;
-        // tapping a player building opens its upgrades.
-        this.buildings = new Buildings(this, this.worldLayer, this.units, (kind) => this.upgradePanel.toggle(kind));
-
-        // Economy (Milestone 4): per-side stockpiles, the harvestable nodes, and the peasants
-        // that Houses maintain to gather them. Peasants bank at each side's Castle (the keep).
+        // Per-side stockpiles (created before the buildings so the build menu can read them).
         this.resources = new ResourceStore();
-        this.resourceNodes = new ResourceNodes(this, this.worldLayer);
-        this.peasants = new PeasantManager(
+
+        // Buildings: the Castle keeps, the shared-upgrades building, each side's starting
+        // buildings, and the empty build slots. Tapping a player producer opens its upgrades;
+        // tapping an empty player slot opens the build menu.
+        this.buildings = new Buildings(
             this,
             this.worldLayer,
-            this.resources,
-            this.resourceNodes,
-            { houses: this.buildings.housePositions(FACTION.player), bank: this.buildings.keepPosition(FACTION.player) },
-            { houses: this.buildings.housePositions(FACTION.enemy), bank: this.buildings.keepPosition(FACTION.enemy) },
+            this.units,
+            (kind) => this.upgradePanel.toggle(kind),
+            (faction, spot) => this.buildMenu.open(faction, spot),
         );
+
+        // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
+        // Peasants bank at each side's Castle and (Phase 2) build new structures on slots.
+        this.resourceNodes = new ResourceNodes(this, this.worldLayer);
+        this.peasants = new PeasantManager(this, this.worldLayer, this.resources, this.resourceNodes, this.buildings);
+
+        // The build menu (opened by tapping an empty player slot).
+        this.buildMenu = new BuildMenu(this, this.uiLayer, this.buildings, this.resources);
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
@@ -283,6 +290,7 @@ export class GameScene extends Phaser.Scene {
         this.layoutHud();
         this.unitPanel.layout();
         this.upgradePanel.layout();
+        this.buildMenu.layout();
         this.cameraController.handleResize();
     }
 
@@ -296,9 +304,10 @@ export class GameScene extends Phaser.Scene {
 
     update(_time: number, delta: number) {
         if (!this.gameOver) {
-            this.buildings.update(delta);
             this.units.update(delta);
+            // Peasants advance any build site before the buildings system checks completion.
             this.peasants.update(delta);
+            this.buildings.update(delta);
         }
         this.floatingText.update(delta);
         this.projectiles.update(delta);

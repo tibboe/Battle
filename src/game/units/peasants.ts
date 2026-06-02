@@ -3,28 +3,31 @@ import { CONFIG, ResourceType } from '../config';
 import { FACTION, Faction } from './UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
+import { Buildings, ConstructionSite } from '../structures/buildings';
 
 // Peasants (Milestone 4) — the repurposed Pawn, now a pure WORKER, kept deliberately apart
 // from the optimized combat UnitManager. There are only a handful per side, so each is a
 // plain object running a small state machine instead of the struct-of-arrays horde:
 //
-//   SEEK  → walk to the nearest live node of my assigned resource
+//   SEEK    → walk to the nearest live node of my assigned resource
 //   HARVEST → stand and chop/mine for gatherTime, then pick up a load
-//   RETURN → carry the load back to my side's Castle
-//   BANK  → pause briefly, deposit carryAmount into the stockpile, repeat
+//   RETURN  → carry the load back to my side's Castle
+//   BANK    → pause briefly, deposit carryAmount into the stockpile, repeat
+//   BUILD   → (Phase 2) walk to a construction site and hammer it up, then resume gathering
 //
-// Each House maintains up to CONFIG.peasant.perHouse workers (training a replacement after
-// trainTime if one is ever lost — Phase 1 has no losses yet, so they just start full). The
-// three workers of a House split across gold / wood / stone so a full House gathers all
-// three. Workers never fight and (Phase 1) can't be harassed — that lands with the Phase-4
-// enemy economy. Art is the pack's Pawn worker set (chop / mine + gold/wood carry); stone
-// reuses the gold-carry strip, per the milestone's noted gap.
+// Each House maintains up to CONFIG.peasant.perHouse workers (instantly when a House is built;
+// it also trains a replacement after trainTime if one is ever lost — no losses yet). The three
+// workers of a House split across gold / wood / stone. Workers never fight and (Phase 1) can't
+// be harassed — that lands with the Phase-4 enemy economy. Building a new structure pulls the
+// nearest worker off gathering to act as the builder (so construction costs a worker's time).
+// Art is the pack's Pawn worker set (chop / mine / hammer + gold/wood carry); stone reuses the
+// gold-carry strip, per the milestone's noted gap.
 
 const BASE = 'assets/units/tiny-swords';
 const FACTION_DIR = ['Blue Units', 'Red Units']; // indexed by faction
 
 // Worker animation states. `carry-gold` doubles for stone (no stone-carry art in the pack).
-type WorkerAnim = 'walk' | 'carry-gold' | 'carry-wood' | 'chop' | 'mine';
+type WorkerAnim = 'walk' | 'carry-gold' | 'carry-wood' | 'chop' | 'mine' | 'build';
 
 interface Strip {
     file: string;
@@ -38,6 +41,7 @@ const STRIPS: Record<WorkerAnim, Strip> = {
     'carry-wood': { file: 'Pawn_Run Wood.png', frames: 6, rate: 14 },
     chop: { file: 'Pawn_Interact Axe.png', frames: 6, rate: 12 },
     mine: { file: 'Pawn_Interact Pickaxe.png', frames: 6, rate: 12 },
+    build: { file: 'Pawn_Interact Hammer.png', frames: 3, rate: 10 },
 };
 
 const FRAME = 192; // source px per worker frame (square), fixed by the art
@@ -68,20 +72,11 @@ export function registerPeasantAnimations(scene: Phaser.Scene) {
     }
 }
 
-type Pt = { x: number; y: number };
-
-// The pieces of base geometry the workers need: where Houses spawn them and where the
-// Castle (bank) is, per faction. Supplied by the Buildings system.
-export interface BaseLayout {
-    houses: Pt[];
-    bank: Pt;
-}
-
 // Plain const map (not a const enum — those are disallowed under isolatedModules).
-const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3 } as const;
+const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4 } as const;
 type State = (typeof State)[keyof typeof State];
 
-// Each House's three workers cycle through the resources in this order.
+// Each House's workers cycle through the resources in this order.
 const ROTATION: ResourceType[] = ['gold', 'wood', 'stone'];
 
 interface Peasant {
@@ -93,6 +88,7 @@ interface Peasant {
     y: number;
     sprite: Phaser.GameObjects.Sprite;
     node?: ResourceNode;
+    site?: ConstructionSite; // the build job this worker is on (Build state)
     timer: number;        // ms accumulated in Harvest / Bank
     carrying: number;
     anim: WorkerAnim;
@@ -103,46 +99,49 @@ export class PeasantManager {
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly store: ResourceStore;
     private readonly nodes: ResourceNodes;
-    private readonly bases: [BaseLayout, BaseLayout];
+    private readonly buildings: Buildings;
 
     private readonly peasants: Peasant[] = [];
-    // Per faction, per house: how many workers are alive, the rotation cursor, and a refill
-    // timer used when a House is below perHouse (no losses in Phase 1, so it stays idle).
-    private readonly alive: [number[], number[]];
-    private readonly cursor: [number[], number[]];
-    private readonly refill: [number[], number[]];
+    // Per faction, per house: workers alive, the rotation cursor, and a refill timer used when
+    // a House is below perHouse. `houseCount` tracks how many Houses we have staffed so far so
+    // newly built Houses get picked up.
+    private readonly alive: [number[], number[]] = [[], []];
+    private readonly cursor: [number[], number[]] = [[], []];
+    private readonly refill: [number[], number[]] = [[], []];
+    private readonly houseCount: [number, number] = [0, 0];
 
     constructor(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         store: ResourceStore,
         nodes: ResourceNodes,
-        playerBase: BaseLayout,
-        enemyBase: BaseLayout,
+        buildings: Buildings,
     ) {
         this.scene = scene;
         this.layer = layer;
         this.store = store;
         this.nodes = nodes;
-        this.bases = [playerBase, enemyBase];
+        this.buildings = buildings;
 
-        const z = (base: BaseLayout) => base.houses.map(() => 0);
-        this.alive = [z(playerBase), z(enemyBase)];
-        this.cursor = [z(playerBase), z(enemyBase)];
-        this.refill = [z(playerBase), z(enemyBase)];
+        // Staff the Houses each side starts with.
+        for (const f of [FACTION.player, FACTION.enemy] as const) this.reconcileHouses(f);
+    }
 
-        // Fill every House to perHouse immediately (no opening delay).
-        for (const f of [FACTION.player, FACTION.enemy] as const) {
-            const houses = this.bases[f].houses;
-            for (let h = 0; h < houses.length; h++) {
-                for (let n = 0; n < CONFIG.peasant.perHouse; n++) this.spawn(f, h);
-            }
+    // Pick up any newly built Houses (and staff the starting ones), filling each to perHouse.
+    private reconcileHouses(faction: Faction) {
+        const houses = this.buildings.housePositions(faction);
+        while (this.houseCount[faction] < houses.length) {
+            const h = this.houseCount[faction];
+            this.alive[faction][h] = 0;
+            this.cursor[faction][h] = 0;
+            this.refill[faction][h] = 0;
+            this.houseCount[faction] = h + 1;
+            for (let n = 0; n < CONFIG.peasant.perHouse; n++) this.spawn(faction, h);
         }
     }
 
     private spawn(faction: Faction, house: number) {
-        const base = this.bases[faction];
-        const home = base.houses[house];
+        const home = this.buildings.housePositions(faction)[house];
         const resource = ROTATION[this.cursor[faction][house] % ROTATION.length];
         this.cursor[faction][house]++;
 
@@ -165,6 +164,7 @@ export class PeasantManager {
             y: home.y + jy,
             sprite,
             node: undefined,
+            site: undefined,
             timer: 0,
             carrying: 0,
             anim: 'walk',
@@ -173,9 +173,53 @@ export class PeasantManager {
     }
 
     update(delta: number) {
+        for (const f of [FACTION.player, FACTION.enemy] as const) this.reconcileHouses(f);
+        this.dispatchBuilders();
         this.maintain(delta);
         const dt = delta / 1000;
         for (const p of this.peasants) this.step(p, delta, dt);
+    }
+
+    // Assign the nearest free worker to any construction site that lacks a builder.
+    private dispatchBuilders() {
+        for (const f of [FACTION.player, FACTION.enemy] as const) {
+            for (const site of this.buildings.sitesFor(f)) {
+                if (site.claimed) continue;
+                let best: Peasant | undefined;
+                let bestD2 = Infinity;
+                for (const p of this.peasants) {
+                    if (p.faction !== f || p.state === State.Build) continue;
+                    const dx = site.x - p.x;
+                    const dy = site.y - p.y;
+                    const d2 = dx * dx + dy * dy;
+                    if (d2 < bestD2) { bestD2 = d2; best = p; }
+                }
+                if (best) {
+                    best.state = State.Build;
+                    best.site = site;
+                    best.node = undefined;
+                    best.carrying = 0; // drops whatever it was carrying to go build
+                    site.claimed = true;
+                }
+            }
+        }
+    }
+
+    // Refill any House below perHouse (unused in Phase 1 — no losses yet).
+    private maintain(delta: number) {
+        for (const f of [FACTION.player, FACTION.enemy] as const) {
+            for (let h = 0; h < this.houseCount[f]; h++) {
+                if (this.alive[f][h] >= CONFIG.peasant.perHouse) {
+                    this.refill[f][h] = 0;
+                    continue;
+                }
+                this.refill[f][h] += delta;
+                if (this.refill[f][h] >= CONFIG.peasant.trainTime) {
+                    this.refill[f][h] -= CONFIG.peasant.trainTime;
+                    this.spawn(f, h);
+                }
+            }
+        }
     }
 
     private step(p: Peasant, delta: number, dt: number) {
@@ -210,7 +254,7 @@ export class PeasantManager {
                 break;
             }
             case State.Return: {
-                const bank = this.bases[p.faction].bank;
+                const bank = this.buildings.keepPosition(p.faction);
                 if (this.moveTo(p, bank.x, bank.y, CONFIG.peasant.bankArrive, dt)) {
                     p.state = State.Bank;
                     p.timer = 0;
@@ -225,6 +269,18 @@ export class PeasantManager {
                     this.store.add(p.faction, p.resource, p.carrying);
                     p.carrying = 0;
                     p.state = State.Seek;
+                    this.setAnim(p, 'walk');
+                }
+                break;
+            }
+            case State.Build: {
+                const site = p.site;
+                if (!site || site.done) { p.site = undefined; p.state = State.Seek; this.setAnim(p, 'walk'); break; }
+                if (this.moveTo(p, site.x, site.y, CONFIG.peasant.arrive, dt)) {
+                    this.faceTo(p, site.x);
+                    this.setAnim(p, 'build');
+                    this.buildings.hammerSite(site, delta);
+                } else {
                     this.setAnim(p, 'walk');
                 }
                 break;
@@ -256,23 +312,5 @@ export class PeasantManager {
         if (p.anim === anim) return;
         p.anim = anim;
         p.sprite.play(peasantAnimKey(p.faction, anim));
-    }
-
-    // Refill any House that has fallen below perHouse (unused in Phase 1 — no losses yet).
-    private maintain(delta: number) {
-        for (const f of [FACTION.player, FACTION.enemy] as const) {
-            const houses = this.bases[f].houses;
-            for (let h = 0; h < houses.length; h++) {
-                if (this.alive[f][h] >= CONFIG.peasant.perHouse) {
-                    this.refill[f][h] = 0;
-                    continue;
-                }
-                this.refill[f][h] += delta;
-                if (this.refill[f][h] >= CONFIG.peasant.trainTime) {
-                    this.refill[f][h] -= CONFIG.peasant.trainTime;
-                    this.spawn(f, h);
-                }
-            }
-        }
     }
 }

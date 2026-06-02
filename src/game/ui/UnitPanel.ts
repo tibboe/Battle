@@ -31,9 +31,10 @@ let selected = -1;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const mul = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
-// The production building that makes unit `i` (for editing its spawn interval).
+// The catalog entry whose building makes unit `i` (for editing its spawn interval). Editing
+// `every` here affects both this side's producer and the build catalog (one source of truth).
 const buildingOf = (i: number) =>
-    CONFIG.production.buildings.find((b) => b.produces === CONFIG.unitTypes[i].key);
+    CONFIG.production.catalog.find((b) => b.produces === CONFIG.unitTypes[i].key);
 
 // One editable stat row. `get`/`set` operate on CONFIG for the selected unit index.
 interface StatField {
