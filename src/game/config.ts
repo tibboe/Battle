@@ -167,6 +167,8 @@ export const CONFIG = {
     // Castle keep is drawn separately at keepSpot.)
     production: {
         rateScale: 1,
+        // The shared-upgrades building — hosts Armour/Melee/Ranged; produces no units.
+        general: { art: 'House2', spot: 9, scale: 1.0 },
         buildings: [
             { produces: 'pawn',    art: 'House1',    every: 1400, spot: 1, scale: 1.0 },
             { produces: 'warrior', art: 'Barracks',  every: 2200, spot: 2, scale: 0.9 },
@@ -174,6 +176,16 @@ export const CONFIG = {
             { produces: 'archer',  art: 'Archery',   every: 2600, spot: 7, scale: 0.9 },
             { produces: 'monk',    art: 'Monastery', every: 4200, spot: 8, scale: 0.8 },
         ],
+    },
+
+    // Upgrades (Phase 4) — player-only, free to toggle from a building, one level each for
+    // now. These are the EFFECT magnitudes; which upgrades are active lives in upgrades.ts.
+    upgrades: {
+        warriorHp: 15,     // + max HP for your Warriors
+        archerRange: 120,  // + engage range for your Archers
+        armour: 0.8,       // your units take ×this incoming damage (lower = tougher)
+        melee: 4,          // + damage for your melee units
+        ranged: 4,         // + damage for your ranged units
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

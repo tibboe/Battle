@@ -11,6 +11,7 @@ import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environmen
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
+import { UpgradePanel } from '../ui/UpgradePanel';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
 const HUD_DEPTH = 1_000_000;
@@ -24,6 +25,7 @@ export class GameScene extends Phaser.Scene {
     private projectiles!: Projectiles;
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
+    private upgradePanel!: UpgradePanel;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -90,8 +92,12 @@ export class GameScene extends Phaser.Scene {
             (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
         );
 
-        // Production buildings (incl. the Castle keeps) emit their unit on a timer.
-        this.buildings = new Buildings(this, this.worldLayer, this.units);
+        // Building upgrade popup (opened by tapping a player building).
+        this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units);
+
+        // Production buildings (incl. the Castle keeps) emit their unit on a timer; tapping
+        // a player building opens its upgrades.
+        this.buildings = new Buildings(this, this.worldLayer, this.units, (kind) => this.upgradePanel.toggle(kind));
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
@@ -225,6 +231,7 @@ export class GameScene extends Phaser.Scene {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.layoutHud();
         this.unitPanel.layout();
+        this.upgradePanel.layout();
         this.cameraController.handleResize();
     }
 

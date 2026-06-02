@@ -1,4 +1,5 @@
 import { CONFIG } from './config';
+import { getUpgradeLevels, setUpgradeLevels } from './upgrades';
 
 // Tiny persistence layer: snapshot the tunables the Dev/Unit panels edit into localStorage
 // and re-apply them on boot, so the director's tweaks survive a refresh. Only a curated set
@@ -31,6 +32,7 @@ export function serializeSettings() {
         debug: { damageNumbers: CONFIG.debug.damageNumbers },
         production: { rateScale: CONFIG.production.rateScale, every },
         units,
+        upgrades: getUpgradeLevels(),
     };
 }
 
@@ -109,4 +111,5 @@ export function applySavedSettings() {
             }
         }
     }
+    if (s.upgrades) setUpgradeLevels(s.upgrades);
 }

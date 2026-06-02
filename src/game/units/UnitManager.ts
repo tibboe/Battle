@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
+import { armourMult, damageBonusFor, hpBonusFor, rangeBonusFor } from '../upgrades';
 import { animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
@@ -66,11 +67,19 @@ export class UnitManager {
     private readonly typeHealInterval: Float32Array; // ms between heals
 
     private readonly nTypes: number;
+    private readonly typeKey: string[];
     // Counter matrix resolved for this roster: pairMul[attacker*nTypes + target] is the
     // weapon×armour multiplier, so the strike loop does one array read and no string work.
     private readonly pairMul: Float32Array;
     // Live (non-dying) count per [typeIndex*2 + faction] — drives the unit-panel readout.
     private readonly livingByType: Int32Array;
+
+    // Player-only upgrade bonuses, indexed by type (enemy units always use the base stats).
+    private readonly pHpBonus: Int16Array;
+    private readonly pRange2: Float32Array;
+    private readonly pReach2: Float32Array;
+    private readonly pDamageBonus: Int16Array;
+    private pArmourMult = 1;
 
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
     private readonly laneY: Float32Array;
@@ -132,10 +141,15 @@ export class UnitManager {
         this.type = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
-        // Mirror the unit roster into typed lookups + a cumulative spawn-weight table.
+        // Mirror the unit roster into typed lookups.
         const types = CONFIG.unitTypes;
         const nTypes = types.length;
         this.typeArt = new Array(nTypes);
+        this.typeKey = new Array(nTypes);
+        this.pHpBonus = new Int16Array(nTypes);
+        this.pRange2 = new Float32Array(nTypes);
+        this.pReach2 = new Float32Array(nTypes);
+        this.pDamageBonus = new Int16Array(nTypes);
         this.typeHp = new Int16Array(nTypes);
         this.typeDamage = new Int16Array(nTypes);
         this.typeRange2 = new Float32Array(nTypes);
@@ -152,6 +166,7 @@ export class UnitManager {
         for (let t = 0; t < nTypes; t++) {
             const ut = types[t];
             this.typeArt[t] = ut.art;
+            this.typeKey[t] = ut.key;
             this.typeHp[t] = ut.hp;
             this.typeDamage[t] = ut.damage;
             this.typeRange2[t] = ut.range * ut.range;
@@ -205,9 +220,9 @@ export class UnitManager {
         }
 
         // Cells must be at least as wide as the LONGEST engage range so the ±1 neighbour
-        // scan never misses an in-range enemy. Headroom (500) lets range be tuned UP live
-        // without rebuilding the grid; the Range editor is clamped under it.
-        this.cellSize = Math.max(maxRange, 500);
+        // scan never misses an in-range enemy. Headroom (620) covers a maxed Range edit
+        // (≤480) plus the Archer +Range upgrade, without rebuilding the grid.
+        this.cellSize = Math.max(maxRange, 620);
         this.numCells = Math.ceil(CONFIG.world.width / this.cellSize) + 1;
         this.buckets = Array.from({ length: this.numCells }, () => []);
 
@@ -222,6 +237,23 @@ export class UnitManager {
 
         // Tiny Swords has no death animation, so death is a synthesised fade of this length.
         this.deathDuration = CONFIG.combat.deathFadeMs;
+
+        this.recomputeUpgrades();
+    }
+
+    // Resolve the player's active upgrades into per-type bonus lookups (enemy uses base
+    // stats). Call after a toggle or a stat edit. HP applies to units spawned from now on;
+    // range / damage / armour apply immediately.
+    recomputeUpgrades() {
+        for (let t = 0; t < this.nTypes; t++) {
+            const key = this.typeKey[t];
+            const r = CONFIG.unitTypes[t].range + rangeBonusFor(key);
+            this.pHpBonus[t] = hpBonusFor(key);
+            this.pRange2[t] = r * r;
+            this.pReach2[t] = (r + 8) * (r + 8);
+            this.pDamageBonus[t] = damageBonusFor(key);
+        }
+        this.pArmourMult = armourMult();
     }
 
     get activeCount(): number {
@@ -246,6 +278,7 @@ export class UnitManager {
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
         }
+        this.recomputeUpgrades(); // base range/damage feed the player bonuses
     }
 
     // Living (non-dying) units of a given type on a given side — for the unit panel.
@@ -285,7 +318,7 @@ export class UnitManager {
         this.x[i] = x;
         this.y[i] = yClamped;
         this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
-        this.hp[i] = this.typeHp[t];
+        this.hp[i] = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
         this.faction[i] = faction;
         this.state[i] = STATE.walk;
         this.target[i] = -1;
@@ -336,7 +369,9 @@ export class UnitManager {
                 continue;
             }
 
-            const range2 = this.typeRange2[this.type[i]];
+            const range2 = this.faction[i] === FACTION.player
+                ? this.pRange2[this.type[i]]
+                : this.typeRange2[this.type[i]];
             const ci = this.cellOf(i);
             let best = -1;
             let bestD2 = Infinity;
@@ -473,17 +508,21 @@ export class UnitManager {
             }
 
             // Combat strike.
+            const atkF = this.faction[i];
             const validTarget =
                 t >= 0 && t < this.count && this.state[t] !== STATE.dying && this.faction[t] !== this.faction[i];
+            const reach2 = atkF === FACTION.player ? this.pReach2[acting] : this.typeReach2[acting];
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
-                if (dx * dx + dy * dy <= this.typeReach2[acting]) {
+                if (dx * dx + dy * dy <= reach2) {
                     this.attackCd[i] += this.typeAttackInterval[acting];
-                    // Base damage scaled by the counter matrix; always at least 1.
-                    const dmg = Math.max(1, Math.round(
-                        this.typeDamage[acting] * this.pairMul[acting * this.nTypes + this.type[t]],
-                    ));
+                    // Base damage (+ the attacker's melee/ranged upgrade) scaled by the
+                    // counter matrix, then reduced by the defender's armour; always ≥ 1.
+                    const base = this.typeDamage[acting] + (atkF === FACTION.player ? this.pDamageBonus[acting] : 0);
+                    let scaled = base * this.pairMul[acting * this.nTypes + this.type[t]];
+                    if (this.faction[t] === FACTION.player) scaled *= this.pArmourMult;
+                    const dmg = Math.max(1, Math.round(scaled));
                     this.hp[t] -= dmg;
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
                         this.onDamage(this.x[t], this.y[t] - 50, dmg);

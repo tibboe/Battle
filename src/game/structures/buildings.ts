@@ -19,7 +19,7 @@ function buildingKey(faction: Faction, name: string) {
 
 // Every distinct building art referenced by config (keep + producers).
 function buildingNames(): string[] {
-    const set = new Set<string>([CONFIG.keep.art]);
+    const set = new Set<string>([CONFIG.keep.art, CONFIG.production.general.art]);
     for (const b of CONFIG.production.buildings) set.add(b.art);
     return [...set];
 }
@@ -44,9 +44,16 @@ interface Producer {
 export class Buildings {
     private readonly units: UnitManager;
     private readonly producers: Producer[] = [];
+    private readonly onTap?: (kind: string) => void;
 
-    constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, units: UnitManager) {
+    constructor(
+        scene: Phaser.Scene,
+        layer: Phaser.GameObjects.Layer,
+        units: UnitManager,
+        onTap?: (kind: string) => void, // tapping a player building opens its upgrades
+    ) {
         this.units = units;
+        this.onTap = onTap;
         const g = CONFIG.grid;
         const pitchX = g.cellW + g.gap;
         const pitchY = g.cellH + g.gap;
@@ -72,7 +79,7 @@ export class Buildings {
                 };
             };
 
-            const occupied = new Set<number>([g.keepSpot]);
+            const occupied = new Set<number>([g.keepSpot, CONFIG.production.general.spot]);
             for (const b of CONFIG.production.buildings) occupied.add(b.spot);
 
             // Faint plinths on the clear (buildable) spots — also the unit paths.
@@ -90,10 +97,17 @@ export class Buildings {
             const kp = pos(g.keepSpot);
             this.place(scene, layer, buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
 
+            // The shared-upgrades building (no units). Tappable on the player's side.
+            const gen = CONFIG.production.general;
+            const gp = pos(gen.spot);
+            const gimg = this.place(scene, layer, buildingKey(f, gen.art), gp.x, gp.y, gen.scale, flip);
+            if (f === FACTION.player) this.makeTappable(gimg, 'general');
+
             // One production building per unit type, on its spot.
             for (const b of CONFIG.production.buildings) {
                 const p = pos(b.spot);
-                this.place(scene, layer, buildingKey(f, b.art), p.x, p.y, b.scale, flip);
+                const img = this.place(scene, layer, buildingKey(f, b.art), p.x, p.y, b.scale, flip);
+                if (f === FACTION.player) this.makeTappable(img, b.produces);
 
                 const typeIndex = CONFIG.unitTypes.findIndex((u) => u.key === b.produces);
                 if (typeIndex < 0) continue; // produces an unknown unit key — skip
@@ -109,6 +123,14 @@ export class Buildings {
         }
     }
 
+    // A player building opens its upgrade popup when tapped (a tap, not a camera drag).
+    private makeTappable(img: Phaser.GameObjects.Image, kind: string) {
+        img.setInteractive({ useHandCursor: true });
+        img.on('pointerup', (pointer: Phaser.Input.Pointer) => {
+            if (this.onTap && pointer.getDistance() < 14) this.onTap(kind);
+        });
+    }
+
     private place(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
@@ -117,13 +139,14 @@ export class Buildings {
         y: number,
         scale: number,
         flip: boolean,
-    ) {
+    ): Phaser.GameObjects.Image {
         const s = scene.add.image(x, y, key)
             .setOrigin(0.5, 0.92) // base near the spot centre
             .setScale(scale)
             .setDepth(y) // sort with the units by base-y
             .setFlipX(flip);
         layer.add(s);
+        return s;
     }
 
     update(delta: number) {
