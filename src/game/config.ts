@@ -122,7 +122,7 @@ export const CONFIG = {
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
         { key: 'monk', art: 'monk', role: 'support',
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
-          weapon: 'None', armour: 'Light', scale: 0.8, footAnchor: 0.8,
+          weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
     ] as UnitType[],
 
@@ -361,10 +361,11 @@ export const CONFIG = {
         knockback: { distance: 110, cooldown: 5000 }, // Lancer shoves its target back, on a cd
         crit: { chance: 0.25, mult: 2 },              // Lancer upgrade: chance to deal ×mult damage
         block: { chance: 0.2 },                       // Warrior: chance to fully negate a hit it takes
-        // Archer: every `cooldown` ms lob an arc arrow at a far enemy (base range + bonus,
-        // beyond normal reach). It only damages an enemy within `hitRadius` of where it
-        // lands; `spread` is the aim scatter (bigger = more misses); `speed` the lob travel.
-        longshot: { bonusRange: 2000, cooldown: 3000, spread: 55, hitRadius: 36, speed: 1300 },
+        // Archer: when NO enemy is in normal range, stop and lob an arc arrow at a far enemy
+        // (base range + bonus). The archer stands and slowly draws for `drawTime` ms, then looses
+        // it. It only damages an enemy within `hitRadius` of where it lands; `spread` is the aim
+        // scatter (bigger = more misses); `speed` the lob travel.
+        longshot: { bonusRange: 2000, cooldown: 3000, drawTime: 1000, spread: 55, hitRadius: 36, speed: 1300 },
         // Peasant flee-burst upgrade: while fleeing a nearby enemy, sprint at ×mult for
         // `duration` ms, then `cooldown` ms before it can burst again.
         peasantFlee: { mult: 1.9, duration: 1500, cooldown: 6000 },

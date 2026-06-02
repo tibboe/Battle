@@ -48,6 +48,9 @@ export class UnitManager {
     private readonly abilityCd: Float32Array; // ms until the unit's special ability is ready
     private readonly deathTimer: Float32Array; // ms left of death anim before recycle
     private readonly animLock: Float32Array;   // ms left of a one-shot pose (block / shoot) before resuming
+    private readonly drawTimer: Float32Array;  // ms left of an Archer's long-shot draw (0 = not drawing)
+    private readonly drawLx: Float32Array;     // long-shot landing point captured at draw start
+    private readonly drawLy: Float32Array;
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
@@ -164,6 +167,9 @@ export class UnitManager {
         this.abilityCd = new Float32Array(this.capacity);
         this.deathTimer = new Float32Array(this.capacity);
         this.animLock = new Float32Array(this.capacity);
+        this.drawTimer = new Float32Array(this.capacity);
+        this.drawLx = new Float32Array(this.capacity);
+        this.drawLy = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
@@ -302,9 +308,10 @@ export class UnitManager {
         this.pArmourMult = armourMult();
     }
 
-    // Archer special: lob an arc arrow at a far enemy (beyond normal reach), with aim
-    // scatter so it can miss. Damage is resolved where it lands (resolveLongShotHit).
-    private fireLongShot(i: number) {
+    // Archer special: begin a long shot — pick a far enemy (beyond normal reach), then STOP and
+    // slowly draw for drawTime ms (the Shoot strip stretched to fill it). The arrow looses at the
+    // end (releaseLongShot). Only started when no enemy is in normal range (see step()).
+    private startLongShot(i: number) {
         const ls = CONFIG.abilities.longshot;
         const f = this.faction[i];
         const dir = f === FACTION.player ? 1 : -1;
@@ -331,11 +338,28 @@ export class UnitManager {
             return;
         }
         const target = cand[(Math.random() * cand.length) | 0];
-        const lx = this.x[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
-        const ly = this.y[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
-        if (this.onLongShot) this.onLongShot(xi, yi - 40, lx, ly, f as Faction);
-        this.playOneShot(i, 'attack', 560); // play the Shoot animation as it looses the arrow
+        // Aim where the target is now (with scatter); it may move during the draw — that misses.
+        this.drawLx[i] = this.x[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        this.drawLy[i] = this.y[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        this.drawTimer[i] = ls.drawTime;
+
+        // Play the Shoot strip stretched over the whole draw, so the bow draws slowly.
+        const sprite = this.sprites[i]!;
+        const art = this.typeArt[this.type[i]];
+        sprite.play(animKey(art, FACTION_NAME[f], 'attack'));
+        const shootMs = this.typeAttackAnimMs[this.type[i]] || ls.drawTime;
+        sprite.anims.timeScale = Math.max(0.05, shootMs / ls.drawTime);
+    }
+
+    // Draw finished: loose the arrow (resolved where it lands), reset animation speed, cooldown.
+    private releaseLongShot(i: number) {
+        const ls = CONFIG.abilities.longshot;
+        const f = this.faction[i];
+        const sprite = this.sprites[i]!;
+        sprite.anims.timeScale = 1;
+        if (this.onLongShot) this.onLongShot(this.x[i], this.y[i] - 40, this.drawLx[i], this.drawLy[i], f as Faction);
         this.abilityCd[i] = ls.cooldown;
+        this.playStateAnim(i); // back to idle / walk
     }
 
     // Called when a long-shot arrow lands: damage the nearest enemy at the impact point if
@@ -476,6 +500,7 @@ export class UnitManager {
         this.state[i] = STATE.walk;
         this.target[i] = -1;
         this.animLock[i] = 0;
+        this.drawTimer[i] = 0;
         this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
         this.abilityCd[i] = this.typeKnockback[t]
             ? Phaser.Math.FloatBetween(0, CONFIG.abilities.knockback.cooldown)
@@ -499,6 +524,7 @@ export class UnitManager {
             .setDepth(yClamped) // lower on screen draws in front, so ranks overlap correctly
             .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
+        sprite.anims.timeScale = 1; // clear any stretched long-shot draw from a previous user
         return true;
     }
 
@@ -612,14 +638,27 @@ export class UnitManager {
             }
 
             if (this.abilityCd[i] > 0) this.abilityCd[i] -= delta; // tick special-ability cd
+
+            // Mid long-shot draw: the archer stands frozen and slowly draws; loose at the end.
+            if (this.drawTimer[i] > 0) {
+                this.drawTimer[i] -= delta;
+                if (this.drawTimer[i] <= 0) this.releaseLongShot(i);
+                continue;
+            }
+
             // A one-shot pose (block / shoot) holds for its duration, then we resume the
             // animation that matches the unit's current state.
             if (this.animLock[i] > 0) {
                 this.animLock[i] -= delta;
                 if (this.animLock[i] <= 0) this.playStateAnim(i);
             }
-            // Archers lob a long shot when ready, whether walking or engaged.
-            if (this.typeLongshot[this.type[i]] && this.abilityCd[i] <= 0) this.fireLongShot(i);
+            // Archers lob a long shot ONLY as a fallback: when no enemy is in normal range
+            // (no target, so they're marching), and the ability is off cooldown.
+            if (this.typeLongshot[this.type[i]] && this.abilityCd[i] <= 0
+                && st === STATE.walk && this.target[i] < 0) {
+                this.startLongShot(i);
+                continue; // begin the draw this frame
+            }
 
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;
@@ -948,6 +987,9 @@ export class UnitManager {
             this.abilityCd[i] = this.abilityCd[last];
             this.deathTimer[i] = this.deathTimer[last];
             this.animLock[i] = this.animLock[last];
+            this.drawTimer[i] = this.drawTimer[last];
+            this.drawLx[i] = this.drawLx[last];
+            this.drawLy[i] = this.drawLy[last];
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
             this.sprites[i] = this.sprites[last];
