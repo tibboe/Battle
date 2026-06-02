@@ -11,8 +11,9 @@ design.** You are building one milestone at a time. Milestone 1 (Horde Core) is
 do broad stairs, so the battlefield is staying a **single flat lane** (a grass island on
 open water). Milestone 3 (Armies & Production) is **complete** — five unit types with a
 weapon×armour counter matrix, buildings that produce units on a 3×3 grid, and tap-a-building
-upgrades/abilities. The next milestone, **`MILESTONE_4.md` (Siege & Base Assault)**, is
-specced but **not started** — don't build it until told. M3 is the current playable state.
+upgrades/abilities. The next milestone, **`MILESTONE_4.md` (Economy — peasants, resources,
+building/upgrade costs)**, is specced but **not started** — don't build it until told. M3 is
+the current playable state.
 
 ## Roles
 - The human is the **creative director**: they decide how it should feel, play it, and
@@ -79,7 +80,8 @@ state at the end of a session.
 
 ## Pointers
 - `GAME_DESIGN.md` — vision, unit system, full roadmap.
-- `MILESTONE_4.md` — NEXT milestone (Siege & Base Assault / sacking buildings); specced, not started.
+- `MILESTONE_4.md` — NEXT milestone (Economy: peasants, resources, building/upgrade costs); specced, not started.
+- `MILESTONE_5.md` — later milestone (Siege & Base Assault / sacking buildings); specced, not started.
 - `MILESTONE_3.md` — completed (Armies & Production: units, counters, buildings, upgrades).
 - `MILESTONE_2.md` — PARKED (tiered elevation); kept for reference, not being built.
 - `MILESTONE_1.md` — completed (Horde Core); kept for reference.

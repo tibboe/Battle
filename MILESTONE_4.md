@@ -1,96 +1,99 @@
-# Milestone 4 — Siege & Base Assault (sacking buildings)
+# Milestone 4 — Economy (peasants, resources, costs)
 
-**Goal:** replace the abstract "reach the keep, chip its HP, vanish" model with a concrete
-**siege** loop — units batter a building's **door**, breach it, **pour inside** to sack it,
-and the building goes **out of commission** (not destroyed) until **repaired**. Buildings get
-an **armour type** so hitting the structure directly does little; the door is the way in.
-Sacking enemy **production** buildings (not just the keep) is the strategic core: cripple
-their output, defend yours.
+**Goal:** turn the free, auto-running base into a player-driven **resource economy**.
+**Peasants** spawned from **Houses** (max 3 per house) gather **gold, stone and wood** from
+nodes and bank them; those resources **pay for buildings and upgrades**. Production and
+upgrades stop being free — you out-gather to out-build.
 
-> **Why this shape:** today the climax is a fast trickle of units disappearing into a single
-> keep HP bar. A door→breach→sack→repair loop makes the endgame a deliberate siege, makes
-> **defence** a real axis (hold the gate), and turns the production buildings from scenery
-> into targets worth attacking and protecting. (Director's design — discussed this session.)
+> **Why this shape:** M3 made buildings and upgrades free and always-on. An economy gives the
+> player real decisions — where to invest what they gather — and makes Houses/peasants matter
+> beyond chip damage. (Director's design — discussed this session.)
 
-This is the next milestone; **not started** until the director says go. M3 stands complete.
+This **repurposes two M3 things**: the **Pawn becomes the worker/peasant** (a gatherer, not a
+combat swarm), and buildings shift from **pre-placed & free** to **built & paid-for** on the
+grid's clear spots. Fighting stays the Warrior / Lancer / Archer / Monk job.
 
 ## Explicitly NOT in this milestone
-A gold economy, multiple lanes, real damaged/destroyed art (we synthesise it — see Art note),
-and any unit-vs-unit changes beyond new targeting.
+Between-runs / meta progression (this economy is *in-match*), multiple lanes, siege/sacking
+(that's M5), and brand-new art (we reuse the pack's worker + resource art — gaps noted below).
 
-## The model being replaced (where it lives today)
-- `scenes/GameScene.ts` holds one HP pool per side (`playerKeepHp`/`enemyKeepHp`,
-  `CONFIG.keep.hp`). Units that reach the opposing keep's x-line call `onReachKeep`
-  (`CONFIG.keep.damagePerUnit`) and despawn. First keep to 0 = win/lose.
-- `structures/buildings.ts` draws production + general + Castle buildings as **static sprites
-  with no HP**.
-- `units/UnitManager.ts` only ever targets the nearest enemy **unit**; never a structure.
+## The pieces
+**Resources (per side):** `gold`, `stone`, `wood` stockpiles, shown in a HUD readout.
 
-## The sack loop (per attackable building)
-Two-stage integrity:
-1. **Door HP** — a weak point on the lane-facing side. Units path to the door and attack it.
-   The structure body has high `armour`, so attacking anything but the door is near-useless.
-2. **Breached** — at door HP 0 the door opens; attackers that reach the doorway **enter**
-   (despawn into the building) and drain its **internal integrity**.
-3. **Out of commission** — at integrity 0 the building stops working (a sacked Barracks makes
-   no units; a sacked Castle = that side loses). It is **not** removed from the map.
-4. **Repair** — restores the door + integrity and returns it to service.
+**Peasants (from Houses):**
+- Each House maintains up to **3** peasants; if one is lost it trains another.
+- Peasants are **workers, not fighters**: walk to a node, harvest over time, carry a load to
+  a **drop-off**, bank it, repeat.
+- Pack art covers this: the Pawn has `Interact Axe` (chop), `Pickaxe` (mine), `Hammer`
+  (build/repair), and carry variants for Gold/Wood/Meat. (No **stone** carry art — reuse the
+  gold carry or tint it; note the gap.)
+
+**Resource nodes (on the island):**
+- **Wood** = trees (we already scatter a forest — some become harvestable), chop with `Axe`.
+- **Gold** = gold mine / gold rocks (`Resources/Gold`), mine with `Pickaxe`.
+- **Stone** = rocks (`Decorations/Rocks`), mine with `Pickaxe`.
+- Decide: finite (deplete + vanish) vs infinite; how many; placed near each base so gathering
+  isn't suicide in the middle of the war.
+
+**Costs:**
+- Every building (House, Barracks, Archery, Tower, Monastery, general) and every upgrade gets
+  a price in gold/stone/wood. Buying deducts the stockpile; unaffordable = greyed out.
+- Buildings become **player-built**: start with a Castle + maybe one House; tap an empty grid
+  spot → pick a building → pay → it constructs.
 
 ## Build order (each phase stays runnable)
-### Phase 1 — The keep gets a real gate
-Replace the Castle's chip-HP model with **door HP + internal integrity**. Units attack the
-(drawn) door; on breach they enter and drain integrity; integrity 0 = that side loses. Same
-win/lose *meaning*, concrete *mechanism*. Synthesised door / breached / sacked visuals.
+### Phase 1 — Resources + peasants gathering
+Add the three stockpiles + HUD. Houses spawn/maintain 3 peasants each. The Pawn switches from
+combat to worker behaviour: path to a node, harvest, carry back, bank. Place nodes. Income
+visible; nothing to spend on yet.
 
-### Phase 2 — Production buildings are sackable
-Give each production building an armour type, door HP and integrity. Sacking one takes it
-**out of commission** (its producer pauses). New targeting rule: when no enemy units are
-nearby, a unit picks the nearest enemy building's door, walks to it, attacks, enters on
-breach. Defenders fighting at the gate now matter.
+### Phase 2 — Pay to build
+Empty grid spots become **build slots**: tap one → a menu of buildings with costs → pay →
+construct on that spot (its producer/effect starts). Start a match with fewer buildings so
+building is a real choice.
 
-### Phase 3 — Repair
-A sacked/damaged building can be repaired: **tap-to-repair**, and/or the **Pawn** (worker)
-walks over and repairs over time — gives the worker a real job and makes defending active.
-Restores door + integrity; cannot complete while the building is actively being breached.
+### Phase 3 — Pay to upgrade
+Retrofit the M3 upgrade popup with **costs**: each upgrade shows its price, is only buyable if
+affordable, and deducts on purchase. (M3's free toggles become paid.)
 
-### Phase 4 — Defence feel + balance
-Tune the siege: door/integrity values, building armour, per-unit siege damage, repair rate,
-and re-balance production caps/rates for the slower, defence-aware endgame. Optional: a
-"defend/rally" stance so some units hold home.
+### Phase 4 — Enemy economy + balance
+The enemy needs income too: a real AI economy (enemy peasants gather + build) or a scripted /
+abstracted income that scales it. Balance starting resources, node yields, gather rates, and
+every building/upgrade cost.
 
 ## Data / config (extend CONFIG, M3-style)
-- `buildingDefence` per building (keep + each producer): `{ armour, doorHp, integrity,
-  doorOffset }`, with a building-armour row/col added to (or beside) `combat.matrix`.
-- Per-unit **siege damage** vs structures, distinct from anti-unit damage — or a global rule
-  "units deal ×N to a door, ≈0 to the body".
-- `repair: { rate, mode }` (`'tap' | 'pawn' | 'both'`).
-- Win condition: sack the enemy Castle (config flag for castle-only vs all-buildings).
+- `resources: { gold, stone, wood }` — starting stockpile per side.
+- `peasant: { perHouse: 3, gatherRate, carryAmount, ... }` — Pawn-worker tunables.
+- `nodes` — type, yield, finite/infinite, placement (or generated near each base).
+- `cost: { gold, stone, wood }` on each `production.buildings` / `production.general` entry
+  and each `upgrades` entry.
+- Stockpiles are per-match (probably NOT persisted; `settings.ts` stays for tuning only).
 
-## Open decisions to pin (before/while building)
-- **v1 scope:** keep-only first (Phase 1), then production (Phase 2) — handled by phasing.
-- Are attackers **consumed** when they enter, or do they spill back out when it's sacked?
-- Is the **door** itself armoured (slow, dramatic breach) or soft?
-- **Repair:** tap, Pawn-driven, or both? (No cost — no economy yet.)
-- Does the **general/upgrade** building, when sacked, suspend its upgrades?
-- Edge cases: building sacked mid-production (drop the queued unit?); repairing while
-  breached; units "inside" when it flips out-of-commission.
+## Open decisions to pin
+- Peasants **purely economic** (never fight) or weak self-defence? (Lean: pure workers.)
+- Drop-off: the House, the Castle, or nearest — and do peasants must-return-to-bank, or is
+  income passive-per-peasant?
+- **Nodes:** finite vs infinite, count, placement (safe-near-base vs contested).
+- **Enemy economy** — real AI gathering/building vs scripted income. Biggest open question;
+  drives how fair/readable the match feels.
+- Build model: instant on pay, or a build timer (a peasant with the Hammer)?
+- Does training a peasant cost anything? Starting buildings / starting resources?
+- Mesh with M5 siege: a sacked production building stops its income; repairs cost resources.
 
-## Art note (no pack art for this)
-Tiny Swords ships **no** damaged/destroyed/door sprites — only the 8 plain building PNGs.
-Synthesise, as we already do for unit death (freeze + fade) and the old drawn keeps: a drawn
-**door** rectangle on the lane-facing side; **breached** = door open/gone; **out of
-commission** = darken/desaturate + smoke (simple particle/overlay) + maybe a downed banner;
-**repairing** = scaffold tint / progress bar. Keep all of this behind the building module so
-real art can replace it later with no logic change.
+## Art note
+Good coverage from the pack: the Pawn worker set (chop / mine / build + gold/wood carry) and
+resource art (gold, trees, rocks, sheep). Gaps: **stone carry** (reuse gold carry), and a
+building "under construction" state (synthesise — scaffold tint / progress bar, like our
+other hand-made states).
 
 ## Acceptance
-- Units batter a building's door, breach it, and sack it; the building goes **out of
-  commission** (visibly), not destroyed, and stops working.
-- Direct hits on the structure body do little; the **door** is the way in.
-- A sacked building can be **repaired** and returns to service.
-- Sacking the enemy **Castle** wins; losing yours loses.
+- Peasants spawn from Houses (≤3 each), gather gold/stone/wood, and bank them; stockpiles show
+  in the HUD.
+- Buildings and upgrades **cost** resources and can't be bought without them.
+- You can build a new building on an empty grid spot by paying for it.
+- The enemy has a working economy too; a match is winnable and loseable.
 - Still smooth with the full horde; one flat lane; playable at every phase.
 
 ---
-*Supersedes the old `GAME_DESIGN.md` roadmap's "M4 — multiple paths" for now (that can
-return as a later milestone). Source of truth when this milestone starts.*
+*Realigned roadmap: M3 Armies & Production (done) → **M4 Economy** → M5 Siege → M6 Multiple
+paths. Source of truth when this milestone starts.*
