@@ -9,8 +9,10 @@ Lanebreaker). Full design is in `GAME_DESIGN.md`. **You are not building the who
 design.** You are building one milestone at a time. Milestone 1 (Horde Core) is
 **complete**. Milestone 2 (tiered elevation) was **parked** — the Tiny Swords pack can't
 do broad stairs, so the battlefield is staying a **single flat lane** (a grass island on
-open water). The current milestone is defined in `MILESTONE_3.md` (Armies & Production) —
-that file is the source of truth for scope right now.
+open water). Milestone 3 (Armies & Production) is **complete** — five unit types with a
+weapon×armour counter matrix, buildings that produce units on a 3×3 grid, and tap-a-building
+upgrades/abilities. The next milestone, **`MILESTONE_4.md` (Siege & Base Assault)**, is
+specced but **not started** — don't build it until told. M3 is the current playable state.
 
 ## Roles
 - The human is the **creative director**: they decide how it should feel, play it, and
@@ -77,7 +79,8 @@ state at the end of a session.
 
 ## Pointers
 - `GAME_DESIGN.md` — vision, unit system, full roadmap.
-- `MILESTONE_3.md` — what to build right now (Armies & Production), with acceptance criteria.
+- `MILESTONE_4.md` — NEXT milestone (Siege & Base Assault / sacking buildings); specced, not started.
+- `MILESTONE_3.md` — completed (Armies & Production: units, counters, buildings, upgrades).
 - `MILESTONE_2.md` — PARKED (tiered elevation); kept for reference, not being built.
 - `MILESTONE_1.md` — completed (Horde Core); kept for reference.
 - `ASSET_SPEC.md` — sprite contract (frame size, tags, origin, export format). Placeholder
