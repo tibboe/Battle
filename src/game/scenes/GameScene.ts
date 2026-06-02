@@ -9,6 +9,9 @@ import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
+import { PeasantManager, loadPeasants, registerPeasantAnimations } from '../units/peasants';
+import { ResourceStore } from '../economy/ResourceStore';
+import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { UpgradePanel } from '../ui/UpgradePanel';
@@ -26,6 +29,9 @@ export class GameScene extends Phaser.Scene {
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
     private upgradePanel!: UpgradePanel;
+    private resources!: ResourceStore;
+    private resourceNodes!: ResourceNodes;
+    private peasants!: PeasantManager;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -37,6 +43,8 @@ export class GameScene extends Phaser.Scene {
     private fitButton!: Phaser.GameObjects.Text;
     private playerKeepText!: Phaser.GameObjects.Text;
     private enemyKeepText!: Phaser.GameObjects.Text;
+    private playerResText!: Phaser.GameObjects.Text;
+    private enemyResText!: Phaser.GameObjects.Text;
 
     private playerKeepHp: number = CONFIG.keep.hp;
     private enemyKeepHp: number = CONFIG.keep.hp;
@@ -50,10 +58,12 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         loadUnitAtlas(this);
+        loadPeasants(this);
         loadProjectiles(this);
         loadBuildings(this);
         loadTerrainTileset(this);
         loadEnvironment(this);
+        loadResourceNodes(this);
     }
 
     create() {
@@ -72,6 +82,7 @@ export class GameScene extends Phaser.Scene {
         registerEnvironmentAnims(this);
         this.drawBackdrop();
         registerUnitAnimations(this);
+        registerPeasantAnimations(this);
         this.cameraController = new CameraController(this);
         this.buildHud();
 
@@ -99,9 +110,22 @@ export class GameScene extends Phaser.Scene {
         // Building upgrade popup (opened by tapping a player building).
         this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units);
 
-        // Production buildings (incl. the Castle keeps) emit their unit on a timer; tapping
-        // a player building opens its upgrades.
+        // Production buildings (incl. the Castle keeps + Houses) emit their unit on a timer;
+        // tapping a player building opens its upgrades.
         this.buildings = new Buildings(this, this.worldLayer, this.units, (kind) => this.upgradePanel.toggle(kind));
+
+        // Economy (Milestone 4): per-side stockpiles, the harvestable nodes, and the peasants
+        // that Houses maintain to gather them. Peasants bank at each side's Castle (the keep).
+        this.resources = new ResourceStore();
+        this.resourceNodes = new ResourceNodes(this, this.worldLayer);
+        this.peasants = new PeasantManager(
+            this,
+            this.worldLayer,
+            this.resources,
+            this.resourceNodes,
+            { houses: this.buildings.housePositions(FACTION.player), bank: this.buildings.keepPosition(FACTION.player) },
+            { houses: this.buildings.housePositions(FACTION.enemy), bank: this.buildings.keepPosition(FACTION.enemy) },
+        );
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
@@ -227,7 +251,30 @@ export class GameScene extends Phaser.Scene {
 
         this.fitButton.on('pointerup', () => this.cameraController.fitToMap());
 
-        this.uiLayer.add([this.hudText, this.playerKeepText, this.enemyKeepText, this.fitButton]);
+        // Resource stockpiles (Milestone 4): your gathered gold/stone/wood, with the enemy's
+        // below it so income is visible on both sides. Top-left, under the FPS line.
+        this.playerResText = this.add.text(12, 44, '', {
+            fontFamily: 'monospace',
+            fontSize: '16px',
+            color: '#7fd0ff',
+            backgroundColor: '#00000080',
+            padding: { x: 8, y: 5 },
+        })
+            .setScrollFactor(0)
+            .setDepth(HUD_DEPTH);
+
+        this.enemyResText = this.add.text(12, 74, '', {
+            fontFamily: 'monospace',
+            fontSize: '16px',
+            color: '#ff8a8a',
+            backgroundColor: '#00000080',
+            padding: { x: 8, y: 5 },
+        })
+            .setScrollFactor(0)
+            .setDepth(HUD_DEPTH);
+
+        this.uiLayer.add([this.hudText, this.playerKeepText, this.enemyKeepText, this.fitButton,
+            this.playerResText, this.enemyResText]);
         this.layoutHud();
     }
 
@@ -251,6 +298,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.gameOver) {
             this.buildings.update(delta);
             this.units.update(delta);
+            this.peasants.update(delta);
         }
         this.floatingText.update(delta);
         this.projectiles.update(delta);
@@ -260,6 +308,17 @@ export class GameScene extends Phaser.Scene {
         this.hudText.setText(`FPS: ${fps}    Units: ${this.units.activeCount}`);
         this.playerKeepText.setText(`You ${this.playerKeepHp}`);
         this.enemyKeepText.setText(`Enemy ${this.enemyKeepHp}`);
+
+        // Stockpiles only change when a peasant banks — rebuild the text just then.
+        if (this.resources.consumeDirty()) {
+            this.playerResText.setText(`You   ${this.resLine(FACTION.player)}`);
+            this.enemyResText.setText(`Enemy ${this.resLine(FACTION.enemy)}`);
+        }
         this.layoutHud();
+    }
+
+    private resLine(faction: Faction): string {
+        const b = this.resources.bag(faction);
+        return `Gold ${b.gold}  Stone ${b.stone}  Wood ${b.wood}`;
     }
 }

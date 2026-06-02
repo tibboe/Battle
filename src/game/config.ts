@@ -9,6 +9,10 @@ export type Armour = 'Unarmored' | 'Light' | 'Medium' | 'Heavy';
 // Behaviour class: melee/ranged fight; support never attacks (the Monk heals in Phase 2).
 export type UnitRole = 'melee' | 'ranged' | 'support';
 
+// The three gatherable resources (Milestone 4 economy). Peasants harvest these from nodes
+// and bank them; later phases spend them on buildings and upgrades.
+export type ResourceType = 'gold' | 'stone' | 'wood';
+
 // One row of the unit roster. Stats are the director's to tune; `art` names the sprite
 // set wired in units/animations.ts (which also owns the SOURCE frame size, since that is
 // fixed by the art, not a gameplay knob).
@@ -77,19 +81,18 @@ export const CONFIG = {
         scale: 0.85,       // display scale for the castle sprite (sized to fit the grid)
     },
 
-    // The unit roster — all five Tiny Swords types, data-driven. UnitManager reads these
-    // rather than hard-coded numbers; the production buildings decide which type spawns and
-    // when. The Warrior row reproduces the Milestone-1 numbers EXACTLY (hp 30 = 3 hits to
-    // kill; range ~= one body width so the front line meets edge-to-edge). The rest are
-    // sensible starting points to tune by playing. Weapon×armour counters, the Archer's
-    // arrow, and the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
+    // The combat roster — four fighting Tiny Swords types, data-driven. UnitManager reads
+    // these rather than hard-coded numbers; the production buildings decide which type
+    // spawns and when. (The Pawn used to live here as a cheap melee swarm; Milestone 4 turns
+    // it into the worker/peasant — see CONFIG.peasant — so it is no longer a combat unit.)
+    // The Warrior row reproduces the Milestone-1 numbers EXACTLY (hp 30 = 3 hits to kill;
+    // range ~= one body width so the front line meets edge-to-edge). The rest are sensible
+    // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
+    // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
         { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block',
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'pawn', art: 'pawn', role: 'melee',
-          hp: 20, damage: 6, range: 60, attackInterval: 500, moveSpeed: 82,
-          weapon: 'Light', armour: 'Unarmored', scale: 0.72, footAnchor: 0.8 },
         { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61 },
@@ -171,13 +174,67 @@ export const CONFIG = {
         rateScale: 1,
         // The shared-upgrades building — hosts Armour/Melee/Ranged; produces no units.
         general: { art: 'House2', spot: 9, scale: 1.0 },
+        // Peasant houses (Milestone 4): each maintains up to CONFIG.peasant.perHouse workers
+        // and produces NO combat units. Pre-placed for Phase 1; player-built-and-paid on the
+        // grid's empty spots arrives in Phase 2.
+        houses: [
+            { art: 'House1', spot: 1, scale: 1.0 },
+        ],
         buildings: [
-            { produces: 'pawn',    art: 'House1',    every: 1400, spot: 1, scale: 1.0 },
             { produces: 'warrior', art: 'Barracks',  every: 2200, spot: 2, scale: 0.9 },
             { produces: 'lancer',  art: 'Tower',     every: 3200, spot: 3, scale: 0.9 },
             { produces: 'archer',  art: 'Archery',   every: 2600, spot: 7, scale: 0.9 },
             { produces: 'monk',    art: 'Monastery', every: 4200, spot: 8, scale: 0.8 },
         ],
+    },
+
+    // ── Economy (Milestone 4) ───────────────────────────────────────────────────────────
+    // Per-side resource stockpiles. Peasants gather gold/stone/wood from nodes and bank them
+    // at the Castle; later phases spend them on buildings and upgrades. Per-match only (not
+    // persisted) — `start` is the opening balance each side begins with.
+    resources: {
+        start: { gold: 0, stone: 0, wood: 0 },
+    },
+
+    // Peasant (worker) tunables. Workers spawn from Houses, walk to the nearest node of their
+    // assigned resource, harvest a load over `gatherTime`, carry it back to the Castle, bank
+    // `carryAmount`, and repeat. They never fight (pure economy). All times in ms, speeds in
+    // px/sec, distances in px. `scale`/`footAnchor` match the old Pawn so the art sits right.
+    peasant: {
+        perHouse: 3,        // workers a House keeps alive (trains replacements up to this)
+        moveSpeed: 80,      // px/sec while walking (empty or laden)
+        scale: 0.7,
+        footAnchor: 0.8,
+        gatherTime: 1600,   // ms harvesting at a node to fill one load
+        carryAmount: 10,    // resource banked per completed round trip
+        bankTime: 250,      // ms pause at the Castle to deposit
+        trainTime: 3500,    // ms a House takes to train a replacement when below perHouse
+        arrive: 48,         // px proximity that counts as "reached" a node
+        bankArrive: 120,    // px proximity to the Castle that counts as "at the bank"
+    },
+
+    // Resource nodes on the island. Each: `type`, world x/y, and `finite` (deplete + vanish
+    // when drained of `finiteAmount`, else inexhaustible). Safe nodes sit in each base's back
+    // corner, off the lane path; the richer CONTESTED set sits mid-field where the armies
+    // clash. Phase-1 peasants gather the nearer safe nodes; the mid nodes are placed now
+    // (visible, fought over later). `scale` sizes each node's art by type.
+    nodes: {
+        scale: { gold: 0.55, stone: 0.95, wood: 0.85 },
+        finiteAmount: 600,
+        list: [
+            // Player safe (left base, off-lane).
+            { type: 'gold',  x: 760,  y: 640,  finite: false },
+            { type: 'stone', x: 600,  y: 1240, finite: false },
+            { type: 'wood',  x: 980,  y: 1300, finite: false },
+            // Enemy safe (right base, mirrored).
+            { type: 'gold',  x: 3240, y: 640,  finite: false },
+            { type: 'stone', x: 3400, y: 1240, finite: false },
+            { type: 'wood',  x: 3020, y: 1300, finite: false },
+            // Contested mid-field — richer, finite (reward holding the centre).
+            { type: 'gold',  x: 1820, y: 600,  finite: true },
+            { type: 'stone', x: 2180, y: 600,  finite: true },
+            { type: 'wood',  x: 2000, y: 1320, finite: true },
+        ] as { type: ResourceType; x: number; y: number; finite: boolean }[],
     },
 
     // Upgrades (Phase 4) — player-only, free to toggle from a building, one level each for

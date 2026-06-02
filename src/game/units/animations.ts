@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 
-// All five Tiny Swords unit types (Pixel Frog), data-driven. The pack ships separate
+// The four combat Tiny Swords unit types (Pixel Frog), data-driven. (The Pawn is the
+// worker/peasant from Milestone 4 — its art lives in units/peasants.ts.) The pack ships separate
 // colour sets, so we use the BLUE set for the player and the RED set for the enemy and
 // skip tinting (tinting already-coloured art looks muddy).
 //
@@ -53,14 +54,8 @@ const UNIT_ART: Record<string, UnitArt> = {
             attack: { file: 'Warrior_Attack1.png', frames: 4, frameRate: 12 },
         },
     },
-    pawn: {
-        dir: 'Pawn',
-        frameSize: 192,
-        states: {
-            walk: { file: 'Pawn_Run.png', frames: 6, frameRate: 14 },
-            attack: { file: 'Pawn_Interact Knife.png', frames: 4, frameRate: 12 },
-        },
-    },
+    // (The Pawn is no longer a combat type — Milestone 4 turns it into the worker/peasant.
+    // Its worker animation set is loaded separately in units/peasants.ts.)
     lancer: {
         dir: 'Lancer',
         frameSize: 320,

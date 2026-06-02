@@ -17,9 +17,10 @@ function buildingKey(faction: Faction, name: string) {
     return `bld-${faction}-${name}`;
 }
 
-// Every distinct building art referenced by config (keep + producers).
+// Every distinct building art referenced by config (keep + houses + producers).
 function buildingNames(): string[] {
     const set = new Set<string>([CONFIG.keep.art, CONFIG.production.general.art]);
+    for (const h of CONFIG.production.houses) set.add(h.art);
     for (const b of CONFIG.production.buildings) set.add(b.art);
     return [...set];
 }
@@ -45,6 +46,11 @@ export class Buildings {
     private readonly units: UnitManager;
     private readonly producers: Producer[] = [];
     private readonly onTap?: (kind: string) => void;
+
+    // Base geometry the peasant system needs, captured per faction during layout: where the
+    // Castle (the bank / drop-off) sits and where each House spawns its workers.
+    private readonly keepPos: { x: number; y: number }[] = [];
+    private readonly housePos: { x: number; y: number }[][] = [[], []];
 
     constructor(
         scene: Phaser.Scene,
@@ -80,6 +86,7 @@ export class Buildings {
             };
 
             const occupied = new Set<number>([g.keepSpot, CONFIG.production.general.spot]);
+            for (const h of CONFIG.production.houses) occupied.add(h.spot);
             for (const b of CONFIG.production.buildings) occupied.add(b.spot);
 
             // Faint plinths on the clear (buildable) spots — also the unit paths.
@@ -93,15 +100,24 @@ export class Buildings {
                 layer.add(plinth);
             }
 
-            // The Castle keep (HP target; HP itself is tracked by the scene).
+            // The Castle keep (HP target; HP itself is tracked by the scene). Peasants bank
+            // their loads here, so remember its position for the peasant system.
             const kp = pos(g.keepSpot);
             this.place(scene, layer, buildingKey(f, CONFIG.keep.art), kp.x, kp.y, CONFIG.keep.scale, flip);
+            this.keepPos[f] = { x: kp.x, y: kp.y };
 
             // The shared-upgrades building (no units). Tappable on the player's side.
             const gen = CONFIG.production.general;
             const gp = pos(gen.spot);
             const gimg = this.place(scene, layer, buildingKey(f, gen.art), gp.x, gp.y, gen.scale, flip);
             if (f === FACTION.player) this.makeTappable(gimg, 'general');
+
+            // Peasant Houses (no combat units — they maintain workers via PeasantManager).
+            for (const h of CONFIG.production.houses) {
+                const hp = pos(h.spot);
+                this.place(scene, layer, buildingKey(f, h.art), hp.x, hp.y, h.scale, flip);
+                this.housePos[f].push({ x: hp.x, y: hp.y });
+            }
 
             // One production building per unit type, on its spot.
             for (const b of CONFIG.production.buildings) {
@@ -158,5 +174,15 @@ export class Buildings {
                 this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y);
             }
         }
+    }
+
+    // The Castle (bank / drop-off) position for a side — where peasants deposit.
+    keepPosition(faction: Faction): { x: number; y: number } {
+        return this.keepPos[faction];
+    }
+
+    // The House (worker spawn) positions for a side.
+    housePositions(faction: Faction): { x: number; y: number }[] {
+        return this.housePos[faction];
     }
 }
