@@ -15,7 +15,8 @@ const TYPES: ResourceType[] = ['gold', 'stone', 'wood'];
 export class ResourceStore {
     // Indexed by faction (player = 0, enemy = 1).
     private readonly bags: ResourceBag[];
-    private dirty = true;
+    // Bumped on every change so the HUD and any open menu can refresh only when needed.
+    private ver = 0;
 
     constructor() {
         const start = CONFIG.resources.start;
@@ -37,7 +38,7 @@ export class ResourceStore {
     add(faction: Faction, type: ResourceType, amount: number) {
         if (amount <= 0) return;
         this.bags[faction][type] += amount;
-        this.dirty = true;
+        this.ver++;
     }
 
     // Phase 2+ will spend on buildings/upgrades; the primitives are ready now.
@@ -50,15 +51,12 @@ export class ResourceStore {
         if (!this.canAfford(faction, cost)) return false;
         const b = this.bags[faction];
         for (const t of TYPES) b[t] -= cost[t] ?? 0;
-        this.dirty = true;
+        this.ver++;
         return true;
     }
 
-    // True once since the last check, whenever a stockpile changed — lets the HUD skip
-    // rebuilding its text every frame.
-    consumeDirty(): boolean {
-        if (!this.dirty) return false;
-        this.dirty = false;
-        return true;
+    // Monotonic change counter — the HUD and any open menu refresh when it moves.
+    get rev(): number {
+        return this.ver;
     }
 }

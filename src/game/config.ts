@@ -277,8 +277,9 @@ export const CONFIG = {
         ] as { type: ResourceType; x: number; y: number; finite: boolean }[],
     },
 
-    // Upgrades (Phase 4) — player-only, free to toggle from a building, one level each for
-    // now. These are the EFFECT magnitudes; which upgrades are active lives in upgrades.ts.
+    // Upgrades — player-only stat boosts, bought once from a building (Milestone 4 Phase 3
+    // makes them cost resources). These are the EFFECT magnitudes; which upgrades are owned
+    // lives in upgrades.ts; the prices are in `upgradeCosts` below.
     upgrades: {
         warriorHp: 15,     // + max HP for your Warriors
         archerRange: 120,  // + engage range for your Archers
@@ -286,6 +287,19 @@ export const CONFIG = {
         melee: 4,          // + damage for your melee units
         ranged: 4,         // + damage for your ranged units
     },
+
+    // Price of each upgrade (Phase 3), keyed by the upgrade key in upgrades.ts. Buying deducts
+    // the player's stockpile; unaffordable upgrades are greyed out. Bought once per match.
+    // (Director to refine — these sit a notch above building costs since the buff is permanent.)
+    upgradeCosts: {
+        warriorHp:   { gold: 40, stone: 40, wood: 20 },
+        archerRange: { gold: 50, stone: 10, wood: 40 },
+        lancerCrit:  { gold: 70, stone: 30, wood: 10 },
+        monkAoe:     { gold: 60, stone: 20, wood: 30 },
+        armour:      { gold: 80, stone: 60, wood: 20 },
+        melee:       { gold: 70, stone: 40, wood: 30 },
+        ranged:      { gold: 70, stone: 20, wood: 50 },
+    } as Record<string, Cost>,
 
     // Unit special abilities (Phase 4). The default abilities are innate to BOTH sides; the
     // upgrades that gate some of them are player-only (see upgrades.ts).

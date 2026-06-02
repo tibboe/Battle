@@ -16,6 +16,7 @@ import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { UpgradePanel } from '../ui/UpgradePanel';
 import { BuildMenu } from '../ui/BuildMenu';
+import { resetUpgrades } from '../upgrades';
 
 // HUD draws above everything (units use world-y as depth, which can exceed 1000).
 const HUD_DEPTH = 1_000_000;
@@ -51,6 +52,7 @@ export class GameScene extends Phaser.Scene {
     private playerKeepHp: number = CONFIG.keep.hp;
     private enemyKeepHp: number = CONFIG.keep.hp;
     private gameOver = false;
+    private lastResRev = -1; // last resource revision the HUD/menus rendered
 
     constructor() {
         super('Game');
@@ -72,6 +74,7 @@ export class GameScene extends Phaser.Scene {
         this.playerKeepHp = CONFIG.keep.hp;
         this.enemyKeepHp = CONFIG.keep.hp;
         this.gameOver = false;
+        this.lastResRev = -1;
 
         // Subtle colour for anything outside the world bounds.
         this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
@@ -109,11 +112,13 @@ export class GameScene extends Phaser.Scene {
                     (lx, ly, f) => this.units.resolveLongShotHit(lx, ly, f as Faction)),
         );
 
-        // Building upgrade popup (opened by tapping a player building).
-        this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units);
-
-        // Per-side stockpiles (created before the buildings so the build menu can read them).
+        // Per-side stockpiles (created before the UI/buildings that read them). Upgrades are
+        // per-match, so clear any carried-over ownership at the start of each match.
         this.resources = new ResourceStore();
+        resetUpgrades();
+
+        // Building upgrade popup (opened by tapping a player building) — now charges resources.
+        this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units, this.resources);
 
         // Buildings: the Castle keeps, the shared-upgrades building, each side's starting
         // buildings, and the empty build slots. Tapping a player producer opens its upgrades;
@@ -318,10 +323,14 @@ export class GameScene extends Phaser.Scene {
         this.playerKeepText.setText(`You ${this.playerKeepHp}`);
         this.enemyKeepText.setText(`Enemy ${this.enemyKeepHp}`);
 
-        // Stockpiles only change when a peasant banks — rebuild the text just then.
-        if (this.resources.consumeDirty()) {
+        // Stockpiles change only when a peasant banks or you spend — refresh the HUD and any
+        // open menu just then (so affordability/greyed-out states stay live).
+        if (this.resources.rev !== this.lastResRev) {
+            this.lastResRev = this.resources.rev;
             this.playerResText.setText(`You   ${this.resLine(FACTION.player)}`);
             this.enemyResText.setText(`Enemy ${this.resLine(FACTION.enemy)}`);
+            this.buildMenu.refresh();
+            this.upgradePanel.refresh();
         }
         this.layoutHud();
     }

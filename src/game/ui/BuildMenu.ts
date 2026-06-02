@@ -121,4 +121,9 @@ export class BuildMenu {
     layout() {
         if (this.isOpen) this.show(); // re-centre on resize
     }
+
+    // Re-render while open so affordability tracks the stockpile as peasants bank.
+    refresh() {
+        if (this.isOpen) this.show();
+    }
 }
