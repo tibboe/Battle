@@ -25,6 +25,8 @@ export interface UnitType {
     armour: Armour;
     scale: number;          // display scale applied to the source frame
     footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
+    // Innate special ability: 'knockback' | 'longshot' | 'block' (upgrades may extend it).
+    ability?: string;
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
     // `interval` ms (capped at the ally's max HP). Combat units omit this.
     heal?: { amount: number; interval: number };
@@ -88,7 +90,7 @@ export const CONFIG = {
         { key: 'pawn', art: 'pawn', role: 'melee',
           hp: 20, damage: 6, range: 60, attackInterval: 500, moveSpeed: 82,
           weapon: 'Light', armour: 'Unarmored', scale: 0.72, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee',
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.62, footAnchor: 0.61 },
         { key: 'archer', art: 'archer', role: 'ranged',
@@ -186,6 +188,13 @@ export const CONFIG = {
         armour: 0.8,       // your units take ×this incoming damage (lower = tougher)
         melee: 4,          // + damage for your melee units
         ranged: 4,         // + damage for your ranged units
+    },
+
+    // Unit special abilities (Phase 4). The default abilities are innate to BOTH sides; the
+    // upgrades that gate some of them are player-only (see upgrades.ts).
+    abilities: {
+        knockback: { distance: 110, cooldown: 5000 }, // Lancer shoves its target back, on a cd
+        crit: { chance: 0.25, mult: 2 },              // Lancer upgrade: chance to deal ×mult damage
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

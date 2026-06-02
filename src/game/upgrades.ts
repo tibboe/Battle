@@ -17,6 +17,7 @@ export interface UpgradeDef {
 export const UPGRADES: UpgradeDef[] = [
     { key: 'warriorHp', kind: 'warrior', label: '+Health', desc: 'Warriors spawn with more HP' },
     { key: 'archerRange', kind: 'archer', label: '+Range', desc: 'Archers engage from farther' },
+    { key: 'lancerCrit', kind: 'lancer', label: 'Crit chance', desc: 'Lancers can land critical hits' },
     { key: 'armour', kind: 'general', label: 'Armour', desc: 'Your units take less damage' },
     { key: 'melee', kind: 'general', label: 'Melee atk', desc: '+damage, your melee units' },
     { key: 'ranged', kind: 'general', label: 'Ranged atk', desc: '+damage, your ranged units' },
@@ -60,3 +61,7 @@ export function damageBonusFor(unitKey: string): number {
 }
 
 export const armourMult = () => (upgradeActive('armour') ? CONFIG.upgrades.armour : 1);
+
+// Player-only crit chance for a unit (0 if it can't crit or the upgrade is off).
+export const critChanceFor = (unitKey: string) =>
+    unitKey === 'lancer' && upgradeActive('lancerCrit') ? CONFIG.abilities.crit.chance : 0;

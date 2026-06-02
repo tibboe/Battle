@@ -87,7 +87,7 @@ export class GameScene extends Phaser.Scene {
             this,
             this.worldLayer,
             (attacker) => this.onReachKeep(attacker),
-            (x, y, amount) => this.floatingText.pop(x, y, amount),
+            (x, y, amount, color) => this.floatingText.pop(x, y, amount, color),
             (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
             (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
         );

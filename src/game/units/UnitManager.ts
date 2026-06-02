@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
-import { armourMult, damageBonusFor, hpBonusFor, rangeBonusFor } from '../upgrades';
+import { armourMult, critChanceFor, damageBonusFor, hpBonusFor, rangeBonusFor } from '../upgrades';
 import { animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
@@ -45,6 +45,7 @@ export class UnitManager {
     private readonly state: Uint8Array;
     private readonly target: Int32Array;     // index of current enemy, or -1
     private readonly attackCd: Float32Array; // ms until next strike
+    private readonly abilityCd: Float32Array; // ms until the unit's special ability is ready
     private readonly deathTimer: Float32Array; // ms left of death anim before recycle
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
@@ -63,6 +64,7 @@ export class UnitManager {
     private readonly typeFootAnchor: Float32Array;
     private readonly typeCanAttack: Uint8Array;  // 0 = never engages (support / no range)
     private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
+    private readonly typeKnockback: Uint8Array;  // 1 = shoves its target back on a cooldown
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
 
@@ -79,6 +81,7 @@ export class UnitManager {
     private readonly pRange2: Float32Array;
     private readonly pReach2: Float32Array;
     private readonly pDamageBonus: Int16Array;
+    private readonly pCritChance: Float32Array;
     private pArmourMult = 1;
 
     // Lane geometry, derived once from CONFIG.lanes (index == lane index).
@@ -107,8 +110,9 @@ export class UnitManager {
 
     // Called when a unit reaches the opposing keep (so the scene can damage it).
     private readonly onReachKeep: (attacker: Faction) => void;
-    // Emitted on each applied strike (post-matrix damage) so the scene can pop a number.
-    private readonly onDamage?: (x: number, y: number, amount: number) => void;
+    // Emitted on each applied strike (post-matrix damage) so the scene can pop a number;
+    // `color` is set for crits.
+    private readonly onDamage?: (x: number, y: number, amount: number, color?: string) => void;
     // Emitted when a ranged unit strikes, so the scene can fly a (cosmetic) projectile.
     private readonly onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
     // Emitted when a healer tops up an ally, so the scene can pop a (green) heal number.
@@ -118,7 +122,7 @@ export class UnitManager {
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         onReachKeep: (attacker: Faction) => void,
-        onDamage?: (x: number, y: number, amount: number) => void,
+        onDamage?: (x: number, y: number, amount: number, color?: string) => void,
         onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
         onHeal?: (x: number, y: number, amount: number) => void,
     ) {
@@ -136,6 +140,7 @@ export class UnitManager {
         this.state = new Uint8Array(this.capacity);
         this.target = new Int32Array(this.capacity);
         this.attackCd = new Float32Array(this.capacity);
+        this.abilityCd = new Float32Array(this.capacity);
         this.deathTimer = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
@@ -150,6 +155,7 @@ export class UnitManager {
         this.pRange2 = new Float32Array(nTypes);
         this.pReach2 = new Float32Array(nTypes);
         this.pDamageBonus = new Int16Array(nTypes);
+        this.pCritChance = new Float32Array(nTypes);
         this.typeHp = new Int16Array(nTypes);
         this.typeDamage = new Int16Array(nTypes);
         this.typeRange2 = new Float32Array(nTypes);
@@ -160,6 +166,7 @@ export class UnitManager {
         this.typeFootAnchor = new Float32Array(nTypes);
         this.typeCanAttack = new Uint8Array(nTypes);
         this.typeRanged = new Uint8Array(nTypes);
+        this.typeKnockback = new Uint8Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
         let maxRange = 1;
@@ -178,6 +185,7 @@ export class UnitManager {
             // Support units (and anything with no range) never engage — they only march.
             this.typeCanAttack[t] = ut.role !== 'support' && ut.range > 0 ? 1 : 0;
             this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
+            this.typeKnockback[t] = ut.ability === 'knockback' ? 1 : 0;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
             if (ut.range > maxRange) maxRange = ut.range;
@@ -252,6 +260,7 @@ export class UnitManager {
             this.pRange2[t] = r * r;
             this.pReach2[t] = (r + 8) * (r + 8);
             this.pDamageBonus[t] = damageBonusFor(key);
+            this.pCritChance[t] = critChanceFor(key);
         }
         this.pArmourMult = armourMult();
     }
@@ -323,6 +332,9 @@ export class UnitManager {
         this.state[i] = STATE.walk;
         this.target[i] = -1;
         this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
+        this.abilityCd[i] = this.typeKnockback[t]
+            ? Phaser.Math.FloatBetween(0, CONFIG.abilities.knockback.cooldown)
+            : 0;
         this.deathTimer[i] = 0;
         this.lane[i] = 0;
         this.type[i] = t;
@@ -444,6 +456,8 @@ export class UnitManager {
                 continue;
             }
 
+            if (this.abilityCd[i] > 0) this.abilityCd[i] -= delta; // tick special-ability cd
+
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;
                 // Funnel: drift toward the lane-path centre until within the tight path,
@@ -521,11 +535,28 @@ export class UnitManager {
                     // counter matrix, then reduced by the defender's armour; always ≥ 1.
                     const base = this.typeDamage[acting] + (atkF === FACTION.player ? this.pDamageBonus[acting] : 0);
                     let scaled = base * this.pairMul[acting * this.nTypes + this.type[t]];
+                    // Lancer crit (player upgrade): chance to multiply this hit.
+                    let crit = false;
+                    if (atkF === FACTION.player && this.pCritChance[acting] > 0 && Math.random() < this.pCritChance[acting]) {
+                        scaled *= CONFIG.abilities.crit.mult;
+                        crit = true;
+                    }
                     if (this.faction[t] === FACTION.player) scaled *= this.pArmourMult;
                     const dmg = Math.max(1, Math.round(scaled));
                     this.hp[t] -= dmg;
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
-                        this.onDamage(this.x[t], this.y[t] - 50, dmg);
+                        this.onDamage(this.x[t], this.y[t] - 50, dmg, crit ? '#ffd24a' : undefined);
+                    }
+                    // Lancer knockback (innate, both sides): shove the target back on a cd.
+                    if (this.typeKnockback[acting] && this.abilityCd[i] <= 0) {
+                        const kdir = atkF === FACTION.player ? 1 : -1;
+                        this.x[t] = Phaser.Math.Clamp(
+                            this.x[t] + kdir * CONFIG.abilities.knockback.distance,
+                            this.playerKeepX,
+                            this.enemyKeepX,
+                        );
+                        this.sprites[t]!.x = this.x[t];
+                        this.abilityCd[i] = CONFIG.abilities.knockback.cooldown;
                     }
                     // Ranged units fly a cosmetic arrow toward the struck target.
                     if (this.typeRanged[acting] && this.onShoot) {
@@ -665,6 +696,7 @@ export class UnitManager {
             this.state[i] = this.state[last];
             this.target[i] = this.target[last];
             this.attackCd[i] = this.attackCd[last];
+            this.abilityCd[i] = this.abilityCd[last];
             this.deathTimer[i] = this.deathTimer[last];
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
