@@ -16,7 +16,7 @@ const CARD_DEPTH = 1_000_002;
 const TILE_W = 150;
 const TILE_H = 46;
 const GAP = 5;
-const TOP = 46;
+const TOP = 92; // below the HUD's Dev/Fit buttons + enemy Castle health bar (right column)
 const ICON = 40;
 const MARGIN = 8;
 
@@ -86,6 +86,7 @@ export class UnitPanel {
     private cardBg!: Phaser.GameObjects.Rectangle;
     private cardHeader!: Phaser.GameObjects.Text;
     private readonly cardRows: CardRow[] = [];
+    private visible = true; // master visibility (the HUD's Dev toggle hides the whole panel)
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, units: UnitManager) {
         this.scene = scene;
@@ -275,9 +276,24 @@ export class UnitPanel {
         this.highlight();
     }
 
+    // Master show/hide, driven by the HUD's Dev toggle (keeps its open/closed + selection).
+    setVisible(v: boolean) {
+        this.visible = v;
+        this.toggle.setVisible(v);
+        if (v) {
+            this.setOpen(panelOpen);
+        } else {
+            for (const t of this.tiles) {
+                t.bg.setVisible(false); t.icon.setVisible(false); t.name.setVisible(false);
+                t.you.setVisible(false); t.foe.setVisible(false);
+            }
+            this.hideCard();
+        }
+    }
+
     // Refresh live counts (cheap; called each frame).
     update() {
-        if (!panelOpen) return;
+        if (!this.visible || !panelOpen) return;
         this.tiles.forEach((t, i) => {
             const you = String(this.units.livingTypeCount(i, FACTION.player));
             const foe = String(this.units.livingTypeCount(i, FACTION.enemy));

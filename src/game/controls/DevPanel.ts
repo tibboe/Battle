@@ -41,6 +41,7 @@ export class DevPanel {
     private readonly rowObjects: Phaser.GameObjects.Text[] = [];
     private bg!: Phaser.GameObjects.Rectangle;
     private toggle!: Phaser.GameObjects.Text;
+    private visible = true; // master visibility (the HUD's Dev toggle hides the whole panel)
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, restart: () => void) {
         this.scene = scene;
@@ -65,7 +66,7 @@ export class DevPanel {
 
     private build() {
         const x = 12;
-        const top = 46; // just below the FPS readout
+        const top = 92; // below the HUD's resource strip + Castle health bar (left column)
         const rowH = 26;
         const width = 250;
 
@@ -166,7 +167,15 @@ export class DevPanel {
     private setOpen(open: boolean) {
         panelOpen = open;
         this.toggle.setText(open ? '⚙ Dev ▾' : '⚙ Dev ▸');
-        this.bg.setVisible(open);
-        for (const o of this.rowObjects) o.setVisible(open);
+        this.bg.setVisible(this.visible && open);
+        for (const o of this.rowObjects) o.setVisible(this.visible && open);
+    }
+
+    // Master show/hide, driven by the HUD's Dev toggle (the panel keeps its open/closed state).
+    setVisible(v: boolean) {
+        this.visible = v;
+        this.toggle.setVisible(v);
+        this.bg.setVisible(v && panelOpen);
+        for (const o of this.rowObjects) o.setVisible(v && panelOpen);
     }
 }
