@@ -11,8 +11,6 @@ const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFin
 
 export function serializeSettings() {
     const lane = CONFIG.lanes[0];
-    const every: Record<string, number> = {};
-    for (const b of CONFIG.production.catalog) if (b.produces) every[b.produces] = b.every;
     const units: Record<string, Record<string, number>> = {};
     for (const u of CONFIG.unitTypes) {
         const o: Record<string, number> = {
@@ -30,7 +28,8 @@ export function serializeSettings() {
         decorations: { forest: CONFIG.decorations.forest },
         clouds: { count: CONFIG.clouds.count },
         debug: { damageNumbers: CONFIG.debug.damageNumbers },
-        production: { rateScale: CONFIG.production.rateScale, every },
+        production: { spawnSeconds: CONFIG.production.spawnSeconds },
+        combat: { attackIntervalScale: CONFIG.combat.attackIntervalScale, hpScale: CONFIG.combat.hpScale },
         units,
         upgrades: getUpgradeLevels(),
     };
@@ -85,15 +84,12 @@ export function applySavedSettings() {
     if (s.decorations && isNum(s.decorations.forest)) CONFIG.decorations.forest = s.decorations.forest;
     if (s.clouds && isNum(s.clouds.count)) CONFIG.clouds.count = s.clouds.count;
     if (s.debug && typeof s.debug.damageNumbers === 'boolean') CONFIG.debug.damageNumbers = s.debug.damageNumbers;
-    if (s.production) {
-        if (isNum(s.production.rateScale)) CONFIG.production.rateScale = s.production.rateScale;
-        if (s.production.every) {
-            for (const b of CONFIG.production.catalog) {
-                if (!b.produces) continue;
-                const e = s.production.every[b.produces];
-                if (isNum(e)) b.every = e;
-            }
-        }
+    if (s.production && isNum(s.production.spawnSeconds)) {
+        CONFIG.production.spawnSeconds = s.production.spawnSeconds;
+    }
+    if (s.combat) {
+        if (isNum(s.combat.attackIntervalScale)) CONFIG.combat.attackIntervalScale = s.combat.attackIntervalScale;
+        if (isNum(s.combat.hpScale)) CONFIG.combat.hpScale = s.combat.hpScale;
     }
     if (s.units) {
         for (const u of CONFIG.unitTypes) {

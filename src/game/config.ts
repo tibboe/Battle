@@ -136,6 +136,17 @@ export const CONFIG = {
     combat: {
         reacquireMs: 100, // how often units re-pick a target (not every frame)
         deathFadeMs: 400, // synthesised death fade-out (the pack has no death animation)
+        // Units advance on the nearest enemy within this radius (px), steering toward it in
+        // BOTH x and y until they are within strike range — so melee actually reach offset
+        // foes instead of marching straight past them. Ranged units already engage at their
+        // (longer) range, so this only changes how the short-range melee close the gap.
+        aggroRange: 220,
+        // Global multiplier on every unit's time-between-strikes (the per-type attackInterval
+        // is the base; this scales them together). >1 = slower attacks. Live Dev knob.
+        attackIntervalScale: 1.5,
+        // Global multiplier on every unit's max HP (both sides). 2 = double health. Applies to
+        // units spawned from now on when edited live. Live Dev knob.
+        hpScale: 2,
         // Counter matrix: a strike's final damage = base × matrix[weapon][targetArmour],
         // rounded. Starting values from MILESTONE_3 (tune by playing). The doc's table left
         // out a row for the Pawn's 'Light' weapon — added here; 'Blunt' is kept ready for a
@@ -192,7 +203,11 @@ export const CONFIG = {
     // spot and funnel into the lane. `art` is the pack building file; `scale` sizes it. (The
     // Castle keep is drawn separately at keepSpot.)
     production: {
-        rateScale: 1,
+        // Global spawn cadence: EVERY production building emits its unit this many seconds
+        // apart (Dev "Spawn secs"). One uniform knob replaced the old per-building rates so
+        // pacing is easy to reason about. (Each catalog entry still carries an `every`, but it
+        // is no longer what drives spawning — the cadence is global.)
+        spawnSeconds: 10,
         // The shared-upgrades building — hosts Armour/Melee/Ranged; produces no units.
         // Pre-placed both sides (its upgrades become paid in Phase 3).
         general: { art: 'House2', spot: 9, scale: 1.0 },
@@ -201,12 +216,15 @@ export const CONFIG = {
         // House produces peasants (produces:null); the rest emit their combat unit every
         // `every` ms. `cost` is deducted on purchase; `buildTime` is how long a builder
         // hammers. Tune costs/times freely — they are the player's economic decisions.
+        // `every` is retained on each entry (interface field) but no longer drives spawning —
+        // cadence is the global `spawnSeconds` above. Left uniform here to avoid implying a
+        // per-building rate.
         catalog: [
-            { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,    cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
-            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 2200, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000 },
-            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 3200, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000 },
-            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 2600, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000 },
-            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 4200, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
+            { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,     cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
+            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000 },
+            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000 },
+            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000 },
+            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
         ] as BuildingDef[],
 
         // Pre-built at match start (free, instant), per side. BOTH sides start lean and build

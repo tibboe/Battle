@@ -40,8 +40,7 @@ interface Producer {
     typeIndex: number;
     x: number;            // spawn x (the building's spot)
     y: number;            // band-clamped spawn y
-    cfg: { every: number }; // the catalog entry (read live so edits apply instantly)
-    acc: number;          // accumulator
+    acc: number;          // accumulator (ms toward the next spawn)
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -200,8 +199,8 @@ export class Buildings {
                     typeIndex,
                     x: p.x,
                     y: Phaser.Math.Clamp(p.y, this.bandTop, this.bandBottom),
-                    cfg: def, // live reference — editing `every` applies without a restart
-                    acc: Phaser.Math.FloatBetween(0, def.every),
+                    // Random initial offset so producers don't all fire on the same beat.
+                    acc: Phaser.Math.FloatBetween(0, CONFIG.production.spawnSeconds * 1000),
                 });
             }
         } else {
@@ -293,11 +292,12 @@ export class Buildings {
     }
 
     update(delta: number) {
-        const scale = Math.max(0.05, CONFIG.production.rateScale); // higher = faster
+        // One global cadence for every producer: spawn one unit each `spawnSeconds`.
+        const intervalMs = Math.max(250, CONFIG.production.spawnSeconds * 1000);
         for (const p of this.producers) {
-            p.acc += delta * scale;
-            if (p.acc >= p.cfg.every) {
-                p.acc -= p.cfg.every;
+            p.acc += delta;
+            if (p.acc >= intervalMs) {
+                p.acc -= intervalMs;
                 this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y);
             }
         }

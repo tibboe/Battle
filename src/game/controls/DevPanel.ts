@@ -50,7 +50,9 @@ export class DevPanel {
 
         // The tunables exposed. Structural ones (live:false) rebuild on restart.
         this.settings = [
-            { label: 'Prod rate', get: () => CONFIG.production.rateScale, set: (v) => (CONFIG.production.rateScale = v), step: 0.25, min: 0.25, max: 4, live: true, fmt: (v) => `${v}×` },
+            { label: 'Spawn secs', get: () => CONFIG.production.spawnSeconds, set: (v) => (CONFIG.production.spawnSeconds = v), step: 1, min: 1, max: 30, live: true, fmt: (v) => `${v}s` },
+            { label: 'Atk interval', get: () => CONFIG.combat.attackIntervalScale, set: (v) => (CONFIG.combat.attackIntervalScale = v), step: 0.25, min: 0.5, max: 4, live: true, fmt: (v) => `${v}×` },
+            { label: 'Unit HP', get: () => CONFIG.combat.hpScale, set: (v) => (CONFIG.combat.hpScale = v), step: 0.5, min: 0.5, max: 5, live: true, fmt: (v) => `${v}×` },
             { label: 'Lane width', get: () => CONFIG.lanes[0].pathWidth, set: (v) => (CONFIG.lanes[0].pathWidth = v), step: 20, min: 40, max: 600, live: true },
             { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },

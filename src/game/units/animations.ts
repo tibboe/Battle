@@ -28,8 +28,8 @@ const FACTION_DIR = {
 export type FactionName = keyof typeof FACTION_DIR;
 
 // Logical animation states the game can play. `death` is synthesised (no frames); `heal`
-// is loaded for the Monk but only used from Phase 2.
-export type UnitAnim = 'walk' | 'attack' | 'heal';
+// is the Monk's gesture; `block` is the Warrior's guard pose (played once when it blocks).
+export type UnitAnim = 'walk' | 'attack' | 'heal' | 'block';
 
 // One source strip: file (inside the type's folder), frame count, playback rate.
 interface Strip {
@@ -52,6 +52,7 @@ const UNIT_ART: Record<string, UnitArt> = {
         states: {
             walk: { file: 'Warrior_Run.png', frames: 6, frameRate: 14 },
             attack: { file: 'Warrior_Attack1.png', frames: 4, frameRate: 12 },
+            block: { file: 'Warrior_Guard.png', frames: 6, frameRate: 14 },
         },
     },
     // (The Pawn is no longer a combat type — Milestone 4 turns it into the worker/peasant.
@@ -139,8 +140,8 @@ export function registerUnitAnimations(scene: Phaser.Scene) {
                     key,
                     frames: scene.anims.generateFrameNumbers(key, { start: 0, end: strip.frames - 1 }),
                     frameRate: strip.frameRate,
-                    // walk/attack loop (attack loops while engaged); heal plays once.
-                    repeat: anim === 'heal' ? 0 : -1,
+                    // walk/attack loop (attack loops while engaged); heal/block play once.
+                    repeat: anim === 'heal' || anim === 'block' ? 0 : -1,
                 });
             }
         }

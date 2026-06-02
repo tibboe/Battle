@@ -7,8 +7,9 @@ import { saveSettings } from '../settings';
 // A right-edge roster panel (a builder/inspector aid, like the Dev panel). One tile per
 // unit type: a small animated icon, the name, and the LIVE count of that type on each side
 // (azure = you, crimson = enemy). Tap a tile to open an EDITABLE stats card — step HP,
-// damage, range, attack & spawn cadence (in seconds), move speed, and (Monk) heal up/down.
-// Edits apply live and are saved to localStorage. Lives on the UI layer (screen-fixed).
+// damage, range, attack cadence (in seconds), move speed, and (Monk) heal up/down. Edits
+// apply live and are saved to localStorage. (Spawn cadence is now global — Dev "Spawn secs".)
+// Lives on the UI layer (screen-fixed).
 
 const PANEL_DEPTH = 1_000_000;
 const CARD_DEPTH = 1_000_002;
@@ -31,11 +32,6 @@ let selected = -1;
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const mul = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 
-// The catalog entry whose building makes unit `i` (for editing its spawn interval). Editing
-// `every` here affects both this side's producer and the build catalog (one source of truth).
-const buildingOf = (i: number) =>
-    CONFIG.production.catalog.find((b) => b.produces === CONFIG.unitTypes[i].key);
-
 // One editable stat row. `get`/`set` operate on CONFIG for the selected unit index.
 interface StatField {
     label: string;
@@ -56,7 +52,6 @@ const FIELDS: StatField[] = [
     { label: 'Range', step: 10, min: 10, max: 480, get: (i) => CONFIG.unitTypes[i].range, set: (i, v) => (CONFIG.unitTypes[i].range = v) },
     { label: 'Attack', step: 0.05, min: 0.05, max: 5, fmt: secs, get: (i) => CONFIG.unitTypes[i].attackInterval / 1000, set: (i, v) => (CONFIG.unitTypes[i].attackInterval = Math.round(v * 1000)) },
     { label: 'Speed', step: 5, min: 10, max: 200, get: (i) => CONFIG.unitTypes[i].moveSpeed, set: (i, v) => (CONFIG.unitTypes[i].moveSpeed = v) },
-    { label: 'Spawn', step: 0.25, min: 0.25, max: 15, fmt: secs, get: (i) => (buildingOf(i)?.every ?? 0) / 1000, set: (i, v) => { const b = buildingOf(i); if (b) b.every = Math.round(v * 1000); } },
     { label: 'Heal', step: 1, min: 0, max: 50, monkOnly: true, get: (i) => CONFIG.unitTypes[i].heal?.amount ?? 0, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.amount = v; } },
     { label: 'Heal int', step: 0.1, min: 0.2, max: 10, monkOnly: true, fmt: secs, get: (i) => (CONFIG.unitTypes[i].heal?.interval ?? 0) / 1000, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.interval = Math.round(v * 1000); } },
 ];
