@@ -84,7 +84,7 @@ export const CONFIG = {
     // sensible starting points to tune by playing. Weapon×armour counters, the Archer's
     // arrow, and the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee',
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block',
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
         { key: 'pawn', art: 'pawn', role: 'melee',
@@ -195,6 +195,7 @@ export const CONFIG = {
     abilities: {
         knockback: { distance: 110, cooldown: 5000 }, // Lancer shoves its target back, on a cd
         crit: { chance: 0.25, mult: 2 },              // Lancer upgrade: chance to deal ×mult damage
+        block: { chance: 0.2 },                       // Warrior: chance to fully negate a hit it takes
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

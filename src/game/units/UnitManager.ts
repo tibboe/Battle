@@ -65,6 +65,7 @@ export class UnitManager {
     private readonly typeCanAttack: Uint8Array;  // 0 = never engages (support / no range)
     private readonly typeRanged: Uint8Array;     // 1 = fires a projectile on the strike beat
     private readonly typeKnockback: Uint8Array;  // 1 = shoves its target back on a cooldown
+    private readonly typeBlockChance: Float32Array; // chance to fully negate an incoming hit
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
 
@@ -117,6 +118,8 @@ export class UnitManager {
     private readonly onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
     // Emitted when a healer tops up an ally, so the scene can pop a (green) heal number.
     private readonly onHeal?: (x: number, y: number, amount: number) => void;
+    // Emitted when a unit blocks a hit, so the scene can pop a "block" indicator.
+    private readonly onBlock?: (x: number, y: number) => void;
 
     constructor(
         scene: Phaser.Scene,
@@ -125,11 +128,13 @@ export class UnitManager {
         onDamage?: (x: number, y: number, amount: number, color?: string) => void,
         onShoot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
         onHeal?: (x: number, y: number, amount: number) => void,
+        onBlock?: (x: number, y: number) => void,
     ) {
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
         this.onShoot = onShoot;
         this.onHeal = onHeal;
+        this.onBlock = onBlock;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -167,6 +172,7 @@ export class UnitManager {
         this.typeCanAttack = new Uint8Array(nTypes);
         this.typeRanged = new Uint8Array(nTypes);
         this.typeKnockback = new Uint8Array(nTypes);
+        this.typeBlockChance = new Float32Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
         let maxRange = 1;
@@ -186,6 +192,7 @@ export class UnitManager {
             this.typeCanAttack[t] = ut.role !== 'support' && ut.range > 0 ? 1 : 0;
             this.typeRanged[t] = ut.role === 'ranged' ? 1 : 0;
             this.typeKnockback[t] = ut.ability === 'knockback' ? 1 : 0;
+            this.typeBlockChance[t] = ut.ability === 'block' ? CONFIG.abilities.block.chance : 0;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
             if (ut.range > maxRange) maxRange = ut.range;
@@ -531,6 +538,12 @@ export class UnitManager {
                 const dy = this.y[t] - this.y[i];
                 if (dx * dx + dy * dy <= reach2) {
                     this.attackCd[i] += this.typeAttackInterval[acting];
+                    // Defender's block (innate, both sides): chance to fully negate the hit.
+                    const blockChance = this.typeBlockChance[this.type[t]];
+                    if (blockChance > 0 && Math.random() < blockChance) {
+                        if (this.onBlock && CONFIG.debug.damageNumbers) this.onBlock(this.x[t], this.y[t] - 50);
+                        continue;
+                    }
                     // Base damage (+ the attacker's melee/ranged upgrade) scaled by the
                     // counter matrix, then reduced by the defender's armour; always ≥ 1.
                     const base = this.typeDamage[acting] + (atkF === FACTION.player ? this.pDamageBonus[acting] : 0);

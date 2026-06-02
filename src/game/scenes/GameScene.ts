@@ -90,6 +90,7 @@ export class GameScene extends Phaser.Scene {
             (x, y, amount, color) => this.floatingText.pop(x, y, amount, color),
             (x0, y0, x1, y1, faction) => this.projectiles.fire(x0, y0, x1, y1, faction),
             (x, y, amount) => this.floatingText.pop(x, y, amount, '#7be08a'), // green heals
+            (x, y) => this.floatingText.pop(x, y, 'block', '#bcd4e6'), // block indicator
         );
 
         // Building upgrade popup (opened by tapping a player building).

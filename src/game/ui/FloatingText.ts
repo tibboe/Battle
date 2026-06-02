@@ -35,8 +35,9 @@ export class FloatingText {
         }
     }
 
-    // Pop a number just above (x, y). Round-robin; if every slot is busy the oldest is reused.
-    pop(x: number, y: number, value: number, color = '#ffffff') {
+    // Pop a number (or short label) just above (x, y). Round-robin; if every slot is busy
+    // the oldest is reused.
+    pop(x: number, y: number, value: number | string, color = '#ffffff') {
         const i = this.next;
         this.next = (this.next + 1) % POOL;
         const t = this.texts[i];
