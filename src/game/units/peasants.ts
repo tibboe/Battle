@@ -76,8 +76,7 @@ export function registerPeasantAnimations(scene: Phaser.Scene) {
 const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4, Flee: 5 } as const;
 type State = (typeof State)[keyof typeof State];
 
-// Each House's workers cycle through the resources in this order.
-const ROTATION: ResourceType[] = ['gold', 'wood', 'stone'];
+const RESOURCES: ResourceType[] = ['gold', 'wood', 'stone'];
 
 interface Peasant {
     faction: Faction;
@@ -106,13 +105,20 @@ export class PeasantManager {
 
     private peasants: Peasant[] = [];
     private removeDead = false; // set when a worker dies, so we prune the array after stepping
-    // Per faction, per house: workers alive, the rotation cursor, and a refill timer used when
-    // a House is below perHouse. `houseCount` tracks how many Houses we have staffed so far so
-    // newly built Houses get picked up.
+    // Per faction, per house: workers alive and a refill timer used when a House is below
+    // perHouse. `houseCount` tracks how many Houses we have staffed so newly built Houses get
+    // picked up.
     private readonly alive: [number[], number[]] = [[], []];
-    private readonly cursor: [number[], number[]] = [[], []];
     private readonly refill: [number[], number[]] = [[], []];
     private readonly houseCount: [number, number] = [0, 0];
+
+    // Desired number of workers on each resource, per side. The player steers theirs from the
+    // HUD's +/- (see adjustTarget); the enemy keeps an even split. Workers re-pick their
+    // resource toward these targets each gather cycle (and immediately when a node runs dry).
+    private readonly targets: [Record<ResourceType, number>, Record<ResourceType, number>] = [
+        { gold: 1, wood: 1, stone: 1 },
+        { gold: 1, wood: 1, stone: 1 },
+    ];
 
     constructor(
         scene: Phaser.Scene,
@@ -139,17 +145,71 @@ export class PeasantManager {
         while (this.houseCount[faction] < houses.length) {
             const h = this.houseCount[faction];
             this.alive[faction][h] = 0;
-            this.cursor[faction][h] = 0;
             this.refill[faction][h] = 0;
             this.houseCount[faction] = h + 1;
             for (let n = 0; n < CONFIG.peasant.perHouse; n++) this.spawn(faction, h);
         }
     }
 
+    // ---- Resource allocation ----
+
+    // Live worker count on each resource for a side.
+    private counts(faction: Faction): Record<ResourceType, number> {
+        const c: Record<ResourceType, number> = { gold: 0, wood: 0, stone: 0 };
+        for (const p of this.peasants) if (!p.dead && p.faction === faction) c[p.resource]++;
+        return c;
+    }
+
+    // The resource a free worker should take: the one most under its target (preferring ones
+    // that still have live nodes); once every target is met, the least-staffed one (even split).
+    private pickResource(faction: Faction): ResourceType {
+        const c = this.counts(faction);
+        const t = this.targets[faction];
+        let cands = RESOURCES.filter((r) => this.nodes.anyLive(r));
+        if (!cands.length) cands = RESOURCES; // everything drained — assign anyway, it'll idle
+        let best = cands[0];
+        let bestDef = -Infinity;
+        for (const r of cands) {
+            const def = t[r] - c[r];
+            if (def > bestDef) { bestDef = def; best = r; }
+        }
+        if (bestDef <= 0) {
+            let min = Infinity;
+            for (const r of cands) if (c[r] < min) { min = c[r]; best = r; }
+        }
+        return best;
+    }
+
+    // Re-pick a worker's resource only when it's over-allocated or its resource has run dry —
+    // so allocation converges toward the targets without workers thrashing every trip.
+    private rebalance(p: Peasant) {
+        const c = this.counts(p.faction);
+        if (c[p.resource] > this.targets[p.faction][p.resource] || !this.nodes.anyLive(p.resource)) {
+            p.resource = this.pickResource(p.faction);
+            p.node = undefined;
+        }
+    }
+
+    // The player's HUD +/- steers the target split; nudge currently-seeking workers right away
+    // so it feels responsive (counts() reflects each reassignment as we go, so it self-limits).
+    adjustTarget(faction: Faction, res: ResourceType, delta: number) {
+        const t = this.targets[faction];
+        t[res] = Phaser.Math.Clamp(t[res] + delta, 0, 20);
+        for (const p of this.peasants) {
+            if (p.faction !== faction || p.dead || p.state !== State.Seek) continue;
+            const np = this.pickResource(faction);
+            if (np !== p.resource) { p.resource = np; p.node = undefined; }
+        }
+    }
+
+    // Live worker count on a resource (for the HUD readout).
+    workerCount(faction: Faction, res: ResourceType): number {
+        return this.counts(faction)[res];
+    }
+
     private spawn(faction: Faction, house: number) {
         const home = this.buildings.housePositions(faction)[house];
-        const resource = ROTATION[this.cursor[faction][house] % ROTATION.length];
-        this.cursor[faction][house]++;
+        const resource = this.pickResource(faction);
 
         const jx = Phaser.Math.Between(-24, 24);
         const jy = Phaser.Math.Between(-12, 12);
@@ -251,9 +311,13 @@ export class PeasantManager {
 
         switch (p.state) {
             case State.Seek: {
-                if (!p.node || !p.node.alive) p.node = this.nodes.nearest(p.resource, p.x, p.y);
+                if (!p.node || !p.node.alive) {
+                    // If this resource has been fully mined out, switch to one that still has nodes.
+                    if (!this.nodes.anyLive(p.resource)) this.rebalance(p);
+                    p.node = this.nodes.nearest(p.resource, p.x, p.y);
+                }
                 if (!p.node) {
-                    // Nothing of this type left — idle in place (Phase 1 safe nodes never run out).
+                    // Every resource drained — idle in place.
                     this.setAnim(p, 'walk');
                     break;
                 }
@@ -294,6 +358,7 @@ export class PeasantManager {
                 if (p.timer >= CONFIG.peasant.bankTime) {
                     this.store.add(p.faction, p.resource, p.carrying);
                     p.carrying = 0;
+                    this.rebalance(p); // converge toward the target split as workers recycle
                     p.state = State.Seek;
                     this.setAnim(p, 'walk');
                 }

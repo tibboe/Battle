@@ -94,6 +94,7 @@ export class GameScene extends Phaser.Scene {
             this.uiLayer,
             () => this.cameraController.fitToMap(),
             (on) => this.setDevTools(on),
+            (res, delta) => this.peasants.adjustTarget(FACTION.player, res, delta),
         );
 
         // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
@@ -266,6 +267,11 @@ export class GameScene extends Phaser.Scene {
             playerHp: this.playerKeepHp,
             enemyHp: this.enemyKeepHp,
             maxHp: CONFIG.keep.hp,
+            workers: {
+                gold: this.peasants.workerCount(FACTION.player, 'gold'),
+                wood: this.peasants.workerCount(FACTION.player, 'wood'),
+                stone: this.peasants.workerCount(FACTION.player, 'stone'),
+            },
         });
 
         // When the stockpile changes (a peasant banks, or you spend), refresh any open menu so

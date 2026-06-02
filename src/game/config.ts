@@ -293,17 +293,32 @@ export const CONFIG = {
     // (visible, fought over later). `scale` sizes each node's art by type.
     nodes: {
         scale: { gold: 0.55, stone: 0.95, wood: 0.85 },
-        finiteAmount: 600,
+        finiteAmount: 600, // every node now holds this and depletes (Milestone 4 tuning)
+        // ALL nodes are finite now, so concentrating workers on one resource drains it and you
+        // must spread out / push for the contested centre. Each base gets a CLUSTER of three of
+        // each resource (in its back corners, off the lane) so it doesn't starve too fast.
         list: [
-            // Player safe (left base, off-lane).
-            { type: 'gold',  x: 760,  y: 640,  finite: false },
-            { type: 'stone', x: 600,  y: 1240, finite: false },
-            { type: 'wood',  x: 980,  y: 1300, finite: false },
-            // Enemy safe (right base, mirrored).
-            { type: 'gold',  x: 3240, y: 640,  finite: false },
-            { type: 'stone', x: 3400, y: 1240, finite: false },
-            { type: 'wood',  x: 3020, y: 1300, finite: false },
-            // Contested mid-field — richer, finite (reward holding the centre).
+            // ---- Player base (left): gold up-back, stone down-back, wood down-front ----
+            { type: 'gold',  x: 700,  y: 560,  finite: true },
+            { type: 'gold',  x: 840,  y: 540,  finite: true },
+            { type: 'gold',  x: 600,  y: 650,  finite: true },
+            { type: 'stone', x: 560,  y: 1300, finite: true },
+            { type: 'stone', x: 700,  y: 1360, finite: true },
+            { type: 'stone', x: 520,  y: 1180, finite: true },
+            { type: 'wood',  x: 1040, y: 1300, finite: true },
+            { type: 'wood',  x: 1140, y: 1220, finite: true },
+            { type: 'wood',  x: 940,  y: 1380, finite: true },
+            // ---- Enemy base (right): mirrored ----
+            { type: 'gold',  x: 3300, y: 560,  finite: true },
+            { type: 'gold',  x: 3160, y: 540,  finite: true },
+            { type: 'gold',  x: 3400, y: 650,  finite: true },
+            { type: 'stone', x: 3440, y: 1300, finite: true },
+            { type: 'stone', x: 3300, y: 1360, finite: true },
+            { type: 'stone', x: 3480, y: 1180, finite: true },
+            { type: 'wood',  x: 2960, y: 1300, finite: true },
+            { type: 'wood',  x: 2860, y: 1220, finite: true },
+            { type: 'wood',  x: 3060, y: 1380, finite: true },
+            // ---- Contested mid-field (reward holding the centre) ----
             { type: 'gold',  x: 1820, y: 600,  finite: true },
             { type: 'stone', x: 2180, y: 600,  finite: true },
             { type: 'wood',  x: 2000, y: 1320, finite: true },

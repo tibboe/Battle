@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG } from '../config';
+import { CONFIG, ResourceType } from '../config';
 import { ResourceBag } from '../economy/ResourceStore';
 
 // The player-facing HUD (the M4 HUD pass): a clean resource readout with icons, both Castles'
@@ -39,7 +39,10 @@ export interface HudData {
     playerHp: number;
     enemyHp: number;
     maxHp: number;
+    workers: Record<ResourceType, number>; // player's live worker count per resource
 }
+
+const RES_ORDER: ResourceType[] = ['gold', 'stone', 'wood'];
 
 export function loadHud(scene: Phaser.Scene) {
     for (const [k, path] of Object.entries(ICONS)) scene.load.image(iconKey(k), encodeURI(path));
@@ -56,9 +59,18 @@ export class Hud {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly onDev: (on: boolean) => void;
+    private readonly onPeasantAdjust: (res: ResourceType, delta: number) => void;
 
     private resBg!: Phaser.GameObjects.Rectangle;
     private readonly counts: Record<string, Phaser.GameObjects.Text> = {};
+
+    // Top-centre peasant-allocation strip: per-resource worker count with −/+.
+    private workBg!: Phaser.GameObjects.Rectangle;
+    private workLabel!: Phaser.GameObjects.Text;
+    private readonly workCounts: Record<string, Phaser.GameObjects.Text> = {};
+    private readonly workIcons: Phaser.GameObjects.Image[] = [];
+    private readonly workMinus: Phaser.GameObjects.Text[] = [];
+    private readonly workPlus: Phaser.GameObjects.Text[] = [];
     private playerBar!: Bar;
     private enemyBar!: Bar;
     private fitBtn!: Phaser.GameObjects.Text;
@@ -72,13 +84,16 @@ export class Hud {
         layer: Phaser.GameObjects.Layer,
         onFit: () => void,
         onDev: (on: boolean) => void,
+        onPeasantAdjust: (res: ResourceType, delta: number) => void,
     ) {
         this.scene = scene;
         this.layer = layer;
         this.onDev = onDev;
+        this.onPeasantAdjust = onPeasantAdjust;
         this.devOnState = readDev();
 
         this.buildResourceStrip();
+        this.buildPeasantStrip();
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
 
@@ -112,6 +127,40 @@ export class Hud {
             this.layer.add([icon, count]);
             this.counts[k] = count;
         });
+    }
+
+    private buildPeasantStrip() {
+        this.workBg = this.scene.add.rectangle(0, 8, 320, 34, 0x000000, 0.55)
+            .setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0xffffff, 0.12);
+        this.layer.add(this.workBg);
+
+        this.workLabel = this.scene.add.text(0, 0, '👷', { fontFamily: 'monospace', fontSize: '16px', color: '#cfe6ff' })
+            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+        this.layer.add(this.workLabel);
+
+        RES_ORDER.forEach((res) => {
+            const icon = this.scene.add.image(0, 0, iconKey(res))
+                .setOrigin(0, 0.5).setDisplaySize(18, 18).setScrollFactor(0).setDepth(DEPTH + 1);
+            const count = this.scene.add.text(0, 0, '0', { fontFamily: 'monospace', fontSize: '15px', color: '#ffffff' })
+                .setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+            const minus = this.mkStepBtn('−', () => this.onPeasantAdjust(res, -1));
+            const plus = this.mkStepBtn('+', () => this.onPeasantAdjust(res, +1));
+            this.layer.add([icon, count, minus, plus]);
+            this.workIcons.push(icon);
+            this.workCounts[res] = count;
+            this.workMinus.push(minus);
+            this.workPlus.push(plus);
+        });
+    }
+
+    private mkStepBtn(text: string, onTap: () => void) {
+        const b = this.scene.add.text(0, 0, text, {
+            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff',
+            backgroundColor: '#3a4350', padding: { x: 6, y: 2 },
+        }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DEPTH + 1).setInteractive({ useHandCursor: true });
+        b.on('pointerup', onTap);
+        this.layer.add(b);
+        return b;
     }
 
     private buildBar(label: string, color: string): Bar {
@@ -161,6 +210,8 @@ export class Hud {
         this.counts.stone.setText(String(d.player.stone));
         this.counts.wood.setText(String(d.player.wood));
 
+        for (const res of RES_ORDER) this.workCounts[res].setText(String(d.workers[res]));
+
         this.setBar(this.playerBar, d.playerHp, d.maxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
 
@@ -183,6 +234,22 @@ export class Hud {
     layout() {
         const w = this.scene.scale.width;
         const h = this.scene.scale.height;
+
+        // Peasant-allocation strip, centred along the top (between resources and the buttons).
+        const groupW = 96;
+        const labelW = 26;
+        const panelW = labelW + groupW * RES_ORDER.length;
+        const px = (w - panelW) / 2;
+        const cy = 8 + 17;
+        this.workBg.setPosition(px - 8, 8).setSize(panelW + 16, 34);
+        this.workLabel.setPosition(px, cy);
+        RES_ORDER.forEach((res, i) => {
+            const gx = px + labelW + i * groupW;
+            this.workIcons[i].setPosition(gx, cy);
+            this.workCounts[res].setPosition(gx + 30, cy);
+            this.workMinus[i].setPosition(gx + 52, cy);
+            this.workPlus[i].setPosition(gx + 76, cy);
+        });
 
         // Top-right buttons: Fit, then Dev to its left.
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);

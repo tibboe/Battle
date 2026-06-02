@@ -66,6 +66,13 @@ export class ResourceNodes {
         }
     }
 
+    // Is any node of `type` still alive? (Used by the peasant allocator to avoid sending
+    // workers to a fully-drained resource.)
+    anyLive(type: ResourceType): boolean {
+        for (const n of this.nodes) if (n.alive && n.type === type) return true;
+        return false;
+    }
+
     // Nearest live node of `type` to (x, y), or undefined if all of that type are drained.
     nearest(type: ResourceType, x: number, y: number): ResourceNode | undefined {
         let best: ResourceNode | undefined;
