@@ -373,6 +373,24 @@ export const CONFIG = {
         // Peasant flee-burst upgrade: while fleeing a nearby enemy, sprint at ×mult for
         // `duration` ms, then `cooldown` ms before it can burst again.
         peasantFlee: { mult: 1.9, duration: 1500, cooldown: 6000 },
+        // Arrow Volley (player-cast skill): the player selects the skill, then taps the field;
+        // `arrows` arrows rain from the sky across a circle of `radius` around that point over
+        // `duration` ms. Each arrow only damages the nearest opposing unit within `hitRadius` of
+        // where it lands (arrows that hit empty ground do nothing), dealing `damage` each.
+        // `cooldown` ms must pass before it can be cast again. `skyHeight`/`skySpread` shape the
+        // "from the sky" launch (how far up / to the side each arrow starts); `fallSpeed` is the
+        // arrow travel speed.
+        arrowVolley: {
+            arrows: 50,
+            damage: 8,
+            radius: 200,
+            hitRadius: 30,
+            cooldown: 12000,
+            duration: 1200,
+            skyHeight: 1000,
+            skySpread: 320,
+            fallSpeed: 1300,
+        },
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

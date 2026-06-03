@@ -15,7 +15,9 @@ import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { SelectionHud } from '../ui/SelectionHud';
+import { SkillBar } from '../ui/SkillBar';
 import { Hud, loadHud } from '../ui/Hud';
+import { Abilities } from '../abilities/Abilities';
 import { EnemyAI } from '../ai/EnemyAI';
 import { resetUpgrades } from '../upgrades';
 
@@ -32,12 +34,20 @@ export class GameScene extends Phaser.Scene {
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
     private selectionHud!: SelectionHud;
+    private skillBar!: SkillBar;
+    private abilities!: Abilities;
     private devPanel!: DevPanel;
     private hud!: Hud;
     private resources!: ResourceStore;
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
+
+    // Skill targeting: when a skill is armed, the next field tap casts it at that point. A
+    // full-field overlay captures that tap; a ring follows the pointer to preview the area.
+    private armedSkill?: string;
+    private targetCatcher!: Phaser.GameObjects.Rectangle;
+    private targetRing!: Phaser.GameObjects.Arc;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -136,11 +146,40 @@ export class GameScene extends Phaser.Scene {
         // Unified bottom selection HUD (replaces the old upgrade + build popups).
         this.selectionHud = new SelectionHud(this, this.uiLayer, this.worldLayer, this.units, this.resources, this.buildings);
 
+        // Player-cast skills: the manager (cooldowns + the arrow rain) and the left-edge dock.
+        this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units);
+        this.skillBar = new SkillBar(this, this.uiLayer, (key) => this.toggleSkillTargeting(key));
+
         // Tap blank ground to clear the selection (a tap, not a camera-drag).
         const catcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
             .setOrigin(0, 0).setDepth(-100).setInteractive();
         this.worldLayer.add(catcher);
         catcher.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectionHud.clear(); });
+
+        // Skill targeting: a full-field overlay (above units/buildings) that captures the cast
+        // tap while a skill is armed, plus a ring that previews the target area under the pointer.
+        this.targetRing = this.add.circle(0, 0, CONFIG.abilities.arrowVolley.radius)
+            .setStrokeStyle(3, 0xffe08a, 0.9).setFillStyle(0xffe08a, 0.08)
+            .setDepth(CONFIG.world.height + 2500).setVisible(false);
+        this.worldLayer.add(this.targetRing);
+        this.targetCatcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
+            .setOrigin(0, 0).setDepth(CONFIG.world.height + 2400).setVisible(false);
+        this.worldLayer.add(this.targetCatcher);
+        this.targetCatcher.disableInteractive();
+        this.targetCatcher.on('pointerup', (p: Phaser.Input.Pointer) => {
+            if (!this.armedSkill) return;
+            // A drag is a camera pan — stay armed so the player can line up the shot, then tap.
+            if (p.getDistance() >= 14) return;
+            const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+            this.castArmedSkill(wp.x, wp.y);
+            this.cancelSkillTargeting();
+        });
+        // While armed, the preview ring tracks the pointer across the field.
+        this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+            if (!this.armedSkill) return;
+            const wp = this.cameras.main.getWorldPoint(p.x, p.y);
+            this.targetRing.setPosition(wp.x, wp.y);
+        });
 
         // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
         // Peasants bank at each side's Castle and (Phase 2) build new structures on slots.
@@ -239,11 +278,42 @@ export class GameScene extends Phaser.Scene {
         this.unitPanel.setVisible(on);
     }
 
+    // ---- Skill targeting (arm a skill, then the next field tap casts it) ----
+
+    // Tapping a skill arms it; tapping the same armed skill again cancels. Won't arm a skill
+    // that is still cooling down.
+    private toggleSkillTargeting(key: string) {
+        if (this.armedSkill === key) {
+            this.cancelSkillTargeting();
+            return;
+        }
+        if (key === 'arrowVolley' && !this.abilities.volleyReady) return;
+
+        this.armedSkill = key;
+        this.skillBar.setArmed(key);
+        this.targetRing.setRadius(CONFIG.abilities.arrowVolley.radius).setVisible(true);
+        this.targetCatcher.setVisible(true).setInteractive();
+    }
+
+    private cancelSkillTargeting() {
+        this.armedSkill = undefined;
+        this.skillBar.setArmed(undefined);
+        this.targetRing.setVisible(false);
+        this.targetCatcher.disableInteractive().setVisible(false);
+    }
+
+    private castArmedSkill(x: number, y: number) {
+        if (this.armedSkill === 'arrowVolley') {
+            this.abilities.castArrowVolley(FACTION.player, x, y);
+        }
+    }
+
     private onResize() {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.hud.layout();
         this.unitPanel.layout();
         this.selectionHud.layout();
+        this.skillBar.layout();
         this.cameraController.handleResize();
     }
 
@@ -255,9 +325,17 @@ export class GameScene extends Phaser.Scene {
             this.peasants.update(delta);
             this.buildings.update(delta);
         }
+        if (!this.gameOver) this.abilities.update(delta);
         this.floatingText.update(delta);
         this.projectiles.update(delta);
         this.unitPanel.update();
+        this.skillBar.update({
+            arrowVolley: {
+                ready: this.abilities.volleyReady,
+                frac: this.abilities.volleyCooldownFrac,
+                seconds: this.abilities.volleyCooldownSeconds,
+            },
+        });
 
         this.hud.update({
             fps: Math.round(this.game.loop.actualFps),

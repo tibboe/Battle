@@ -394,6 +394,32 @@ export class UnitManager {
         if (this.hp[best] <= 0) this.kill(best);
     }
 
+    // Called when an Arrow Volley arrow lands at (x, y). `caster` is the side that cast the
+    // volley; the arrow damages the nearest OPPOSING unit within the volley's hitRadius (flat,
+    // tunable damage) — arrows landing on empty ground or on friendlies do nothing. Returns
+    // true if it actually struck a unit.
+    resolveVolleyHit(x: number, y: number, caster: Faction): boolean {
+        const av = CONFIG.abilities.arrowVolley;
+        let best = -1;
+        let bestD2 = av.hitRadius * av.hitRadius;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === caster) continue;
+            const dx = this.x[j] - x;
+            const dy = this.y[j] - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= bestD2) {
+                bestD2 = d2;
+                best = j;
+            }
+        }
+        if (best < 0) return false; // hit empty ground
+        const dmg = Math.max(1, Math.round(av.damage));
+        this.hp[best] -= dmg;
+        if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
+        if (this.hp[best] <= 0) this.kill(best);
+        return true;
+    }
+
     // Max HP of a unit, including the player's +Health upgrade and the global HP scale (so
     // heals and the health bar use the real maximum, not the base value).
     private maxHpOf(j: number): number {
