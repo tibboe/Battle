@@ -7,8 +7,9 @@ import { saveSettings } from '../settings';
 // A right-edge roster panel (a builder/inspector aid, like the Dev panel). One tile per
 // unit type: a small animated icon, the name, and the LIVE count of that type on each side
 // (azure = you, crimson = enemy). Tap a tile to open an EDITABLE stats card — step HP,
-// damage, range, attack & spawn cadence (in seconds), move speed, and (Monk) heal up/down.
-// Edits apply live and are saved to localStorage. Lives on the UI layer (screen-fixed).
+// damage, range, attack cadence (in seconds), move speed, and (Monk) heal up/down. Edits
+// apply live and are saved to localStorage. (Spawn cadence is now global — Dev "Spawn secs".)
+// Lives on the UI layer (screen-fixed).
 
 const PANEL_DEPTH = 1_000_000;
 const CARD_DEPTH = 1_000_002;
@@ -16,7 +17,7 @@ const CARD_DEPTH = 1_000_002;
 const TILE_W = 150;
 const TILE_H = 46;
 const GAP = 5;
-const TOP = 46;
+const TOP = 92; // below the HUD's Dev/Fit buttons + enemy Castle health bar (right column)
 const ICON = 40;
 const MARGIN = 8;
 
@@ -30,10 +31,6 @@ let selected = -1;
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const mul = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
-
-// The production building that makes unit `i` (for editing its spawn interval).
-const buildingOf = (i: number) =>
-    CONFIG.production.buildings.find((b) => b.produces === CONFIG.unitTypes[i].key);
 
 // One editable stat row. `get`/`set` operate on CONFIG for the selected unit index.
 interface StatField {
@@ -55,7 +52,8 @@ const FIELDS: StatField[] = [
     { label: 'Range', step: 10, min: 10, max: 480, get: (i) => CONFIG.unitTypes[i].range, set: (i, v) => (CONFIG.unitTypes[i].range = v) },
     { label: 'Attack', step: 0.05, min: 0.05, max: 5, fmt: secs, get: (i) => CONFIG.unitTypes[i].attackInterval / 1000, set: (i, v) => (CONFIG.unitTypes[i].attackInterval = Math.round(v * 1000)) },
     { label: 'Speed', step: 5, min: 10, max: 200, get: (i) => CONFIG.unitTypes[i].moveSpeed, set: (i, v) => (CONFIG.unitTypes[i].moveSpeed = v) },
-    { label: 'Spawn', step: 0.25, min: 0.25, max: 15, fmt: secs, get: (i) => (buildingOf(i)?.every ?? 0) / 1000, set: (i, v) => { const b = buildingOf(i); if (b) b.every = Math.round(v * 1000); } },
+    { label: 'Size', step: 0.05, min: 0.3, max: 1.6, fmt: (v) => `${v.toFixed(2)}×`, get: (i) => CONFIG.unitTypes[i].scale, set: (i, v) => (CONFIG.unitTypes[i].scale = Math.round(v * 100) / 100) },
+    { label: 'Foot', step: 0.02, min: 0.4, max: 1.0, fmt: (v) => v.toFixed(2), get: (i) => CONFIG.unitTypes[i].footAnchor, set: (i, v) => (CONFIG.unitTypes[i].footAnchor = Math.round(v * 100) / 100) },
     { label: 'Heal', step: 1, min: 0, max: 50, monkOnly: true, get: (i) => CONFIG.unitTypes[i].heal?.amount ?? 0, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.amount = v; } },
     { label: 'Heal int', step: 0.1, min: 0.2, max: 10, monkOnly: true, fmt: secs, get: (i) => (CONFIG.unitTypes[i].heal?.interval ?? 0) / 1000, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.interval = Math.round(v * 1000); } },
 ];
@@ -85,6 +83,7 @@ export class UnitPanel {
     private cardBg!: Phaser.GameObjects.Rectangle;
     private cardHeader!: Phaser.GameObjects.Text;
     private readonly cardRows: CardRow[] = [];
+    private visible = true; // master visibility (the HUD's Dev toggle hides the whole panel)
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, units: UnitManager) {
         this.scene = scene;
@@ -274,9 +273,24 @@ export class UnitPanel {
         this.highlight();
     }
 
+    // Master show/hide, driven by the HUD's Dev toggle (keeps its open/closed + selection).
+    setVisible(v: boolean) {
+        this.visible = v;
+        this.toggle.setVisible(v);
+        if (v) {
+            this.setOpen(panelOpen);
+        } else {
+            for (const t of this.tiles) {
+                t.bg.setVisible(false); t.icon.setVisible(false); t.name.setVisible(false);
+                t.you.setVisible(false); t.foe.setVisible(false);
+            }
+            this.hideCard();
+        }
+    }
+
     // Refresh live counts (cheap; called each frame).
     update() {
-        if (!panelOpen) return;
+        if (!this.visible || !panelOpen) return;
         this.tiles.forEach((t, i) => {
             const you = String(this.units.livingTypeCount(i, FACTION.player));
             const foe = String(this.units.livingTypeCount(i, FACTION.enemy));

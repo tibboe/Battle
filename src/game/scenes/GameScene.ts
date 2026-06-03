@@ -9,12 +9,18 @@ import { TerrainRenderer } from '../terrain/TerrainRenderer';
 import { loadTerrainTileset } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
+import { PeasantManager, loadPeasants, registerPeasantAnimations } from '../units/peasants';
+import { ResourceStore } from '../economy/ResourceStore';
+import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
-import { UpgradePanel } from '../ui/UpgradePanel';
+import { SelectionHud } from '../ui/SelectionHud';
+import { Hud, loadHud } from '../ui/Hud';
+import { EnemyAI } from '../ai/EnemyAI';
+import { resetUpgrades } from '../upgrades';
 
-// HUD draws above everything (units use world-y as depth, which can exceed 1000).
-const HUD_DEPTH = 1_000_000;
+// The win/lose overlay sits above the whole HUD (which uses ~1_000_000) and the popups.
+const OVERLAY_DEPTH = 1_000_100;
 
 // The single scene for Milestone 1. Phases: world + camera + HUD (1), animation
 // pipeline (2), pooled horde (3), combat (4), keeps + win/lose + restart (5).
@@ -25,7 +31,13 @@ export class GameScene extends Phaser.Scene {
     private projectiles!: Projectiles;
     private buildings!: Buildings;
     private unitPanel!: UnitPanel;
-    private upgradePanel!: UpgradePanel;
+    private selectionHud!: SelectionHud;
+    private devPanel!: DevPanel;
+    private hud!: Hud;
+    private resources!: ResourceStore;
+    private resourceNodes!: ResourceNodes;
+    private peasants!: PeasantManager;
+    private enemyAI!: EnemyAI;
 
     // World objects (backdrop + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
@@ -33,14 +45,10 @@ export class GameScene extends Phaser.Scene {
     private uiLayer!: Phaser.GameObjects.Layer;
     private uiCamera!: Phaser.Cameras.Scene2D.Camera;
 
-    private hudText!: Phaser.GameObjects.Text;
-    private fitButton!: Phaser.GameObjects.Text;
-    private playerKeepText!: Phaser.GameObjects.Text;
-    private enemyKeepText!: Phaser.GameObjects.Text;
-
     private playerKeepHp: number = CONFIG.keep.hp;
     private enemyKeepHp: number = CONFIG.keep.hp;
     private gameOver = false;
+    private lastResRev = -1; // last resource revision the HUD/menus rendered
 
     constructor() {
         super('Game');
@@ -50,16 +58,20 @@ export class GameScene extends Phaser.Scene {
 
     preload() {
         loadUnitAtlas(this);
+        loadPeasants(this);
         loadProjectiles(this);
         loadBuildings(this);
         loadTerrainTileset(this);
         loadEnvironment(this);
+        loadResourceNodes(this);
+        loadHud(this);
     }
 
     create() {
         this.playerKeepHp = CONFIG.keep.hp;
         this.enemyKeepHp = CONFIG.keep.hp;
         this.gameOver = false;
+        this.lastResRev = -1;
 
         // Subtle colour for anything outside the world bounds.
         this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
@@ -72,11 +84,21 @@ export class GameScene extends Phaser.Scene {
         registerEnvironmentAnims(this);
         this.drawBackdrop();
         registerUnitAnimations(this);
+        registerPeasantAnimations(this);
         this.cameraController = new CameraController(this);
-        this.buildHud();
+
+        // Player-facing HUD (resources, Castle health bars, Fit + a Dev toggle). The Dev toggle
+        // shows/hides the builder tools (tuning panel, unit inspector, debug line).
+        this.hud = new Hud(
+            this,
+            this.uiLayer,
+            () => this.cameraController.fitToMap(),
+            (on) => this.setDevTools(on),
+            (res, delta) => this.peasants.adjustTarget(FACTION.player, res, delta),
+        );
 
         // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
-        new DevPanel(this, this.uiLayer, () => this.scene.restart());
+        this.devPanel = new DevPanel(this, this.uiLayer, () => this.scene.restart());
 
         // World-space effects: floating numbers + arrow projectiles, above the units.
         this.floatingText = new FloatingText(this, this.worldLayer);
@@ -96,15 +118,43 @@ export class GameScene extends Phaser.Scene {
                     (lx, ly, f) => this.units.resolveLongShotHit(lx, ly, f as Faction)),
         );
 
-        // Building upgrade popup (opened by tapping a player building).
-        this.upgradePanel = new UpgradePanel(this, this.uiLayer, this.units);
+        // Per-side stockpiles (created before the UI/buildings that read them). Upgrades are
+        // per-match, so clear any carried-over ownership at the start of each match.
+        this.resources = new ResourceStore();
+        resetUpgrades();
 
-        // Production buildings (incl. the Castle keeps) emit their unit on a timer; tapping
-        // a player building opens its upgrades.
-        this.buildings = new Buildings(this, this.worldLayer, this.units, (kind) => this.upgradePanel.toggle(kind));
+        // Buildings: the Castle keeps, each side's starting buildings, and the empty build slots.
+        // Tapping a player building/slot selects it; the SelectionHud (below) shows its options.
+        this.buildings = new Buildings(
+            this,
+            this.worldLayer,
+            this.units,
+            (tag, x, y) => this.selectionHud.selectUpgrades(tag, x, y),
+            (faction, spot, x, y) => this.selectionHud.selectBuild(faction, spot, x, y),
+        );
+
+        // Unified bottom selection HUD (replaces the old upgrade + build popups).
+        this.selectionHud = new SelectionHud(this, this.uiLayer, this.worldLayer, this.units, this.resources, this.buildings);
+
+        // Tap blank ground to clear the selection (a tap, not a camera-drag).
+        const catcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
+            .setOrigin(0, 0).setDepth(-100).setInteractive();
+        this.worldLayer.add(catcher);
+        catcher.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectionHud.clear(); });
+
+        // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
+        // Peasants bank at each side's Castle and (Phase 2) build new structures on slots.
+        this.resourceNodes = new ResourceNodes(this, this.worldLayer);
+        this.peasants = new PeasantManager(this, this.worldLayer, this.resources, this.resourceNodes, this.buildings, this.units);
+
+        // The enemy's scripted build economy (spends its gathered income on a build order).
+        this.enemyAI = new EnemyAI(this.buildings, this.resources);
 
         // Right-edge unit roster/inspector: live counts + tap-for-stats.
         this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
+
+        // Apply the remembered Dev-tools visibility now that the panels exist.
+        this.setDevTools(this.hud.devOn);
 
         // UI camera renders only the HUD; the main camera renders only the world.
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
@@ -137,7 +187,7 @@ export class GameScene extends Phaser.Scene {
         const dim = this.add.rectangle(0, 0, this.scale.width, this.scale.height, 0x000000, 0.6)
             .setOrigin(0, 0)
             .setScrollFactor(0)
-            .setDepth(HUD_DEPTH);
+            .setDepth(OVERLAY_DEPTH);
 
         const title = this.add.text(cx, cy - 50, playerWon ? 'VICTORY' : 'DEFEAT', {
             fontFamily: 'monospace',
@@ -147,7 +197,7 @@ export class GameScene extends Phaser.Scene {
         })
             .setOrigin(0.5)
             .setScrollFactor(0)
-            .setDepth(HUD_DEPTH);
+            .setDepth(OVERLAY_DEPTH + 1);
 
         const restart = this.add.text(cx, cy + 40, '↻ Restart', {
             fontFamily: 'monospace',
@@ -158,7 +208,7 @@ export class GameScene extends Phaser.Scene {
         })
             .setOrigin(0.5)
             .setScrollFactor(0)
-            .setDepth(HUD_DEPTH)
+            .setDepth(OVERLAY_DEPTH + 1)
             .setInteractive({ useHandCursor: true });
 
         restart.on('pointerup', () => this.scene.restart());
@@ -182,84 +232,53 @@ export class GameScene extends Phaser.Scene {
         g.strokeRect(0, 0, world.width, world.height);
     }
 
-    private buildHud() {
-        this.hudText = this.add.text(12, 10, '', {
-            fontFamily: 'monospace',
-            fontSize: '18px',
-            color: '#ffffff',
-            backgroundColor: '#00000080',
-            padding: { x: 8, y: 6 },
-        })
-            .setScrollFactor(0)
-            .setDepth(HUD_DEPTH);
-
-        // Keep HP readouts (text is enough for Milestone 1).
-        this.playerKeepText = this.add.text(0, 10, '', {
-            fontFamily: 'monospace',
-            fontSize: '18px',
-            color: '#7fd0ff',
-            backgroundColor: '#00000080',
-            padding: { x: 8, y: 6 },
-        })
-            .setScrollFactor(0)
-            .setDepth(HUD_DEPTH);
-
-        this.enemyKeepText = this.add.text(0, 10, '', {
-            fontFamily: 'monospace',
-            fontSize: '18px',
-            color: '#ff8a8a',
-            backgroundColor: '#00000080',
-            padding: { x: 8, y: 6 },
-        })
-            .setScrollFactor(0)
-            .setDepth(HUD_DEPTH);
-
-        this.fitButton = this.add.text(0, 0, '⤢ Fit', {
-            fontFamily: 'monospace',
-            fontSize: '18px',
-            color: '#ffffff',
-            backgroundColor: '#2a6cd6',
-            padding: { x: 12, y: 8 },
-        })
-            .setScrollFactor(0)
-            .setDepth(HUD_DEPTH)
-            .setInteractive({ useHandCursor: true });
-
-        this.fitButton.on('pointerup', () => this.cameraController.fitToMap());
-
-        this.uiLayer.add([this.hudText, this.playerKeepText, this.enemyKeepText, this.fitButton]);
-        this.layoutHud();
+    // Show/hide the builder tools (tuning panel + unit inspector), driven by the HUD's Dev
+    // toggle. The HUD owns its own debug line's visibility.
+    private setDevTools(on: boolean) {
+        this.devPanel.setVisible(on);
+        this.unitPanel.setVisible(on);
     }
 
     private onResize() {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
-        this.layoutHud();
+        this.hud.layout();
         this.unitPanel.layout();
-        this.upgradePanel.layout();
+        this.selectionHud.layout();
         this.cameraController.handleResize();
-    }
-
-    // Anchor HUD pieces to the current viewport.
-    private layoutHud() {
-        const w = this.scale.width;
-        if (this.fitButton) this.fitButton.setPosition(w - this.fitButton.width - 12, 10);
-        if (this.playerKeepText) this.playerKeepText.setPosition(w / 2 - this.playerKeepText.width - 8, 10);
-        if (this.enemyKeepText) this.enemyKeepText.setPosition(w / 2 + 8, 10);
     }
 
     update(_time: number, delta: number) {
         if (!this.gameOver) {
-            this.buildings.update(delta);
+            this.enemyAI.update(delta);
             this.units.update(delta);
+            // Peasants advance any build site before the buildings system checks completion.
+            this.peasants.update(delta);
+            this.buildings.update(delta);
         }
         this.floatingText.update(delta);
         this.projectiles.update(delta);
         this.unitPanel.update();
 
-        const fps = Math.round(this.game.loop.actualFps);
-        this.hudText.setText(`FPS: ${fps}    Units: ${this.units.activeCount}`);
-        this.playerKeepText.setText(`You ${this.playerKeepHp}`);
-        this.enemyKeepText.setText(`Enemy ${this.enemyKeepHp}`);
-        this.layoutHud();
+        this.hud.update({
+            fps: Math.round(this.game.loop.actualFps),
+            units: this.units.activeCount,
+            player: this.resources.bag(FACTION.player),
+            enemy: this.resources.bag(FACTION.enemy),
+            playerHp: this.playerKeepHp,
+            enemyHp: this.enemyKeepHp,
+            maxHp: CONFIG.keep.hp,
+            workers: {
+                gold: this.peasants.workerCount(FACTION.player, 'gold'),
+                wood: this.peasants.workerCount(FACTION.player, 'wood'),
+                stone: this.peasants.workerCount(FACTION.player, 'stone'),
+            },
+        });
+
+        // When the stockpile changes (a peasant banks, or you spend), refresh any open menu so
+        // its affordability / greyed-out states stay live.
+        if (this.resources.rev !== this.lastResRev) {
+            this.lastResRev = this.resources.rev;
+            this.selectionHud.refresh();
+        }
     }
 }

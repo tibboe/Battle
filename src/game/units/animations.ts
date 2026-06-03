@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 
-// All five Tiny Swords unit types (Pixel Frog), data-driven. The pack ships separate
+// The four combat Tiny Swords unit types (Pixel Frog), data-driven. (The Pawn is the
+// worker/peasant from Milestone 4 — its art lives in units/peasants.ts.) The pack ships separate
 // colour sets, so we use the BLUE set for the player and the RED set for the enemy and
 // skip tinting (tinting already-coloured art looks muddy).
 //
@@ -26,9 +27,10 @@ const FACTION_DIR = {
 
 export type FactionName = keyof typeof FACTION_DIR;
 
-// Logical animation states the game can play. `death` is synthesised (no frames); `heal`
-// is loaded for the Monk but only used from Phase 2.
-export type UnitAnim = 'walk' | 'attack' | 'heal';
+// Logical animation states the game can play. `death` is synthesised (no frames); `idle` is
+// the resting stance shown BETWEEN strikes while engaged; `heal` is the Monk's gesture; `block`
+// is the Warrior's guard pose. attack/heal/block play once per beat; walk/idle loop.
+export type UnitAnim = 'walk' | 'idle' | 'attack' | 'heal' | 'block';
 
 // One source strip: file (inside the type's folder), frame count, playback rate.
 interface Strip {
@@ -50,22 +52,19 @@ const UNIT_ART: Record<string, UnitArt> = {
         frameSize: 192,
         states: {
             walk: { file: 'Warrior_Run.png', frames: 6, frameRate: 14 },
+            idle: { file: 'Warrior_Idle.png', frames: 8, frameRate: 8 },
             attack: { file: 'Warrior_Attack1.png', frames: 4, frameRate: 12 },
+            block: { file: 'Warrior_Guard.png', frames: 6, frameRate: 14 },
         },
     },
-    pawn: {
-        dir: 'Pawn',
-        frameSize: 192,
-        states: {
-            walk: { file: 'Pawn_Run.png', frames: 6, frameRate: 14 },
-            attack: { file: 'Pawn_Interact Knife.png', frames: 4, frameRate: 12 },
-        },
-    },
+    // (The Pawn is no longer a combat type — Milestone 4 turns it into the worker/peasant.
+    // Its worker animation set is loaded separately in units/peasants.ts.)
     lancer: {
         dir: 'Lancer',
         frameSize: 320,
         states: {
             walk: { file: 'Lancer_Run.png', frames: 6, frameRate: 14 },
+            idle: { file: 'Lancer_Idle.png', frames: 12, frameRate: 10 },
             attack: { file: 'Lancer_Right_Attack.png', frames: 3, frameRate: 12 },
         },
     },
@@ -74,6 +73,7 @@ const UNIT_ART: Record<string, UnitArt> = {
         frameSize: 192,
         states: {
             walk: { file: 'Archer_Run.png', frames: 4, frameRate: 14 },
+            idle: { file: 'Archer_Idle.png', frames: 6, frameRate: 8 },
             attack: { file: 'Archer_Shoot.png', frames: 8, frameRate: 14 },
         },
     },
@@ -82,6 +82,7 @@ const UNIT_ART: Record<string, UnitArt> = {
         frameSize: 192,
         states: {
             walk: { file: 'Run.png', frames: 4, frameRate: 14 },
+            idle: { file: 'Idle.png', frames: 6, frameRate: 8 },
             // No attack strip — Monk is support; it plays its heal gesture instead.
             heal: { file: 'Heal.png', frames: 11, frameRate: 12 },
         },
@@ -91,6 +92,13 @@ const UNIT_ART: Record<string, UnitArt> = {
 // One key namespaces both the texture and its animation for a given art+faction+state.
 export function animKey(art: string, faction: FactionName, anim: UnitAnim) {
     return `${art}-${faction}-${anim}`;
+}
+
+// Duration (ms) of an art's one-shot strip — used to hold a swing/heal pose for exactly its
+// length before resuming idle. 0 if the art has no such strip.
+export function animDurationMs(art: string, anim: UnitAnim): number {
+    const strip = UNIT_ART[art]?.states[anim];
+    return strip ? (strip.frames / strip.frameRate) * 1000 : 0;
 }
 
 // A texture that exists right after load, for creating pooled sprites before any animation
@@ -144,8 +152,8 @@ export function registerUnitAnimations(scene: Phaser.Scene) {
                     key,
                     frames: scene.anims.generateFrameNumbers(key, { start: 0, end: strip.frames - 1 }),
                     frameRate: strip.frameRate,
-                    // walk/attack loop (attack loops while engaged); heal plays once.
-                    repeat: anim === 'heal' ? 0 : -1,
+                    // walk/idle loop; attack/heal/block play once per beat.
+                    repeat: anim === 'walk' || anim === 'idle' ? -1 : 0,
                 });
             }
         }

@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
-import { animKey, FactionName, POOL_TEXTURE } from './animations';
+import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -47,6 +47,10 @@ export class UnitManager {
     private readonly attackCd: Float32Array; // ms until next strike
     private readonly abilityCd: Float32Array; // ms until the unit's special ability is ready
     private readonly deathTimer: Float32Array; // ms left of death anim before recycle
+    private readonly animLock: Float32Array;   // ms left of a one-shot pose (block / shoot) before resuming
+    private readonly drawTimer: Float32Array;  // ms left of an Archer's long-shot draw (0 = not drawing)
+    private readonly drawLx: Float32Array;     // long-shot landing point captured at draw start
+    private readonly drawLy: Float32Array;
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
@@ -69,6 +73,8 @@ export class UnitManager {
     private readonly typeLongshot: Uint8Array;   // 1 = lobs a long-shot arrow on a cooldown
     private readonly typeHealAmount: Float32Array;   // >0 = support healer (flat HP per beat)
     private readonly typeHealInterval: Float32Array; // ms between heals
+    private readonly typeAttackAnimMs: Float32Array; // one attack swing's animation length
+    private readonly typeHealAnimMs: Float32Array;   // one heal gesture's animation length
 
     private readonly nTypes: number;
     private readonly typeKey: string[];
@@ -113,6 +119,10 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
+    // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
+    // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
+    private readonly healthBars: Phaser.GameObjects.Graphics;
+
     // Called when a unit reaches the opposing keep (so the scene can damage it).
     private readonly onReachKeep: (attacker: Faction) => void;
     // Emitted on each applied strike (post-matrix damage) so the scene can pop a number;
@@ -156,6 +166,10 @@ export class UnitManager {
         this.attackCd = new Float32Array(this.capacity);
         this.abilityCd = new Float32Array(this.capacity);
         this.deathTimer = new Float32Array(this.capacity);
+        this.animLock = new Float32Array(this.capacity);
+        this.drawTimer = new Float32Array(this.capacity);
+        this.drawLx = new Float32Array(this.capacity);
+        this.drawLy = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
@@ -186,6 +200,8 @@ export class UnitManager {
         this.typeLongshot = new Uint8Array(nTypes);
         this.typeHealAmount = new Float32Array(nTypes);
         this.typeHealInterval = new Float32Array(nTypes);
+        this.typeAttackAnimMs = new Float32Array(nTypes);
+        this.typeHealAnimMs = new Float32Array(nTypes);
         let maxRange = 1;
         for (let t = 0; t < nTypes; t++) {
             const ut = types[t];
@@ -208,6 +224,8 @@ export class UnitManager {
             if (ut.ability === 'longshot') this.longshotType = t;
             this.typeHealAmount[t] = ut.heal ? ut.heal.amount : 0;
             this.typeHealInterval[t] = ut.heal ? ut.heal.interval : 0;
+            this.typeAttackAnimMs[t] = animDurationMs(ut.art, 'attack');
+            this.typeHealAnimMs[t] = animDurationMs(ut.art, 'heal');
             if (ut.range > maxRange) maxRange = ut.range;
         }
 
@@ -266,6 +284,10 @@ export class UnitManager {
         // Tiny Swords has no death animation, so death is a synthesised fade of this length.
         this.deathDuration = CONFIG.combat.deathFadeMs;
 
+        // Health bars draw above every unit sprite (unit depth == world-y, max ~world.height).
+        this.healthBars = scene.add.graphics().setDepth(CONFIG.world.height + 1000);
+        layer.add(this.healthBars);
+
         this.recomputeUpgrades();
     }
 
@@ -286,9 +308,10 @@ export class UnitManager {
         this.pArmourMult = armourMult();
     }
 
-    // Archer special: lob an arc arrow at a far enemy (beyond normal reach), with aim
-    // scatter so it can miss. Damage is resolved where it lands (resolveLongShotHit).
-    private fireLongShot(i: number) {
+    // Archer special: begin a long shot — pick a far enemy (beyond normal reach), then STOP and
+    // slowly draw for drawTime ms (the Shoot strip stretched to fill it). The arrow looses at the
+    // end (releaseLongShot). Only started when no enemy is in normal range (see step()).
+    private startLongShot(i: number) {
         const ls = CONFIG.abilities.longshot;
         const f = this.faction[i];
         const dir = f === FACTION.player ? 1 : -1;
@@ -315,10 +338,28 @@ export class UnitManager {
             return;
         }
         const target = cand[(Math.random() * cand.length) | 0];
-        const lx = this.x[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
-        const ly = this.y[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
-        if (this.onLongShot) this.onLongShot(xi, yi - 40, lx, ly, f as Faction);
+        // Aim where the target is now (with scatter); it may move during the draw — that misses.
+        this.drawLx[i] = this.x[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        this.drawLy[i] = this.y[target] + Phaser.Math.FloatBetween(-ls.spread, ls.spread);
+        this.drawTimer[i] = ls.drawTime;
+
+        // Play the Shoot strip stretched over the whole draw, so the bow draws slowly.
+        const sprite = this.sprites[i]!;
+        const art = this.typeArt[this.type[i]];
+        sprite.play(animKey(art, FACTION_NAME[f], 'attack'));
+        const shootMs = this.typeAttackAnimMs[this.type[i]] || ls.drawTime;
+        sprite.anims.timeScale = Math.max(0.05, shootMs / ls.drawTime);
+    }
+
+    // Draw finished: loose the arrow (resolved where it lands), reset animation speed, cooldown.
+    private releaseLongShot(i: number) {
+        const ls = CONFIG.abilities.longshot;
+        const f = this.faction[i];
+        const sprite = this.sprites[i]!;
+        sprite.anims.timeScale = 1;
+        if (this.onLongShot) this.onLongShot(this.x[i], this.y[i] - 40, this.drawLx[i], this.drawLy[i], f as Faction);
         this.abilityCd[i] = ls.cooldown;
+        this.playStateAnim(i); // back to idle / walk
     }
 
     // Called when a long-shot arrow lands: damage the nearest enemy at the impact point if
@@ -348,10 +389,11 @@ export class UnitManager {
         if (this.hp[best] <= 0) this.kill(best);
     }
 
-    // Max HP of a unit, including the player's +Health upgrade (so heals top up to the
-    // real maximum, not the base value).
+    // Max HP of a unit, including the player's +Health upgrade and the global HP scale (so
+    // heals and the health bar use the real maximum, not the base value).
     private maxHpOf(j: number): number {
-        return this.typeHp[this.type[j]] + (this.faction[j] === FACTION.player ? this.pHpBonus[this.type[j]] : 0);
+        const base = this.typeHp[this.type[j]] + (this.faction[j] === FACTION.player ? this.pHpBonus[this.type[j]] : 0);
+        return Math.max(1, Math.round(base * CONFIG.combat.hpScale));
     }
 
     // Monk Heal-area upgrade: top up every wounded ally within heal range (pops a green
@@ -405,6 +447,20 @@ export class UnitManager {
         return this.livingByType[typeIndex * 2 + faction];
     }
 
+    // Is any OPPOSING combat unit within `radius` of (x, y)? Used by the peasant system so
+    // workers flee/die when an enemy army reaches their gathering line (Phase 4 harassment).
+    // `faction` is the worker's own side — units of that side don't threaten it.
+    threatNear(faction: Faction, x: number, y: number, radius: number): boolean {
+        const r2 = radius * radius;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === faction) continue;
+            const dx = this.x[j] - x;
+            const dy = this.y[j] - y;
+            if (dx * dx + dy * dy <= r2) return true;
+        }
+        return false;
+    }
+
     update(delta: number) {
         this.reacquireAcc += delta;
         if (this.reacquireAcc >= CONFIG.combat.reacquireMs) {
@@ -414,6 +470,7 @@ export class UnitManager {
 
         this.step(delta);
         this.applySeparation(delta);
+        this.drawHealthBars();
     }
 
     // ---- Spawning (driven externally by the production buildings) ----
@@ -437,10 +494,13 @@ export class UnitManager {
         this.x[i] = x;
         this.y[i] = yClamped;
         this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
-        this.hp[i] = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
+        const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
+        this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
         this.faction[i] = faction;
         this.state[i] = STATE.walk;
         this.target[i] = -1;
+        this.animLock[i] = 0;
+        this.drawTimer[i] = 0;
         this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]); // desync
         this.abilityCd[i] = this.typeKnockback[t]
             ? Phaser.Math.FloatBetween(0, CONFIG.abilities.knockback.cooldown)
@@ -464,12 +524,16 @@ export class UnitManager {
             .setDepth(yClamped) // lower on screen draws in front, so ranks overlap correctly
             .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
+        sprite.anims.timeScale = 1; // clear any stretched long-shot draw from a previous user
         return true;
     }
 
     // ---- Targeting (bucketed by lane x; only nearby cells are tested) ----
 
     private acquireTargets() {
+        // Units look this far to pick an enemy to advance on; they only STRIKE within their own
+        // (shorter) range. Squared once per pass.
+        const aggro2 = CONFIG.combat.aggroRange * CONFIG.combat.aggroRange;
         for (let c = 0; c < this.numCells; c++) this.buckets[c].length = 0;
 
         // Bucket living units by x-cell (support units included — they are valid targets).
@@ -496,10 +560,13 @@ export class UnitManager {
             const range2 = this.faction[i] === FACTION.player
                 ? this.pRange2[this.type[i]]
                 : this.typeRange2[this.type[i]];
+            // Perceive at least the aggro radius (so melee chase) but never less than the unit's
+            // own strike range (so long-range units still target everything they can hit).
+            const seek2 = Math.max(range2, aggro2);
             const ci = this.cellOf(i);
             let best = -1;
             let bestD2 = Infinity;
-            // Only this cell and its immediate neighbours can hold an in-range enemy.
+            // Only this cell and its immediate neighbours can hold a nearby enemy.
             for (let dc = -1; dc <= 1; dc++) {
                 const c = ci + dc;
                 if (c < 0 || c >= this.numCells) continue;
@@ -510,14 +577,16 @@ export class UnitManager {
                     const dx = this.x[j] - this.x[i];
                     const dy = this.y[j] - this.y[i];
                     const d2 = dx * dx + dy * dy;
-                    if (d2 <= range2 && d2 < bestD2) {
+                    if (d2 <= seek2 && d2 < bestD2) {
                         bestD2 = d2;
                         best = j;
                     }
                 }
             }
             this.target[i] = best;
-            this.setState(i, best >= 0 ? STATE.attack : STATE.walk);
+            // In strike range → attack; acquired but still approaching → walk (the walk step
+            // steers toward the target instead of marching straight ahead).
+            this.setState(i, best >= 0 && bestD2 <= range2 ? STATE.attack : STATE.walk);
         }
     }
 
@@ -569,11 +638,51 @@ export class UnitManager {
             }
 
             if (this.abilityCd[i] > 0) this.abilityCd[i] -= delta; // tick special-ability cd
-            // Archers lob a long shot when ready, whether walking or engaged.
-            if (this.typeLongshot[this.type[i]] && this.abilityCd[i] <= 0) this.fireLongShot(i);
+
+            // Mid long-shot draw: the archer stands frozen and slowly draws; loose at the end.
+            if (this.drawTimer[i] > 0) {
+                this.drawTimer[i] -= delta;
+                if (this.drawTimer[i] <= 0) this.releaseLongShot(i);
+                continue;
+            }
+
+            // A one-shot pose (block / shoot) holds for its duration, then we resume the
+            // animation that matches the unit's current state.
+            if (this.animLock[i] > 0) {
+                this.animLock[i] -= delta;
+                if (this.animLock[i] <= 0) this.playStateAnim(i);
+            }
+            // Archers lob a long shot ONLY as a fallback: when no enemy is in normal range
+            // (no target, so they're marching), and the ability is off cooldown.
+            if (this.typeLongshot[this.type[i]] && this.abilityCd[i] <= 0
+                && st === STATE.walk && this.target[i] < 0) {
+                this.startLongShot(i);
+                continue; // begin the draw this frame
+            }
 
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;
+                // Advance on an acquired-but-not-yet-reachable enemy: steer toward it in both
+                // axes so melee close the gap instead of marching past offset foes.
+                const tgt = this.target[i];
+                if (tgt >= 0 && tgt < this.count && this.state[tgt] !== STATE.dying
+                    && this.faction[tgt] !== this.faction[i]) {
+                    const dx = this.x[tgt] - this.x[i];
+                    const dy = this.y[tgt] - this.y[i];
+                    const d = Math.hypot(dx, dy) || 1;
+                    const stepLen = this.speed[i] * dt;
+                    this.x[i] += (dx / d) * stepLen;
+                    const ln = this.lane[i];
+                    this.y[i] = Phaser.Math.Clamp(
+                        this.y[i] + (dy / d) * stepLen,
+                        this.laneY[ln] - this.laneHalf[ln],
+                        this.laneY[ln] + this.laneHalf[ln],
+                    );
+                    sprite.x = this.x[i];
+                    sprite.y = this.y[i];
+                    sprite.setDepth(this.y[i]);
+                    continue;
+                }
                 // Funnel: drift toward the lane-path centre until within the tight path,
                 // so the streams from the spread-out buildings merge into one lane. Read
                 // live from config so the Dev panel's "Lane width" applies instantly.
@@ -617,7 +726,7 @@ export class UnitManager {
                     if (hasTarget) {
                         this.attackCd[i] += this.typeHealInterval[acting];
                         this.areaHeal(i, acting);
-                        this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
+                        this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                         continue;
                     }
                 } else {
@@ -635,7 +744,7 @@ export class UnitManager {
                             if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
                                 this.onHeal(this.x[t], this.y[t] - 50, healed);
                             }
-                            this.sprites[i]!.play(animKey(this.typeArt[acting], FACTION_NAME[f], 'heal'));
+                            this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                             continue;
                         }
                     }
@@ -655,11 +764,13 @@ export class UnitManager {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
                 if (dx * dx + dy * dy <= reach2) {
-                    this.attackCd[i] += this.typeAttackInterval[acting];
+                    this.attackCd[i] += this.typeAttackInterval[acting] * CONFIG.combat.attackIntervalScale;
+                    this.playOneShot(i, 'attack', this.typeAttackAnimMs[acting]); // one swing per beat
                     // Defender's block (innate, both sides): chance to fully negate the hit.
                     const blockChance = this.typeBlockChance[this.type[t]];
                     if (blockChance > 0 && Math.random() < blockChance) {
                         if (this.onBlock && CONFIG.debug.damageNumbers) this.onBlock(this.x[t], this.y[t] - 50);
+                        this.playOneShot(t, 'block', 480); // raise the guard pose
                         continue;
                     }
                     // Base damage (+ the attacker's melee/ranged upgrade) scaled by the
@@ -742,6 +853,10 @@ export class UnitManager {
                         const w = (radius - d) / radius; // 1 when touching, 0 at the edge
                         px += (dx / d) * w;
                         py += (dy / d) * w;
+                        // Anti-column: two units nearly in single file (small vertical gap)
+                        // barely separate from the radial push alone, so the rear keeps bumping
+                        // the one ahead. Add a sideways nudge so they fan out and flow around.
+                        if (Math.abs(dy) < 10) py += (i < j ? -1 : 1) * w;
                     } else {
                         py += i < j ? -1 : 1; // exactly stacked: deterministic shove apart
                     }
@@ -797,15 +912,57 @@ export class UnitManager {
     private setState(i: number, next: number) {
         if (this.state[i] === next) return;
         this.state[i] = next;
-        const sprite = this.sprites[i]!;
+        // If a one-shot pose (block / shoot) is showing, keep it; its expiry resumes the
+        // (now-current) state's animation.
+        if (this.animLock[i] > 0) return;
+        this.playStateAnim(i);
+    }
+
+    // Play the looping animation that matches a unit's current state (walk, or attack/heal).
+    private playStateAnim(i: number) {
+        const sprite = this.sprites[i];
+        if (!sprite) return;
         const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
-        if (next === STATE.attack) {
-            // Combat units loop their attack; support healers play their heal gesture.
-            const act = this.typeHealAmount[this.type[i]] > 0 ? 'heal' : 'attack';
-            sprite.play(animKey(art, name, act));
-        } else if (next === STATE.walk) {
-            sprite.play(animKey(art, name, 'walk'));
+        // Engaged units REST in idle between strikes/heals (each strike plays a one-shot swing);
+        // marching units run.
+        sprite.play(animKey(art, name, this.state[i] === STATE.attack ? 'idle' : 'walk'));
+    }
+
+    // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
+    // loop; `durMs` is how long to hold it before resuming idle/walk.
+    private playOneShot(i: number, anim: 'block' | 'attack' | 'heal', durMs: number) {
+        if (durMs <= 0) return;
+        const sprite = this.sprites[i];
+        if (!sprite || this.state[i] === STATE.dying) return;
+        const key = animKey(this.typeArt[this.type[i]], FACTION_NAME[this.faction[i]], anim);
+        sprite.play(key);
+        this.animLock[i] = durMs;
+    }
+
+    // Redraw every damaged unit's health bar (green→red) just above its head. One Graphics,
+    // cleared and rebuilt each frame; undamaged units get no bar.
+    private drawHealthBars() {
+        const g = this.healthBars;
+        g.clear();
+        const W = 30;
+        const H = 5;
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying) continue;
+            const max = this.maxHpOf(i);
+            if (this.hp[i] >= max) continue; // full health — no bar
+            const frac = Math.max(0, this.hp[i] / max);
+            const sprite = this.sprites[i]!;
+            const top = this.y[i] - sprite.displayHeight * this.typeFootAnchor[this.type[i]] - 2;
+            const x = this.x[i] - W / 2;
+            g.fillStyle(0x000000, 0.55);
+            g.fillRect(x - 1, top - 1, W + 2, H + 2);
+            // Lerp green (full) → red (empty).
+            const r = Math.round(0xd9 + (0x4a - 0xd9) * frac);
+            const gg = Math.round(0x3a + (0xd6 - 0x3a) * frac);
+            const b = Math.round(0x3a + (0x4a - 0x3a) * frac);
+            g.fillStyle((r << 16) | (gg << 8) | b, 1);
+            g.fillRect(x, top, W * frac, H);
         }
     }
 
@@ -829,6 +986,10 @@ export class UnitManager {
             this.attackCd[i] = this.attackCd[last];
             this.abilityCd[i] = this.abilityCd[last];
             this.deathTimer[i] = this.deathTimer[last];
+            this.animLock[i] = this.animLock[last];
+            this.drawTimer[i] = this.drawTimer[last];
+            this.drawLx[i] = this.drawLx[last];
+            this.drawLy[i] = this.drawLy[last];
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
             this.sprites[i] = this.sprites[last];

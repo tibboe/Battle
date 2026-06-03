@@ -41,6 +41,7 @@ export class DevPanel {
     private readonly rowObjects: Phaser.GameObjects.Text[] = [];
     private bg!: Phaser.GameObjects.Rectangle;
     private toggle!: Phaser.GameObjects.Text;
+    private visible = true; // master visibility (the HUD's Dev toggle hides the whole panel)
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, restart: () => void) {
         this.scene = scene;
@@ -49,7 +50,9 @@ export class DevPanel {
 
         // The tunables exposed. Structural ones (live:false) rebuild on restart.
         this.settings = [
-            { label: 'Prod rate', get: () => CONFIG.production.rateScale, set: (v) => (CONFIG.production.rateScale = v), step: 0.25, min: 0.25, max: 4, live: true, fmt: (v) => `${v}×` },
+            { label: 'Spawn secs', get: () => CONFIG.production.spawnSeconds, set: (v) => (CONFIG.production.spawnSeconds = v), step: 1, min: 1, max: 30, live: true, fmt: (v) => `${v}s` },
+            { label: 'Atk interval', get: () => CONFIG.combat.attackIntervalScale, set: (v) => (CONFIG.combat.attackIntervalScale = v), step: 0.25, min: 0.5, max: 4, live: true, fmt: (v) => `${v}×` },
+            { label: 'Unit HP', get: () => CONFIG.combat.hpScale, set: (v) => (CONFIG.combat.hpScale = v), step: 0.5, min: 0.5, max: 5, live: true, fmt: (v) => `${v}×` },
             { label: 'Lane width', get: () => CONFIG.lanes[0].pathWidth, set: (v) => (CONFIG.lanes[0].pathWidth = v), step: 20, min: 40, max: 600, live: true },
             { label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
             { label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },
@@ -65,7 +68,7 @@ export class DevPanel {
 
     private build() {
         const x = 12;
-        const top = 46; // just below the FPS readout
+        const top = 92; // below the HUD's resource strip + Castle health bar (left column)
         const rowH = 26;
         const width = 250;
 
@@ -166,7 +169,15 @@ export class DevPanel {
     private setOpen(open: boolean) {
         panelOpen = open;
         this.toggle.setText(open ? '⚙ Dev ▾' : '⚙ Dev ▸');
-        this.bg.setVisible(open);
-        for (const o of this.rowObjects) o.setVisible(open);
+        this.bg.setVisible(this.visible && open);
+        for (const o of this.rowObjects) o.setVisible(this.visible && open);
+    }
+
+    // Master show/hide, driven by the HUD's Dev toggle (the panel keeps its open/closed state).
+    setVisible(v: boolean) {
+        this.visible = v;
+        this.toggle.setVisible(v);
+        this.bg.setVisible(v && panelOpen);
+        for (const o of this.rowObjects) o.setVisible(v && panelOpen);
     }
 }

@@ -1,10 +1,11 @@
-import { CONFIG } from './config';
+import { Cost, CONFIG } from './config';
 
-// Phase-4 upgrades — player-only, free to toggle from a building, one level each for now.
-// This module owns which upgrades are ON (the effect magnitudes live in CONFIG.upgrades).
-// UnitManager reads the effect getters into its per-faction stat bonuses; the building
-// upgrade popup toggles levels; settings.ts persists them. Enemy units always use base
-// stats — upgrades are the player's decision hook.
+// Player-only upgrades — each a one-time PURCHASE from a building (Milestone 4 Phase 3 gives
+// them a resource price; see CONFIG.upgradeCosts). This module owns which upgrades are owned
+// (the effect magnitudes live in CONFIG.upgrades); UnitManager reads the effect getters into
+// its per-faction stat bonuses; the upgrade popup buys them. Upgrades are per-match — the scene
+// clears them on start (resetUpgrades), like the resource stockpiles. Enemy units always use
+// base stats — upgrades are the player's decision hook.
 
 export interface UpgradeDef {
     key: string;   // matches CONFIG.upgrades + the level map
@@ -22,17 +23,26 @@ export const UPGRADES: UpgradeDef[] = [
     { key: 'armour', kind: 'general', label: 'Armour', desc: 'Your units take less damage' },
     { key: 'melee', kind: 'general', label: 'Melee atk', desc: '+damage, your melee units' },
     { key: 'ranged', kind: 'general', label: 'Ranged atk', desc: '+damage, your ranged units' },
+    { key: 'peasantSpeed', kind: 'house', label: '+Worker speed', desc: 'Peasants move faster' },
+    { key: 'peasantCarry', kind: 'house', label: '+Carry', desc: 'Peasants carry +5 per trip' },
+    { key: 'peasantFlee', kind: 'house', label: 'Flee burst', desc: 'Peasants sprint when fleeing' },
 ];
 
-// Active level per upgrade key (0 or 1 for now). Player side only.
+// Owned level per upgrade key (0 or 1 for now). Player side only.
 const levels: Record<string, number> = {};
 
 export const upgradesForKind = (kind: string) => UPGRADES.filter((u) => u.kind === kind);
 export const upgradeLevel = (key: string) => levels[key] ?? 0;
 export const upgradeActive = (key: string) => upgradeLevel(key) > 0;
-export const toggleUpgrade = (key: string) => {
-    levels[key] = upgradeActive(key) ? 0 : 1;
-};
+
+// The resource price of an upgrade (0/0/0 if it somehow has no entry).
+export const costOf = (key: string): Cost => CONFIG.upgradeCosts[key] ?? { gold: 0, stone: 0, wood: 0 };
+
+// Mark an upgrade as owned (the caller has already paid). No-op if already owned.
+export const purchaseUpgrade = (key: string) => { levels[key] = 1; };
+
+// Clear all owned upgrades — called by the scene at match start so upgrades are per-match.
+export const resetUpgrades = () => { for (const k of Object.keys(levels)) delete levels[k]; };
 
 // Persistence hooks (used by settings.ts).
 export const getUpgradeLevels = (): Record<string, number> => ({ ...levels });
@@ -70,3 +80,9 @@ export const critChanceFor = (unitKey: string) =>
 // Player-only: does this unit's heal hit an area instead of one ally?
 export const healAoeFor = (unitKey: string) =>
     unitKey === 'monk' && upgradeActive('monkAoe') ? 1 : 0;
+
+// ---- Peasant upgrades (player workers only; read by PeasantManager) ----
+
+export const peasantSpeedBonus = () => (upgradeActive('peasantSpeed') ? CONFIG.upgrades.peasantSpeed : 0);
+export const peasantCarryBonus = () => (upgradeActive('peasantCarry') ? CONFIG.upgrades.peasantCarry : 0);
+export const peasantFleeBurst = () => upgradeActive('peasantFlee');
