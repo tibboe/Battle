@@ -32,6 +32,10 @@ export interface BuildingDef {
     every: number;     // spawn cadence (ms); 0 for a House
     cost: Cost;
     buildTime: number; // ms of hammering to finish
+    // Max units this building may keep alive at once. The producer pauses while it is at
+    // this many living units and resumes the moment one dies or reaches the keep. Omit (or 0)
+    // for no cap (e.g. a House, which makes peasants, not capped combat units).
+    maxUnits?: number;
 }
 
 // One row of the unit roster. Stats are the director's to tune; `art` names the sprite
@@ -221,10 +225,10 @@ export const CONFIG = {
         // per-building rate.
         catalog: [
             { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,     cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
-            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000 },
-            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000 },
-            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000 },
-            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
+            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000, maxUnits: 3 },
+            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000, maxUnits: 3 },
+            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000, maxUnits: 3 },
+            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000, maxUnits: 2 },
         ] as BuildingDef[],
 
         // Pre-built at match start (free, instant), per side. BOTH sides start lean and build

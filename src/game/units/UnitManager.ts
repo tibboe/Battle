@@ -53,7 +53,11 @@ export class UnitManager {
     private readonly drawLy: Float32Array;
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
+    private readonly producer: Int32Array;    // id of the building that spawned this unit (-1 = none)
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
+
+    // Living (non-dying) units per producer id — lets a building cap how many it keeps alive.
+    private readonly livingByProducer = new Map<number, number>();
 
     // Roster lookups: a typed-array mirror of CONFIG.unitTypes, indexed by unit type, so
     // the per-frame loops read scalars instead of walking config objects.
@@ -172,6 +176,7 @@ export class UnitManager {
         this.drawLy = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
+        this.producer = new Int32Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -475,10 +480,16 @@ export class UnitManager {
 
     // ---- Spawning (driven externally by the production buildings) ----
 
+    // Living (non-dying) units attributed to a producer id — drives per-building unit caps.
+    producerLivingCount(producerId: number): number {
+        return this.livingByProducer.get(producerId) ?? 0;
+    }
+
     // Spawn one unit of `typeIndex` for `faction` at (x, y); y is clamped into the lane band
-    // so the horde stays readable. Returns false if the side is at its cap or the pool is
-    // exhausted. Called by the Buildings system on each production beat.
-    spawnAt(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+    // so the horde stays readable. `producerId` attributes the unit to the building that made
+    // it (-1 = unattributed) so that building can cap its live count. Returns false if the side
+    // is at its cap or the pool is exhausted. Called by the Buildings system on each beat.
+    spawnAt(faction: Faction, typeIndex: number, x: number, y: number, producerId = -1): boolean {
         const cap = faction === FACTION.player
             ? CONFIG.spawn.unitsTarget.player
             : CONFIG.spawn.unitsTarget.enemy;
@@ -510,9 +521,11 @@ export class UnitManager {
         this.deathTimer[i] = 0;
         this.lane[i] = 0;
         this.type[i] = t;
+        this.producer[i] = producerId;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
+        if (producerId >= 0) this.livingByProducer.set(producerId, (this.livingByProducer.get(producerId) ?? 0) + 1);
 
         sprite
             .setActive(true)
@@ -705,6 +718,7 @@ export class UnitManager {
                     this.onReachKeep(this.faction[i] as Faction);
                     this.livingByFaction[this.faction[i]]--;
                     this.livingByType[this.type[i] * 2 + this.faction[i]]--;
+                    this.releaseProducer(i);
                     this.despawn(i);
                 }
                 continue;
@@ -900,6 +914,7 @@ export class UnitManager {
         if (this.state[i] === STATE.dying) return;
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
+        this.releaseProducer(i);
         this.state[i] = STATE.dying;
         this.target[i] = -1;
         this.deathTimer[i] = this.deathDuration;
@@ -907,6 +922,17 @@ export class UnitManager {
         // dying branch in step() fades it out before recycling.
         this.sprites[i]!.anims.stop();
         this.sprites[i]!.setTint(0x6a6a6a);
+    }
+
+    // Drop a unit from its producer's live tally (on death or on reaching the keep) so the
+    // building may spawn a replacement. Clears the attribution so it can't be counted twice.
+    private releaseProducer(i: number) {
+        const id = this.producer[i];
+        if (id < 0) return;
+        const n = (this.livingByProducer.get(id) ?? 0) - 1;
+        if (n > 0) this.livingByProducer.set(id, n);
+        else this.livingByProducer.delete(id);
+        this.producer[i] = -1;
     }
 
     private setState(i: number, next: number) {
@@ -992,6 +1018,7 @@ export class UnitManager {
             this.drawLy[i] = this.drawLy[last];
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
+            this.producer[i] = this.producer[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

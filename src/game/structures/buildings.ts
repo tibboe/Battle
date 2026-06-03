@@ -41,6 +41,8 @@ interface Producer {
     x: number;            // spawn x (the building's spot)
     y: number;            // band-clamped spawn y
     acc: number;          // accumulator (ms toward the next spawn)
+    id: number;           // unique id, used to attribute its units for the live-count cap
+    cap: number;          // max units it may keep alive at once (0 = uncapped)
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -70,6 +72,7 @@ export class Buildings {
     private readonly onSelectSlot?: (faction: Faction, spot: number, x: number, y: number) => void;
 
     private readonly producers: Producer[] = [];
+    private nextProducerId = 0; // hands out a stable id per producer for its live-count cap
     private readonly sites: ConstructionSite[] = [];
 
     // Per-faction base geometry the peasant system needs: the Castle (bank) and the live list
@@ -199,6 +202,8 @@ export class Buildings {
                     y: Phaser.Math.Clamp(p.y, this.bandTop, this.bandBottom),
                     // Random initial offset so producers don't all fire on the same beat.
                     acc: Phaser.Math.FloatBetween(0, CONFIG.production.spawnSeconds * 1000),
+                    id: this.nextProducerId++,
+                    cap: def.maxUnits ?? 0,
                 });
             }
         } else {
@@ -296,10 +301,15 @@ export class Buildings {
         const intervalMs = Math.max(250, CONFIG.production.spawnSeconds * 1000);
         for (const p of this.producers) {
             p.acc += delta;
-            if (p.acc >= intervalMs) {
-                p.acc -= intervalMs;
-                this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y);
+            if (p.acc < intervalMs) continue;
+            // A capped building pauses while it is already at its live-unit limit, holding the
+            // timer full so it spawns a replacement the instant one of its units dies/escapes.
+            if (p.cap > 0 && this.units.producerLivingCount(p.id) >= p.cap) {
+                p.acc = intervalMs;
+                continue;
             }
+            p.acc -= intervalMs;
+            this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y, p.id);
         }
         // Finish any site a peasant has hammered to completion (progress advanced elsewhere).
         for (let i = this.sites.length - 1; i >= 0; i--) {
