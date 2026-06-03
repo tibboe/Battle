@@ -405,6 +405,10 @@ export const CONFIG = {
         freeRadius: 340,
         spacingTight: 42,
         spacingLoose: 76,
+        // How hard units are shoved out of a building footprint (px/sec). Soft, so a crowd flows
+        // AROUND buildings rather than hard-stopping against them (keeps are never obstacles, so
+        // units can still reach and sack them).
+        obstaclePush: 280,
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

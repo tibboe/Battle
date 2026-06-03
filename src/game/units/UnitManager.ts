@@ -61,6 +61,7 @@ export class UnitManager {
     private readonly destX: Float32Array;
     private readonly destY: Float32Array;
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
     // Standing order PER PLAYER UNIT TYPE: the last command issued to a type, so units that spawn
     // later inherit it (a Move/Free keeps a rally point; auto = no standing order). Length nTypes.
     private standingOrder!: Uint8Array;
@@ -566,7 +567,58 @@ export class UnitManager {
 
         this.step(delta);
         this.applySeparation(delta);
+        this.applyObstacles(delta);
         this.drawHealthBars();
+    }
+
+    // Push units out of building footprints so they flow around buildings instead of through
+    // them. Soft (capped per frame) so a marching crowd slides around rather than hard-stopping;
+    // keeps are deliberately not in the list, so units can still reach and sack them.
+    private applyObstacles(delta: number) {
+        if (!this.obstacleProvider) return;
+        const obs = this.obstacleProvider();
+        if (obs.length === 0) return;
+        const maxStep = CONFIG.command.obstaclePush * (delta / 1000);
+        const unitR = CONFIG.separation.radius * 0.5;
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying) continue;
+            const ln = this.lane[i];
+            const yMin = this.laneY[ln] - this.laneHalf[ln];
+            const yMax = this.laneY[ln] + this.laneHalf[ln];
+            for (let o = 0; o < obs.length; o++) {
+                const ob = obs[o];
+                const dx = this.x[i] - ob.x;
+                const dy = this.y[i] - ob.y;
+                const minD = ob.r + unitR;
+                const d2 = dx * dx + dy * dy;
+                if (d2 >= minD * minD) continue;
+                let nx: number;
+                let ny: number;
+                if (d2 < 0.01) {
+                    // Dead-centre (e.g. just spawned inside its own producer): exit forwards.
+                    nx = (this.faction[i] === FACTION.player ? 1 : -1) * minD;
+                    ny = 0;
+                } else {
+                    const d = Math.sqrt(d2);
+                    const pen = minD - d;
+                    nx = (dx / d) * pen;
+                    ny = (dy / d) * pen;
+                }
+                const m = Math.hypot(nx, ny);
+                if (m > maxStep) { const s = maxStep / m; nx *= s; ny *= s; }
+                this.x[i] += nx;
+                this.y[i] = Phaser.Math.Clamp(this.y[i] + ny, yMin, yMax);
+                const sp = this.sprites[i]!;
+                sp.x = this.x[i];
+                sp.y = this.y[i];
+                sp.setDepth(this.y[i]);
+            }
+        }
+    }
+
+    // Wire the building system's footprints in (called once after buildings exist).
+    setObstacleProvider(fn: () => { x: number; y: number; r: number }[]) {
+        this.obstacleProvider = fn;
     }
 
     // ---- Spawning (driven externally by the production buildings) ----
@@ -803,6 +855,7 @@ export class UnitManager {
                     const dx = this.x[tgt] - this.x[i];
                     const dy = this.y[tgt] - this.y[i];
                     const d = Math.hypot(dx, dy) || 1;
+                    this.face(i, dx);
                     const stepLen = this.speed[i] * dt;
                     this.x[i] += (dx / d) * stepLen;
                     this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
@@ -826,6 +879,7 @@ export class UnitManager {
                         sprite.x = this.x[i];
                         sprite.y = this.y[i];
                         sprite.setDepth(this.y[i]);
+                        this.face(i, dx);
                         this.setMoving(i, true);
                     } else {
                         this.setMoving(i, false); // standing on post → idle
@@ -852,6 +906,7 @@ export class UnitManager {
                     sprite.x = this.x[i];
                     sprite.y = this.y[i];
                     sprite.setDepth(this.y[i]);
+                    this.face(i, dx);
                     this.setMoving(i, true);
                     // A unit commanded onto the enemy keep still sacks it.
                     if (this.faction[i] === FACTION.player && this.x[i] >= this.enemyKeepX) this.reachKeep(i);
@@ -873,6 +928,7 @@ export class UnitManager {
                 const dir = this.faction[i] === FACTION.player ? 1 : -1;
                 this.x[i] += dir * this.speed[i] * dt;
                 sprite.x = this.x[i];
+                this.face(i, dir);
                 this.setMoving(i, true);
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
                 if (reachedEnd) this.reachKeep(i);
@@ -932,6 +988,7 @@ export class UnitManager {
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
+                this.face(i, dx); // turn to face whatever we're striking
                 if (dx * dx + dy * dy <= reach2) {
                     this.attackCd[i] += this.typeAttackInterval[acting] * CONFIG.combat.attackIntervalScale;
                     this.playOneShot(i, 'attack', this.typeAttackAnimMs[acting]); // one swing per beat
@@ -1118,6 +1175,15 @@ export class UnitManager {
         if (this.moving[i] === v) return;
         this.moving[i] = v;
         if (this.state[i] === STATE.walk && this.animLock[i] <= 0) this.playStateAnim(i);
+    }
+
+    // Face the sprite along a horizontal direction (the art faces right, so flipX = facing left).
+    // Ignores tiny/zero dx so purely-vertical motion doesn't waggle the facing.
+    private face(i: number, dx: number) {
+        const s = this.sprites[i];
+        if (!s) return;
+        if (dx > 0.01) s.setFlipX(false);
+        else if (dx < -0.01) s.setFlipX(true);
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's

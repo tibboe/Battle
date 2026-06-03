@@ -147,6 +147,9 @@ export class GameScene extends Phaser.Scene {
             (faction, spot, x, y) => { this.commandBar.clearSelection(); this.selectionHud.selectBuild(faction, spot, x, y); },
         );
 
+        // Units flow around building footprints (keeps excluded, so they can still be sacked).
+        this.units.setObstacleProvider(() => this.buildings.obstacles());
+
         // Unified bottom selection HUD (replaces the old upgrade + build popups).
         this.selectionHud = new SelectionHud(this, this.uiLayer, this.worldLayer, this.units, this.resources, this.buildings);
 

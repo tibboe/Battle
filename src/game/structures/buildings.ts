@@ -75,6 +75,10 @@ export class Buildings {
     private nextProducerId = 0; // hands out a stable id per producer for its live-count cap
     private readonly sites: ConstructionSite[] = [];
 
+    // Soft collision footprints for the unit system (production buildings + Houses, NOT keeps —
+    // units must be able to reach a keep to sack it). Grows as buildings are constructed.
+    private readonly obstacleList: { x: number; y: number; r: number }[] = [];
+
     // Per-faction base geometry the peasant system needs: the Castle (bank) and the live list
     // of Houses (grows as the player builds more).
     private readonly keepPos: { x: number; y: number }[] = [];
@@ -189,6 +193,8 @@ export class Buildings {
         const p = this.slotPos(faction, spot);
         const img = this.place(buildingKey(faction, def.art), p.x, p.y, def.scale, flip);
         this.occupied[faction].add(spot);
+        // A base-footprint circle so units flow around the building rather than through it.
+        this.obstacleList.push({ x: p.x, y: p.y, r: img.displayWidth * 0.32 });
 
         if (def.produces) {
             // Combat producer: tappable for upgrades (player), and emits on a timer.
@@ -326,6 +332,11 @@ export class Buildings {
     // The live list of House (worker spawn) positions for a side — grows as Houses are built.
     housePositions(faction: Faction): { x: number; y: number }[] {
         return this.housePos[faction];
+    }
+
+    // Building footprints (production + Houses; never keeps) for the unit collision pass.
+    obstacles(): { x: number; y: number; r: number }[] {
+        return this.obstacleList;
     }
 
     // Empty, buildable spots for a side (not the keep/general/a building/under construction).
