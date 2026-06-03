@@ -3,7 +3,7 @@ import { CONFIG } from '../config';
 import { FACTION, UnitManager } from '../units/UnitManager';
 import {
     ORDER, Order, Shape, SHAPE, SHAPE_LABEL, TargetingMode,
-    formationSlots, spacingFor,
+    formationRank, formationSlots, spacingFor,
 } from '../units/commands';
 
 // The player's unit command system: selection (which unit TYPES are selected — driven by the
@@ -151,20 +151,21 @@ export class CommandBar {
             });
             return;
         }
-        // Move / Attack-move: arrange the selected units into the current formation.
+        // Move / Attack-move: arrange the selected units into the current formation. Slots come
+        // out front-row-first (nearest the enemy), so ordering the units front-to-back by type
+        // — knight, lancer, archer, monk — puts melee up front and support at the back.
         const group = this.gatherSelected();
         const slots = formationSlots(group.length, wx, wy, curShape, spacingFor(curTight), FACE);
-        // Front-most units (largest x) take the front slots so paths cross as little as possible.
-        group.sort((a, b) => b.x - a.x);
+        group.sort((a, b) => formationRank(a.type) - formationRank(b.type) || a.y - b.y);
         for (let k = 0; k < group.length; k++) {
             this.units.setOrder(group[k].i, order, slots[k].x, slots[k].y);
         }
     }
 
-    private gatherSelected(): { i: number; x: number; y: number }[] {
-        const out: { i: number; x: number; y: number }[] = [];
+    private gatherSelected(): { i: number; type: number; x: number; y: number }[] {
+        const out: { i: number; type: number; x: number; y: number }[] = [];
         this.units.forEachPlayerUnit((i, type, x, y) => {
-            if (this.selected.has(type)) out.push({ i, x, y });
+            if (this.selected.has(type)) out.push({ i, type, x, y });
         });
         return out;
     }

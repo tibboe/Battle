@@ -74,3 +74,13 @@ export function formationSlots(n: number, cx: number, cy: number, shape: Shape, 
 export function spacingFor(tight: boolean): number {
     return tight ? CONFIG.command.spacingTight : CONFIG.command.spacingLoose;
 }
+
+// Front-to-back ordering of unit types within a formation: melee soak up front, ranged and
+// support behind. Units not listed fall to the back (after the named ones). Keyed by the unit
+// `key` in CONFIG.unitTypes so retuning the roster doesn't break the order.
+const FRONT_TO_BACK = ['warrior', 'lancer', 'archer', 'monk'];
+export function formationRank(typeIndex: number): number {
+    const key = CONFIG.unitTypes[typeIndex]?.key ?? '';
+    const r = FRONT_TO_BACK.indexOf(key);
+    return r < 0 ? FRONT_TO_BACK.length + typeIndex : r;
+}
