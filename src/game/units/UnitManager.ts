@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
 import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
+import { ORDER, Order } from './commands';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -54,6 +55,11 @@ export class UnitManager {
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
     private readonly producer: Int32Array;    // id of the building that spawned this unit (-1 = none)
+    // Player command state. `order` is one of ORDER.*; (destX, destY) is the unit's formation
+    // slot / move target, or its hold/free anchor. Enemy + un-commanded player units stay auto.
+    private readonly order: Uint8Array;
+    private readonly destX: Float32Array;
+    private readonly destY: Float32Array;
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
 
     // Living (non-dying) units per producer id — lets a building cap how many it keeps alive.
@@ -177,6 +183,9 @@ export class UnitManager {
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
         this.producer = new Int32Array(this.capacity);
+        this.order = new Uint8Array(this.capacity);
+        this.destX = new Float32Array(this.capacity);
+        this.destY = new Float32Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -478,6 +487,43 @@ export class UnitManager {
         return this.livingByType[typeIndex * 2 + faction];
     }
 
+    // ---- Player commands (selection lives in the UI; orders are stored per unit here) ----
+
+    // Visit every living PLAYER unit (its index, type, and position). Used by the command UI to
+    // draw selection rings and to gather the units a command targets.
+    forEachPlayerUnit(cb: (i: number, type: number, x: number, y: number) => void) {
+        for (let i = 0; i < this.count; i++) {
+            if (this.faction[i] !== FACTION.player || this.state[i] === STATE.dying) continue;
+            cb(i, this.type[i], this.x[i], this.y[i]);
+        }
+    }
+
+    // Give unit `i` an order with an anchor / formation-slot at (ax, ay). The y is clamped into
+    // the lane band so a slot is always reachable. Resets the unit to walk so movement re-plans.
+    setOrder(i: number, order: Order, ax: number, ay: number) {
+        if (i < 0 || i >= this.count || this.state[i] === STATE.dying) return;
+        this.order[i] = order;
+        this.destX[i] = ax;
+        this.destY[i] = this.clampLaneY(ay);
+        this.target[i] = -1;
+        this.setState(i, STATE.walk);
+    }
+
+    // Clamp a world y into the lane band (so commanded destinations stay on the battlefield).
+    clampLaneY(y: number): number {
+        return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
+    }
+
+    // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
+    // commanded-onto-the-keep paths).
+    private reachKeep(i: number) {
+        this.onReachKeep(this.faction[i] as Faction);
+        this.livingByFaction[this.faction[i]]--;
+        this.livingByType[this.type[i] * 2 + this.faction[i]]--;
+        this.releaseProducer(i);
+        this.despawn(i);
+    }
+
     // Is any OPPOSING combat unit within `radius` of (x, y)? Used by the peasant system so
     // workers flee/die when an enemy army reaches their gathering line (Phase 4 harassment).
     // `faction` is the worker's own side — units of that side don't threaten it.
@@ -548,6 +594,9 @@ export class UnitManager {
         this.lane[i] = 0;
         this.type[i] = t;
         this.producer[i] = producerId;
+        this.order[i] = ORDER.auto; // fresh units march on the keep until commanded
+        this.destX[i] = 0;
+        this.destY[i] = 0;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
@@ -573,6 +622,7 @@ export class UnitManager {
         // Units look this far to pick an enemy to advance on; they only STRIKE within their own
         // (shorter) range. Squared once per pass.
         const aggro2 = CONFIG.combat.aggroRange * CONFIG.combat.aggroRange;
+        const free2 = CONFIG.command.freeRadius * CONFIG.command.freeRadius;
         for (let c = 0; c < this.numCells; c++) this.buckets[c].length = 0;
 
         // Bucket living units by x-cell (support units included — they are valid targets).
@@ -585,6 +635,14 @@ export class UnitManager {
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
 
+            // A Move order ignores everything (even a Monk's heals) — the unit just walks to its
+            // slot. Checked first so it applies to combat and support units alike.
+            if (this.order[i] === ORDER.move) {
+                this.target[i] = -1;
+                this.setState(i, STATE.walk);
+                continue;
+            }
+
             // Non-combat units don't engage; a support healer instead seeks a hurt ally.
             if (!this.typeCanAttack[this.type[i]]) {
                 if (this.typeHealAmount[this.type[i]] > 0) {
@@ -596,12 +654,14 @@ export class UnitManager {
                 continue;
             }
 
+            const ord = this.order[i];
             const range2 = this.faction[i] === FACTION.player
                 ? this.pRange2[this.type[i]]
                 : this.typeRange2[this.type[i]];
             // Perceive at least the aggro radius (so melee chase) but never less than the unit's
-            // own strike range (so long-range units still target everything they can hit).
-            const seek2 = Math.max(range2, aggro2);
+            // own strike range (so long-range units still target everything they can hit). A
+            // Hold order shrinks perception to strike range so the unit never leaves its post.
+            const seek2 = ord === ORDER.hold ? range2 : Math.max(range2, aggro2);
             const ci = this.cellOf(i);
             let best = -1;
             let bestD2 = Infinity;
@@ -616,10 +676,15 @@ export class UnitManager {
                     const dx = this.x[j] - this.x[i];
                     const dy = this.y[j] - this.y[i];
                     const d2 = dx * dx + dy * dy;
-                    if (d2 <= seek2 && d2 < bestD2) {
-                        bestD2 = d2;
-                        best = j;
+                    if (d2 > seek2 || d2 >= bestD2) continue;
+                    // Free roam only hunts enemies inside the ordered area (around the anchor).
+                    if (ord === ORDER.free) {
+                        const ax = this.x[j] - this.destX[i];
+                        const ay = this.y[j] - this.destY[i];
+                        if (ax * ax + ay * ay > free2) continue;
                     }
+                    bestD2 = d2;
+                    best = j;
                 }
             }
             this.target[i] = best;
@@ -701,30 +766,71 @@ export class UnitManager {
 
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;
+                const ln = this.lane[i];
+                const yMin = this.laneY[ln] - this.laneHalf[ln];
+                const yMax = this.laneY[ln] + this.laneHalf[ln];
+                const ord = this.order[i];
+
                 // Advance on an acquired-but-not-yet-reachable enemy: steer toward it in both
-                // axes so melee close the gap instead of marching past offset foes.
+                // axes so melee close the gap instead of marching past offset foes. A Holding
+                // unit never chases — it waits for the enemy to enter its strike range.
                 const tgt = this.target[i];
-                if (tgt >= 0 && tgt < this.count && this.state[tgt] !== STATE.dying
+                if (ord !== ORDER.hold && tgt >= 0 && tgt < this.count && this.state[tgt] !== STATE.dying
                     && this.faction[tgt] !== this.faction[i]) {
                     const dx = this.x[tgt] - this.x[i];
                     const dy = this.y[tgt] - this.y[i];
                     const d = Math.hypot(dx, dy) || 1;
                     const stepLen = this.speed[i] * dt;
                     this.x[i] += (dx / d) * stepLen;
-                    const ln = this.lane[i];
-                    this.y[i] = Phaser.Math.Clamp(
-                        this.y[i] + (dy / d) * stepLen,
-                        this.laneY[ln] - this.laneHalf[ln],
-                        this.laneY[ln] + this.laneHalf[ln],
-                    );
+                    this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
                     sprite.x = this.x[i];
                     sprite.y = this.y[i];
                     sprite.setDepth(this.y[i]);
                     continue;
                 }
-                // Funnel: drift toward the lane-path centre until within the tight path,
-                // so the streams from the spread-out buildings merge into one lane. Read
-                // live from config so the Dev panel's "Lane width" applies instantly.
+
+                // Hold / Free with nothing to fight: sit on the anchor, drifting back to it if
+                // separation (or a chase that ended) shoved the unit off its post.
+                if (ord === ORDER.hold || ord === ORDER.free) {
+                    const dx = this.destX[i] - this.x[i];
+                    const dy = this.destY[i] - this.y[i];
+                    const d = Math.hypot(dx, dy);
+                    if (d > CONFIG.command.holdReturn) {
+                        const stepLen = Math.min(this.speed[i] * dt, d);
+                        this.x[i] += (dx / d) * stepLen;
+                        this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
+                        sprite.x = this.x[i];
+                        sprite.y = this.y[i];
+                        sprite.setDepth(this.y[i]);
+                    }
+                    continue;
+                }
+
+                // Move / Attack-move: walk to the formation slot, then dig in (Hold) on arrival.
+                if (ord === ORDER.move || ord === ORDER.attackMove) {
+                    const dx = this.destX[i] - this.x[i];
+                    const dy = this.destY[i] - this.y[i];
+                    const d = Math.hypot(dx, dy);
+                    if (d <= CONFIG.command.arrive) {
+                        this.order[i] = ORDER.hold;
+                        this.destX[i] = this.x[i];
+                        this.destY[i] = this.y[i];
+                        this.target[i] = -1;
+                        continue;
+                    }
+                    const stepLen = Math.min(this.speed[i] * dt, d);
+                    this.x[i] += (dx / d) * stepLen;
+                    this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
+                    sprite.x = this.x[i];
+                    sprite.y = this.y[i];
+                    sprite.setDepth(this.y[i]);
+                    // A unit commanded onto the enemy keep still sacks it.
+                    if (this.faction[i] === FACTION.player && this.x[i] >= this.enemyKeepX) this.reachKeep(i);
+                    continue;
+                }
+
+                // ORDER.auto: the original flow — funnel into the lane-path centre, then march on
+                // the keep. Read lane width live so the Dev "Lane width" applies instantly.
                 const lane = CONFIG.lanes[this.lane[i]];
                 const half = lane.pathWidth * 0.5;
                 const off = this.laneY[this.lane[i]] - this.y[i]; // +ve = unit is above centre
@@ -739,14 +845,7 @@ export class UnitManager {
                 this.x[i] += dir * this.speed[i] * dt;
                 sprite.x = this.x[i];
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
-                if (reachedEnd) {
-                    // Damage the opposing keep, then recycle this unit.
-                    this.onReachKeep(this.faction[i] as Faction);
-                    this.livingByFaction[this.faction[i]]--;
-                    this.livingByType[this.type[i] * 2 + this.faction[i]]--;
-                    this.releaseProducer(i);
-                    this.despawn(i);
-                }
+                if (reachedEnd) this.reachKeep(i);
                 continue;
             }
 
@@ -1045,6 +1144,9 @@ export class UnitManager {
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
             this.producer[i] = this.producer[last];
+            this.order[i] = this.order[last];
+            this.destX[i] = this.destX[last];
+            this.destY[i] = this.destY[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

@@ -393,6 +393,20 @@ export const CONFIG = {
         },
     },
 
+    // Player unit commands (move / attack-move / hold / free + formations). Tunables for how
+    // ordered units behave. `arrive` is how close to its formation slot a unit must get to count
+    // as "arrived" (then it holds there). `holdReturn` is how far a holding/free unit may be
+    // shoved off its anchor before it walks back. `freeRadius` is the area around a Free order
+    // within which units hunt enemies. `spacingTight`/`spacingLoose` are the gaps between
+    // formation slots.
+    command: {
+        arrive: 20,
+        holdReturn: 26,
+        freeRadius: 340,
+        spacingTight: 42,
+        spacingLoose: 76,
+    },
+
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
     camera: {
         zoomMin: 0.1,

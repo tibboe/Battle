@@ -16,6 +16,8 @@ import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { SelectionHud } from '../ui/SelectionHud';
 import { SkillBar } from '../ui/SkillBar';
+import { CommandBar } from '../ui/CommandBar';
+import { TargetingMode } from '../units/commands';
 import { Hud, loadHud } from '../ui/Hud';
 import { Abilities } from '../abilities/Abilities';
 import { EnemyAI } from '../ai/EnemyAI';
@@ -35,6 +37,7 @@ export class GameScene extends Phaser.Scene {
     private unitPanel!: UnitPanel;
     private selectionHud!: SelectionHud;
     private skillBar!: SkillBar;
+    private commandBar!: CommandBar;
     private abilities!: Abilities;
     private devPanel!: DevPanel;
     private hud!: Hud;
@@ -43,8 +46,9 @@ export class GameScene extends Phaser.Scene {
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
 
-    // Skill targeting: when a skill is armed, the next field tap casts it at that point. A
-    // full-field overlay captures that tap; a ring follows the pointer to preview the area.
+    // Field targeting (shared by skills and unit commands): when a mode is active, the next field
+    // tap commits it at that point; a full-field overlay captures the tap, a drag still pans.
+    private targeting?: TargetingMode;
     private armedSkill?: string;
     private targetCatcher!: Phaser.GameObjects.Rectangle;
     private targetRing!: Phaser.GameObjects.Arc;
@@ -139,8 +143,8 @@ export class GameScene extends Phaser.Scene {
             this,
             this.worldLayer,
             this.units,
-            (tag, x, y) => this.selectionHud.selectUpgrades(tag, x, y),
-            (faction, spot, x, y) => this.selectionHud.selectBuild(faction, spot, x, y),
+            (tag, x, y) => { this.commandBar.clearSelection(); this.selectionHud.selectUpgrades(tag, x, y); },
+            (faction, spot, x, y) => { this.commandBar.clearSelection(); this.selectionHud.selectBuild(faction, spot, x, y); },
         );
 
         // Unified bottom selection HUD (replaces the old upgrade + build popups).
@@ -150,14 +154,27 @@ export class GameScene extends Phaser.Scene {
         this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units);
         this.skillBar = new SkillBar(this, this.uiLayer, (key) => this.toggleSkillTargeting(key));
 
-        // Tap blank ground to clear the selection (a tap, not a camera-drag).
+        // Player unit command system (selection + the bottom command bar + selection rings).
+        // Selecting units and selecting a building are mutually exclusive, so each clears the other.
+        this.commandBar = new CommandBar(
+            this, this.uiLayer, this.worldLayer, this.units,
+            (mode) => this.beginTargeting(mode),
+            () => this.selectionHud.clear(),
+        );
+
+        // Tap blank ground to clear any selection (a tap, not a camera-drag).
         const catcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
             .setOrigin(0, 0).setDepth(-100).setInteractive();
         this.worldLayer.add(catcher);
-        catcher.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectionHud.clear(); });
+        catcher.on('pointerup', (p: Phaser.Input.Pointer) => {
+            if (p.getDistance() >= 14) return;
+            this.selectionHud.clear();
+            this.commandBar.clearSelection();
+        });
 
-        // Skill targeting: a full-field overlay (above units/buildings) that captures the cast
-        // tap while a skill is armed, plus a ring that previews the target area under the pointer.
+        // Targeting overlay: while a skill or a unit command is being placed, a full-field overlay
+        // (above units/buildings) captures the placement tap; a drag still pans the camera. The
+        // golden ring is the skill preview; unit-command previews are drawn by the CommandBar.
         this.targetRing = this.add.circle(0, 0, CONFIG.abilities.arrowVolley.radius)
             .setStrokeStyle(3, 0xffe08a, 0.9).setFillStyle(0xffe08a, 0.08)
             .setDepth(CONFIG.world.height + 2500).setVisible(false);
@@ -167,18 +184,18 @@ export class GameScene extends Phaser.Scene {
         this.worldLayer.add(this.targetCatcher);
         this.targetCatcher.disableInteractive();
         this.targetCatcher.on('pointerup', (p: Phaser.Input.Pointer) => {
-            if (!this.armedSkill) return;
-            // A drag is a camera pan — stay armed so the player can line up the shot, then tap.
-            if (p.getDistance() >= 14) return;
+            if (!this.targeting || p.getDistance() >= 14) return; // a drag is a pan — stay armed
             const wp = this.cameras.main.getWorldPoint(p.x, p.y);
-            this.castArmedSkill(wp.x, wp.y);
-            this.cancelSkillTargeting();
+            const mode = this.targeting;
+            this.targeting = undefined;
+            this.targetCatcher.disableInteractive().setVisible(false);
+            mode.onCommit(wp.x, wp.y);
         });
-        // While armed, the preview ring tracks the pointer across the field.
+        // While targeting, route pointer drags to the active mode's preview.
         this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-            if (!this.armedSkill) return;
+            if (!this.targeting) return;
             const wp = this.cameras.main.getWorldPoint(p.x, p.y);
-            this.targetRing.setPosition(wp.x, wp.y);
+            this.targeting.onMove(wp.x, wp.y);
         });
 
         // Economy: the harvestable nodes and the peasants that Houses maintain to gather them.
@@ -189,8 +206,14 @@ export class GameScene extends Phaser.Scene {
         // The enemy's scripted build economy (spends its gathered income on a build order).
         this.enemyAI = new EnemyAI(this.buildings, this.resources);
 
-        // Right-edge unit roster/inspector: live counts + tap-for-stats.
-        this.unitPanel = new UnitPanel(this, this.uiLayer, this.units);
+        // Right-edge unit roster: live counts, tap a type to select it for commands, "All" to
+        // select everything. The ✎ stat-editing card stays behind the Dev toggle.
+        this.unitPanel = new UnitPanel(
+            this, this.uiLayer, this.units,
+            (i) => this.commandBar.toggleType(i),
+            () => this.commandBar.selectAll(),
+            (i) => this.commandBar.isTypeSelected(i),
+        );
 
         // Apply the remembered Dev-tools visibility now that the panels exist.
         this.setDevTools(this.hud.devOn);
@@ -275,37 +298,47 @@ export class GameScene extends Phaser.Scene {
     // toggle. The HUD owns its own debug line's visibility.
     private setDevTools(on: boolean) {
         this.devPanel.setVisible(on);
-        this.unitPanel.setVisible(on);
+        this.unitPanel.setDevEdit(on); // the roster stays player-visible; only the ✎ editor hides
     }
 
-    // ---- Skill targeting (arm a skill, then the next field tap casts it) ----
+    // ---- Field targeting (shared by skills + unit commands) ----
 
-    // Tapping a skill arms it; tapping the same armed skill again cancels. Won't arm a skill
-    // that is still cooling down.
-    private toggleSkillTargeting(key: string) {
-        if (this.armedSkill === key) {
-            this.cancelSkillTargeting();
-            return;
-        }
-        if (key === 'arrowVolley' && !this.abilities.volleyReady) return;
-
-        this.armedSkill = key;
-        this.skillBar.setArmed(key);
-        this.targetRing.setRadius(CONFIG.abilities.arrowVolley.radius).setVisible(true);
+    // Arm a targeting mode: show the capture overlay and route the next field tap to it. Arming a
+    // new mode cancels any prior one.
+    beginTargeting(mode: TargetingMode) {
+        if (this.targeting) this.targeting.onCancel();
+        this.targeting = mode;
         this.targetCatcher.setVisible(true).setInteractive();
     }
 
-    private cancelSkillTargeting() {
-        this.armedSkill = undefined;
-        this.skillBar.setArmed(undefined);
-        this.targetRing.setVisible(false);
+    private cancelTargeting() {
+        if (this.targeting) this.targeting.onCancel();
+        this.targeting = undefined;
         this.targetCatcher.disableInteractive().setVisible(false);
     }
 
-    private castArmedSkill(x: number, y: number) {
-        if (this.armedSkill === 'arrowVolley') {
-            this.abilities.castArrowVolley(FACTION.player, x, y);
+    // Tapping a skill arms its targeting; tapping the same armed skill again cancels. Won't arm a
+    // skill that is still cooling down.
+    private toggleSkillTargeting(key: string) {
+        if (this.armedSkill === key) {
+            this.cancelTargeting();
+            return;
         }
+        if (key === 'arrowVolley' && !this.abilities.volleyReady) return;
+        this.armedSkill = key;
+        this.skillBar.setArmed(key);
+        this.targetRing.setRadius(CONFIG.abilities.arrowVolley.radius).setVisible(true);
+        this.beginTargeting({
+            onMove: (wx, wy) => this.targetRing.setPosition(wx, wy),
+            onCommit: (wx, wy) => { this.abilities.castArrowVolley(FACTION.player, wx, wy); this.disarmSkill(); },
+            onCancel: () => this.disarmSkill(),
+        });
+    }
+
+    private disarmSkill() {
+        this.armedSkill = undefined;
+        this.skillBar.setArmed(undefined);
+        this.targetRing.setVisible(false);
     }
 
     private onResize() {
@@ -314,6 +347,7 @@ export class GameScene extends Phaser.Scene {
         this.unitPanel.layout();
         this.selectionHud.layout();
         this.skillBar.layout();
+        this.commandBar.layout();
         this.cameraController.handleResize();
     }
 
@@ -329,6 +363,7 @@ export class GameScene extends Phaser.Scene {
         this.floatingText.update(delta);
         this.projectiles.update(delta);
         this.unitPanel.update();
+        this.commandBar.update();
         this.skillBar.update({
             arrowVolley: {
                 ready: this.abilities.volleyReady,
