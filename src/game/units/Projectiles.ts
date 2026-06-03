@@ -9,7 +9,7 @@ import { arrowKey } from './animations';
 // A fixed pool flies allocation-free; if every slot is busy the oldest is reused.
 
 const POOL = 96;          // larger pool since landed arrows linger before recycling
-const SPEED = 1500;       // px/sec for straight shots
+const SPEED = 900;        // px/sec for normal shots (slow enough that the arc reads)
 const MIN_MS = 60;        // floor so point-blank shots still read
 const SCALE = 0.7;
 const DEPTH = 1_500_000;  // above units (depth = world-y, ≤ ~1900), below floating numbers
@@ -64,10 +64,12 @@ export class Projectiles {
             .setVisible(true);
     }
 
-    // Straight cosmetic arrow.
+    // The Archer's normal shot: a cosmetic arrow that arcs up and over to the target (damage
+    // was already applied at the strike beat, so this is pure feel).
     fire(x0: number, y0: number, x1: number, y1: number, faction: number) {
         const dist = Math.hypot(x1 - x0, y1 - y0);
-        this.launch(x0, y0, x1, y1, faction, (dist / SPEED) * 1000, 0);
+        const arc = Phaser.Math.Clamp(dist * 0.32, 40, 200); // height of the lob
+        this.launch(x0, y0, x1, y1, faction, (dist / SPEED) * 1000, arc);
     }
 
     // Arcing long shot; onLand fires where it touches down.

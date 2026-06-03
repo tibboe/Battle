@@ -118,7 +118,7 @@ export const CONFIG = {
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
         { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot',
-          hp: 18, damage: 8, range: 240, attackInterval: 750, moveSpeed: 76,
+          hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
         { key: 'monk', art: 'monk', role: 'support',
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
