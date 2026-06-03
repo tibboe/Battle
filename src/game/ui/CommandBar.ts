@@ -67,12 +67,13 @@ export class CommandBar {
             .setScrollFactor(0).setDepth(BAR_DEPTH + 1).setVisible(false);
         uiLayer.add([this.bg, this.title]);
 
-        // Stance row.
+        // Stance row. "Auto" resumes the default auto-advance and clears the standing order.
         this.stanceBtns = [
             { order: ORDER.move, btn: this.mkBtn(uiLayer, 'Move', () => this.startPlacing(ORDER.move)) },
             { order: ORDER.attackMove, btn: this.mkBtn(uiLayer, 'Atk-Move', () => this.startPlacing(ORDER.attackMove)) },
             { order: ORDER.hold, btn: this.mkBtn(uiLayer, 'Hold', () => this.issueHold()) },
             { order: ORDER.free, btn: this.mkBtn(uiLayer, 'Free', () => this.startPlacing(ORDER.free)) },
+            { order: ORDER.auto, btn: this.mkBtn(uiLayer, 'Auto', () => this.issueAuto()) },
         ];
         // Formation row.
         this.shapeBtns = ([SHAPE.rectangle, SHAPE.square, SHAPE.line] as Shape[]).map((s) => ({
@@ -127,11 +128,29 @@ export class CommandBar {
 
     // ---- issuing orders ----
 
-    // Hold is immediate: every selected unit digs in where it currently stands.
+    // Hold is immediate: every selected unit digs in where it currently stands. The standing
+    // order rallies later reinforcements of each type to that type's current hold-line centre.
     private issueHold() {
+        const sum = new Map<number, { x: number; y: number; n: number }>();
         this.units.forEachPlayerUnit((i, type, x, y) => {
-            if (this.selected.has(type)) this.units.setOrder(i, ORDER.hold, x, y);
+            if (!this.selected.has(type)) return;
+            this.units.setOrder(i, ORDER.hold, x, y);
+            const s = sum.get(type) ?? { x: 0, y: 0, n: 0 };
+            s.x += x; s.y += y; s.n++;
+            sum.set(type, s);
         });
+        for (const t of this.selected) {
+            const s = sum.get(t);
+            if (s) this.units.setStandingOrder(t, ORDER.hold, s.x / s.n, s.y / s.n);
+        }
+    }
+
+    // Auto is immediate: drop the standing order and let the selected units resume advancing.
+    private issueAuto() {
+        this.units.forEachPlayerUnit((i, type) => {
+            if (this.selected.has(type)) this.units.setOrder(i, ORDER.auto, 0, 0);
+        });
+        for (const t of this.selected) this.units.setStandingOrder(t, ORDER.auto, 0, 0);
     }
 
     // Move / Attack-move / Free need a target point — arm a targeting mode for the next tap.
@@ -149,6 +168,7 @@ export class CommandBar {
             this.units.forEachPlayerUnit((i, type) => {
                 if (this.selected.has(type)) this.units.setOrder(i, ORDER.free, wx, wy);
             });
+            this.setStandingForSelected(order, wx, wy);
             return;
         }
         // Move / Attack-move: arrange the selected units into the current formation. Slots come
@@ -160,6 +180,13 @@ export class CommandBar {
         for (let k = 0; k < group.length; k++) {
             this.units.setOrder(group[k].i, order, slots[k].x, slots[k].y);
         }
+        // Reinforcements rally to the formation's centre (the tap point).
+        this.setStandingForSelected(order, wx, wy);
+    }
+
+    // Persist the issued order per selected type, so units that spawn later inherit it.
+    private setStandingForSelected(order: Order, x: number, y: number) {
+        for (const t of this.selected) this.units.setStandingOrder(t, order, x, y);
     }
 
     private gatherSelected(): { i: number; type: number; x: number; y: number }[] {
@@ -243,6 +270,6 @@ export class CommandBar {
         for (const s of this.shapeBtns) { s.btn.setPosition(x, row2); x += s.btn.width + 6; }
         x += 10;
         for (const d of this.densityBtns) { d.btn.setPosition(x, row2); x += d.btn.width + 6; }
-        this.clearBtn.setPosition(W - this.clearBtn.width - PAD, row1);
+        this.clearBtn.setPosition(W - this.clearBtn.width - PAD, row2);
     }
 }

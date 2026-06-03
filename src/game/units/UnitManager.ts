@@ -60,6 +60,12 @@ export class UnitManager {
     private readonly order: Uint8Array;
     private readonly destX: Float32Array;
     private readonly destY: Float32Array;
+    private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    // Standing order PER PLAYER UNIT TYPE: the last command issued to a type, so units that spawn
+    // later inherit it (a Move/Free keeps a rally point; auto = no standing order). Length nTypes.
+    private standingOrder!: Uint8Array;
+    private standingX!: Float32Array;
+    private standingY!: Float32Array;
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
 
     // Living (non-dying) units per producer id — lets a building cap how many it keeps alive.
@@ -186,6 +192,7 @@ export class UnitManager {
         this.order = new Uint8Array(this.capacity);
         this.destX = new Float32Array(this.capacity);
         this.destY = new Float32Array(this.capacity);
+        this.moving = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -248,6 +255,9 @@ export class UnitManager {
         this.nTypes = nTypes;
         this.pairMul = new Float32Array(nTypes * nTypes);
         this.livingByType = new Int32Array(nTypes * 2);
+        this.standingOrder = new Uint8Array(nTypes); // all ORDER.auto at match start
+        this.standingX = new Float32Array(nTypes);
+        this.standingY = new Float32Array(nTypes);
         const matrix = CONFIG.combat.matrix;
         for (let a = 0; a < nTypes; a++) {
             const row = matrix[types[a].weapon];
@@ -509,6 +519,15 @@ export class UnitManager {
         this.setState(i, STATE.walk);
     }
 
+    // Record the standing order for a player unit type, so units of that type that SPAWN later
+    // inherit it (with the given rally point). Pass ORDER.auto to clear it (resume auto-advance).
+    setStandingOrder(typeIndex: number, order: Order, x: number, y: number) {
+        if (typeIndex < 0 || typeIndex >= this.nTypes) return;
+        this.standingOrder[typeIndex] = order;
+        this.standingX[typeIndex] = x;
+        this.standingY[typeIndex] = y;
+    }
+
     // Clamp a world y into the lane band (so commanded destinations stay on the battlefield).
     clampLaneY(y: number): number {
         return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
@@ -594,9 +613,13 @@ export class UnitManager {
         this.lane[i] = 0;
         this.type[i] = t;
         this.producer[i] = producerId;
-        this.order[i] = ORDER.auto; // fresh units march on the keep until commanded
-        this.destX[i] = 0;
-        this.destY[i] = 0;
+        // Inherit the type's standing order so reinforcements join the last command given to
+        // that type; otherwise march on the keep (auto). Enemy units never have a standing order.
+        const standing = faction === FACTION.player ? this.standingOrder[t] : ORDER.auto;
+        this.order[i] = standing;
+        this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
+        this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        this.moving[i] = 1; // spawns marching (walk anim)
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
@@ -786,6 +809,7 @@ export class UnitManager {
                     sprite.x = this.x[i];
                     sprite.y = this.y[i];
                     sprite.setDepth(this.y[i]);
+                    this.setMoving(i, true);
                     continue;
                 }
 
@@ -802,6 +826,9 @@ export class UnitManager {
                         sprite.x = this.x[i];
                         sprite.y = this.y[i];
                         sprite.setDepth(this.y[i]);
+                        this.setMoving(i, true);
+                    } else {
+                        this.setMoving(i, false); // standing on post → idle
                     }
                     continue;
                 }
@@ -816,6 +843,7 @@ export class UnitManager {
                         this.destX[i] = this.x[i];
                         this.destY[i] = this.y[i];
                         this.target[i] = -1;
+                        this.setMoving(i, false); // arrived → stand idle
                         continue;
                     }
                     const stepLen = Math.min(this.speed[i] * dt, d);
@@ -824,6 +852,7 @@ export class UnitManager {
                     sprite.x = this.x[i];
                     sprite.y = this.y[i];
                     sprite.setDepth(this.y[i]);
+                    this.setMoving(i, true);
                     // A unit commanded onto the enemy keep still sacks it.
                     if (this.faction[i] === FACTION.player && this.x[i] >= this.enemyKeepX) this.reachKeep(i);
                     continue;
@@ -844,6 +873,7 @@ export class UnitManager {
                 const dir = this.faction[i] === FACTION.player ? 1 : -1;
                 this.x[i] += dir * this.speed[i] * dt;
                 sprite.x = this.x[i];
+                this.setMoving(i, true);
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
                 if (reachedEnd) this.reachKeep(i);
                 continue;
@@ -1069,15 +1099,25 @@ export class UnitManager {
         this.playStateAnim(i);
     }
 
-    // Play the looping animation that matches a unit's current state (walk, or attack/heal).
+    // Play the looping animation that matches a unit's current state. Engaged units REST in idle
+    // between strikes/heals; a unit in walk state plays walk only while actually locomoting —
+    // a unit standing on its post (holding / arrived) shows idle, not a march in place.
     private playStateAnim(i: number) {
         const sprite = this.sprites[i];
         if (!sprite) return;
         const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
-        // Engaged units REST in idle between strikes/heals (each strike plays a one-shot swing);
-        // marching units run.
-        sprite.play(animKey(art, name, this.state[i] === STATE.attack ? 'idle' : 'walk'));
+        const walking = this.state[i] === STATE.walk && this.moving[i] === 1;
+        sprite.play(animKey(art, name, walking ? 'walk' : 'idle'));
+    }
+
+    // Flip a unit's locomotion (walk vs idle) and reflect it immediately when it's in a plain
+    // walk pose (not attacking, not mid one-shot). Called from the step loop each frame.
+    private setMoving(i: number, m: boolean) {
+        const v = m ? 1 : 0;
+        if (this.moving[i] === v) return;
+        this.moving[i] = v;
+        if (this.state[i] === STATE.walk && this.animLock[i] <= 0) this.playStateAnim(i);
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
@@ -1147,6 +1187,7 @@ export class UnitManager {
             this.order[i] = this.order[last];
             this.destX[i] = this.destX[last];
             this.destY[i] = this.destY[last];
+            this.moving[i] = this.moving[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;
