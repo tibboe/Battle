@@ -608,10 +608,7 @@ export class UnitManager {
                 if (m > maxStep) { const s = maxStep / m; nx *= s; ny *= s; }
                 this.x[i] += nx;
                 this.y[i] = Phaser.Math.Clamp(this.y[i] + ny, yMin, yMax);
-                const sp = this.sprites[i]!;
-                sp.x = this.x[i];
-                sp.y = this.y[i];
-                sp.setDepth(this.y[i]);
+                this.syncSprite(i);
             }
         }
     }
@@ -859,9 +856,7 @@ export class UnitManager {
                     const stepLen = this.speed[i] * dt;
                     this.x[i] += (dx / d) * stepLen;
                     this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
-                    sprite.x = this.x[i];
-                    sprite.y = this.y[i];
-                    sprite.setDepth(this.y[i]);
+                    this.syncSprite(i);
                     this.setMoving(i, true);
                     continue;
                 }
@@ -876,9 +871,7 @@ export class UnitManager {
                         const stepLen = Math.min(this.speed[i] * dt, d);
                         this.x[i] += (dx / d) * stepLen;
                         this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
-                        sprite.x = this.x[i];
-                        sprite.y = this.y[i];
-                        sprite.setDepth(this.y[i]);
+                        this.syncSprite(i);
                         this.face(i, dx);
                         this.setMoving(i, true);
                     } else {
@@ -903,9 +896,7 @@ export class UnitManager {
                     const stepLen = Math.min(this.speed[i] * dt, d);
                     this.x[i] += (dx / d) * stepLen;
                     this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
-                    sprite.x = this.x[i];
-                    sprite.y = this.y[i];
-                    sprite.setDepth(this.y[i]);
+                    this.syncSprite(i);
                     this.face(i, dx);
                     this.setMoving(i, true);
                     // A unit commanded onto the enemy keep still sacks it.
@@ -1184,6 +1175,14 @@ export class UnitManager {
         if (!s) return;
         if (dx > 0.01) s.setFlipX(false);
         else if (dx < -0.01) s.setFlipX(true);
+    }
+
+    // Push a unit's logical (x, y) onto its sprite, sorting by base-y so nearer units draw in front.
+    private syncSprite(i: number) {
+        const s = this.sprites[i]!;
+        s.x = this.x[i];
+        s.y = this.y[i];
+        s.setDepth(this.y[i]);
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
