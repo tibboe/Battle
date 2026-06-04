@@ -111,6 +111,13 @@ async function serveStatic(req, res) {
 const server = createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
 
+    // Human-friendly stats dashboard (vanilla HTML, fetches the API below).
+    if ((url.pathname === '/stats' || url.pathname === '/dashboard') && req.method === 'GET') {
+        const html = await readFile(join(process.cwd(), 'server', 'dashboard.html')).catch(() => null);
+        if (html) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html); return; }
+        res.writeHead(404); res.end('Dashboard not found'); return;
+    }
+
     if (url.pathname === '/api/matches' && req.method === 'POST') {
         try {
             const summary = JSON.parse(await readBody(req));

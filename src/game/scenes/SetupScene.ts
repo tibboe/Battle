@@ -129,21 +129,27 @@ export class SetupScene extends Phaser.Scene {
             fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', backgroundColor: '#6a3a3a', padding: { x: 12, y: 8 },
         }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(21).setInteractive({ useHandCursor: true });
         reset.on('pointerup', () => { resetSettings(); window.location.reload(); });
+        const stats = this.add.text(PAD + reset.width + 8, h - FOOTER_H / 2, '📊 Stats', {
+            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', backgroundColor: '#33455a', padding: { x: 12, y: 8 },
+        }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(21).setInteractive({ useHandCursor: true });
+        stats.on('pointerup', () => window.open('/stats', '_blank'));
         const start = this.add.text(w - PAD, h - FOOTER_H / 2, '▶  Start Battle', {
             fontFamily: 'monospace', fontSize: '20px', color: '#ffffff', backgroundColor: '#2a8c4a', padding: { x: 20, y: 10 }, fontStyle: 'bold',
         }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(21).setInteractive({ useHandCursor: true });
         start.on('pointerup', () => this.scene.start('Game'));
-        this.footer = [bar, reset, start];
+        this.footer = [bar, reset, stats, start];
     }
 
     private onResize() {
         // Reposition the screen-fixed footer and re-clamp the scroll to the new viewport.
         const w = this.scale.width;
         const h = this.scale.height;
-        const [bar, reset, start] = this.footer as [Phaser.GameObjects.Rectangle, Phaser.GameObjects.Text, Phaser.GameObjects.Text];
+        const [bar, reset, stats, start] = this.footer as [Phaser.GameObjects.Rectangle, Phaser.GameObjects.Text, Phaser.GameObjects.Text, Phaser.GameObjects.Text];
+        const cy = h - FOOTER_H / 2;
         bar.setPosition(0, h - FOOTER_H).setSize(w, FOOTER_H);
-        reset.setPosition(PAD, h - FOOTER_H / 2);
-        start.setPosition(w - PAD, h - FOOTER_H / 2);
+        reset.setPosition(PAD, cy);
+        stats.setPosition(PAD + reset.width + 8, cy);
+        start.setPosition(w - PAD, cy);
         this.scrollBy(0);
     }
 }
