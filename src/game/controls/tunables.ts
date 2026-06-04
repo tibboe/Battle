@@ -24,6 +24,7 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 // Build the tunables list against the current CONFIG. Sections appear in first-mention order.
 export function buildTunables(): Setting[] {
     const av = CONFIG.abilities.arrowVolley;
+    const merc = CONFIG.abilities.mercenaries;
     const settings: Setting[] = [
         { section: 'Production', label: 'Spawn secs', get: () => CONFIG.production.spawnSeconds, set: (v) => (CONFIG.production.spawnSeconds = v), step: 1, min: 1, max: 30, live: true, fmt: (v) => `${v}s` },
 
@@ -48,6 +49,11 @@ export function buildTunables(): Setting[] {
         { section: 'Skills', label: 'Volley hit r', get: () => av.hitRadius, set: (v) => (av.hitRadius = v), step: 5, min: 5, max: 120, live: true, fmt: (v) => `${v}px` },
         { section: 'Skills', label: 'Volley rain', get: () => av.duration, set: (v) => (av.duration = v), step: 200, min: 0, max: 5000, live: true, fmt: (v) => `${v}ms` },
         { section: 'Skills', label: 'Volley cd', get: () => av.cooldown, set: (v) => (av.cooldown = v), step: 1000, min: 0, max: 30000, live: true, fmt: (v) => `${v / 1000}s` },
+
+        { section: 'Skills', label: 'Mercs count', get: () => merc.count, set: (v) => (merc.count = v), step: 1, min: 1, max: 20, live: true },
+        { section: 'Skills', label: 'Mercs spread', get: () => merc.spread, set: (v) => (merc.spread = v), step: 10, min: 20, max: 400, live: true, fmt: (v) => `${v}px` },
+        { section: 'Skills', label: 'Mercs gold', get: () => merc.cost, set: (v) => (merc.cost = v), step: 10, min: 0, max: 500, live: true },
+        { section: 'Skills', label: 'Mercs cd', get: () => merc.cooldown, set: (v) => (merc.cooldown = v), step: 1000, min: 0, max: 60000, live: true, fmt: (v) => `${v / 1000}s` },
 
         { section: 'Battlefield', label: 'Lane width', get: () => CONFIG.lanes[0].pathWidth, set: (v) => (CONFIG.lanes[0].pathWidth = v), step: 20, min: 40, max: 600, live: true },
         { section: 'Battlefield', label: 'Map width', get: () => CONFIG.world.width, set: (v) => (CONFIG.world.width = v), step: 500, min: 2000, max: 8000, live: false },

@@ -158,7 +158,7 @@ export class GameScene extends Phaser.Scene {
         this.selectionHud = new SelectionHud(this, this.uiLayer, this.worldLayer, this.units, this.resources, this.buildings);
 
         // Player-cast skills: the manager (cooldowns + the arrow rain) and the left-edge dock.
-        this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units);
+        this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units, this.resources);
         this.skillBar = new SkillBar(this, this.uiLayer, (key) => this.toggleSkillTargeting(key));
 
         // Player unit command system (selection + the bottom command bar + selection rings).
@@ -338,15 +338,30 @@ export class GameScene extends Phaser.Scene {
             this.cancelTargeting();
             return;
         }
-        if (key === 'arrowVolley' && !this.abilities.volleyReady) return;
+        if (!this.skillReady(key)) return;
         this.armedSkill = key;
         this.skillBar.setArmed(key);
-        this.targetRing.setRadius(CONFIG.abilities.arrowVolley.radius).setVisible(true);
+        this.targetRing.setRadius(this.skillRadius(key)).setVisible(true);
         this.beginTargeting({
             onMove: (wx, wy) => this.targetRing.setPosition(wx, wy),
-            onCommit: (wx, wy) => { this.abilities.castArrowVolley(FACTION.player, wx, wy); this.disarmSkill(); },
+            onCommit: (wx, wy) => { this.castSkill(key, wx, wy); this.disarmSkill(); },
             onCancel: () => this.disarmSkill(),
         });
+    }
+
+    private skillReady(key: string): boolean {
+        if (key === 'arrowVolley') return this.abilities.volleyReady;
+        if (key === 'mercenaries') return this.abilities.mercReady;
+        return false;
+    }
+
+    private skillRadius(key: string): number {
+        return key === 'mercenaries' ? CONFIG.abilities.mercenaries.spread : CONFIG.abilities.arrowVolley.radius;
+    }
+
+    private castSkill(key: string, x: number, y: number) {
+        if (key === 'arrowVolley') this.abilities.castArrowVolley(FACTION.player, x, y);
+        else if (key === 'mercenaries') this.abilities.castMercenaries(FACTION.player, x, y);
     }
 
     private disarmSkill() {
@@ -384,6 +399,11 @@ export class GameScene extends Phaser.Scene {
                 ready: this.abilities.volleyReady,
                 frac: this.abilities.volleyCooldownFrac,
                 seconds: this.abilities.volleyCooldownSeconds,
+            },
+            mercenaries: {
+                ready: this.abilities.mercReady,
+                frac: this.abilities.mercCooldownFrac,
+                seconds: this.abilities.mercCooldownSeconds,
             },
         });
 

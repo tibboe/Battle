@@ -33,7 +33,7 @@ export function serializeSettings() {
         production: { spawnSeconds: CONFIG.production.spawnSeconds },
         combat: { attackIntervalScale: CONFIG.combat.attackIntervalScale, hpScale: CONFIG.combat.hpScale },
         resources: { gold: r.gold, stone: r.stone, wood: r.wood, food: r.food },
-        abilities: { arrowVolley: { ...CONFIG.abilities.arrowVolley } },
+        abilities: { arrowVolley: { ...CONFIG.abilities.arrowVolley }, mercenaries: { ...CONFIG.abilities.mercenaries } },
         units,
         upgrades: getUpgradeLevels(),
     };
@@ -105,6 +105,12 @@ export function applySavedSettings() {
         const av = CONFIG.abilities.arrowVolley as Record<string, number>;
         for (const k of Object.keys(av)) {
             if (isNum(s.abilities.arrowVolley[k])) av[k] = s.abilities.arrowVolley[k];
+        }
+    }
+    if (s.abilities && s.abilities.mercenaries) {
+        const m = CONFIG.abilities.mercenaries as Record<string, number>;
+        for (const k of Object.keys(m)) {
+            if (isNum(s.abilities.mercenaries[k])) m[k] = s.abilities.mercenaries[k];
         }
     }
     if (s.units) {

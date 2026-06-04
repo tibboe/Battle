@@ -403,6 +403,15 @@ export const CONFIG = {
             skySpread: 320,
             fallSpeed: 1300,
         },
+        // Mercenaries (player skill): hire a squad of archers that drop in at the tapped point and
+        // fight for you (normal player archers). `count` archers scatter within `spread` px; `cost`
+        // gold is paid on cast (0 = free); `cooldown` ms between casts.
+        mercenaries: {
+            count: 4,
+            spread: 90,
+            cost: 50,
+            cooldown: 20000,
+        },
     },
 
     // Player unit commands (move / attack-move / hold / free + formations). Tunables for how

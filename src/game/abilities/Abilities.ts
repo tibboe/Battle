@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { Projectiles } from '../units/Projectiles';
 import { Faction, UnitManager } from '../units/UnitManager';
+import { ResourceStore } from '../economy/ResourceStore';
 import { matchStats } from '../stats/MatchStats';
 
 // Player-cast battlefield skills. Right now there is exactly one — the Arrow Volley — but this
@@ -25,8 +26,10 @@ export class Abilities {
     private readonly worldLayer: Phaser.GameObjects.Layer;
     private readonly projectiles: Projectiles;
     private readonly units: UnitManager;
+    private readonly store: ResourceStore;
 
     private volleyCd = 0;                       // ms left on the Arrow Volley cooldown
+    private mercCd = 0;                         // ms left on the Mercenaries cooldown
     private readonly pending: PendingArrow[] = [];
 
     constructor(
@@ -34,11 +37,13 @@ export class Abilities {
         worldLayer: Phaser.GameObjects.Layer,
         projectiles: Projectiles,
         units: UnitManager,
+        store: ResourceStore,
     ) {
         this.scene = scene;
         this.worldLayer = worldLayer;
         this.projectiles = projectiles;
         this.units = units;
+        this.store = store;
     }
 
     // ---- Arrow Volley ----
@@ -81,8 +86,45 @@ export class Abilities {
         return true;
     }
 
+    // ---- Mercenaries ----
+
+    get mercReady(): boolean {
+        return this.mercCd <= 0;
+    }
+
+    get mercCooldownFrac(): number {
+        const cd = CONFIG.abilities.mercenaries.cooldown;
+        return cd > 0 ? 1 - this.mercCd / cd : 1;
+    }
+
+    get mercCooldownSeconds(): number {
+        return Math.ceil(this.mercCd / 1000);
+    }
+
+    // Hire a squad of archers that drop in around (x, y) and fight as normal player archers.
+    // Returns false if cooling down or you can't afford the gold cost (no cooldown consumed then).
+    castMercenaries(faction: Faction, x: number, y: number): boolean {
+        if (this.mercCd > 0) return false;
+        const m = CONFIG.abilities.mercenaries;
+        if (m.cost > 0 && !this.store.spend(faction, { gold: m.cost })) return false;
+        this.mercCd = m.cooldown;
+        matchStats.skillCast(faction);
+
+        const archer = CONFIG.unitTypes.findIndex((u) => u.key === 'archer');
+        if (archer >= 0) {
+            for (let k = 0; k < m.count; k++) {
+                const a = Math.random() * Math.PI * 2;
+                const r = Math.sqrt(Math.random()) * m.spread;
+                this.units.spawnAt(faction, archer, x + Math.cos(a) * r, y + Math.sin(a) * r);
+            }
+        }
+        this.ring(x, y, m.spread, 0x9fd0ff, 700);
+        return true;
+    }
+
     update(delta: number) {
         if (this.volleyCd > 0) this.volleyCd = Math.max(0, this.volleyCd - delta);
+        if (this.mercCd > 0) this.mercCd = Math.max(0, this.mercCd - delta);
 
         if (this.pending.length === 0) return;
         const av = CONFIG.abilities.arrowVolley;
@@ -101,15 +143,20 @@ export class Abilities {
 
     // A brief ground ring marking where the volley is landing; it fades over the rain window.
     private markTarget(x: number, y: number, radius: number, duration: number) {
+        this.ring(x, y, radius, 0xffe08a, duration + 400);
+    }
+
+    // A fading ground ring (skill cast feedback).
+    private ring(x: number, y: number, radius: number, color: number, duration: number) {
         const ring = this.scene.add.circle(x, y, radius)
-            .setStrokeStyle(3, 0xffe08a, 0.9)
-            .setFillStyle(0xffe08a, 0.08)
+            .setStrokeStyle(3, color, 0.9)
+            .setFillStyle(color, 0.08)
             .setDepth(y);
         this.worldLayer.add(ring);
         this.scene.tweens.add({
             targets: ring,
             alpha: { from: 0.9, to: 0 },
-            duration: duration + 400,
+            duration,
             onComplete: () => ring.destroy(),
         });
     }

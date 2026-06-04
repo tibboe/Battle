@@ -20,6 +20,7 @@ interface SkillDef {
 
 const SKILLS: SkillDef[] = [
     { key: 'arrowVolley', icon: '🏹', label: 'Volley' },
+    { key: 'mercenaries', icon: '💰', label: 'Mercs' },
 ];
 
 // Per-skill live state the scene feeds in each frame.
