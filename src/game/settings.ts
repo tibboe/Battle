@@ -16,10 +16,12 @@ export function serializeSettings() {
         const o: Record<string, number> = {
             hp: u.hp, damage: u.damage, range: u.range, attackInterval: u.attackInterval,
             moveSpeed: u.moveSpeed, scale: u.scale, footAnchor: u.footAnchor,
+            foodCost: u.foodCost ?? 0,
         };
         if (u.heal) { o.healAmount = u.heal.amount; o.healInterval = u.heal.interval; }
         units[u.key] = o;
     }
+    const r = CONFIG.resources.start;
     return {
         lane: { thickness: lane.thickness, pathWidth: lane.pathWidth, funnelSpeed: lane.funnelSpeed },
         spawn: { player: CONFIG.spawn.unitsTarget.player, enemy: CONFIG.spawn.unitsTarget.enemy },
@@ -30,6 +32,8 @@ export function serializeSettings() {
         debug: { damageNumbers: CONFIG.debug.damageNumbers },
         production: { spawnSeconds: CONFIG.production.spawnSeconds },
         combat: { attackIntervalScale: CONFIG.combat.attackIntervalScale, hpScale: CONFIG.combat.hpScale },
+        resources: { gold: r.gold, stone: r.stone, wood: r.wood, food: r.food },
+        abilities: { arrowVolley: { ...CONFIG.abilities.arrowVolley } },
         units,
         upgrades: getUpgradeLevels(),
     };
@@ -91,6 +95,18 @@ export function applySavedSettings() {
         if (isNum(s.combat.attackIntervalScale)) CONFIG.combat.attackIntervalScale = s.combat.attackIntervalScale;
         if (isNum(s.combat.hpScale)) CONFIG.combat.hpScale = s.combat.hpScale;
     }
+    if (s.resources) {
+        const r = CONFIG.resources.start;
+        for (const k of ['gold', 'stone', 'wood', 'food'] as const) {
+            if (isNum(s.resources[k])) r[k] = s.resources[k];
+        }
+    }
+    if (s.abilities && s.abilities.arrowVolley) {
+        const av = CONFIG.abilities.arrowVolley as Record<string, number>;
+        for (const k of Object.keys(av)) {
+            if (isNum(s.abilities.arrowVolley[k])) av[k] = s.abilities.arrowVolley[k];
+        }
+    }
     if (s.units) {
         for (const u of CONFIG.unitTypes) {
             const o = s.units[u.key];
@@ -102,6 +118,7 @@ export function applySavedSettings() {
             if (isNum(o.moveSpeed)) u.moveSpeed = o.moveSpeed;
             if (isNum(o.scale)) u.scale = o.scale;
             if (isNum(o.footAnchor)) u.footAnchor = o.footAnchor;
+            if (isNum(o.foodCost)) u.foodCost = o.foodCost;
             if (u.heal) {
                 if (isNum(o.healAmount)) u.heal.amount = o.healAmount;
                 if (isNum(o.healInterval)) u.heal.interval = o.healInterval;

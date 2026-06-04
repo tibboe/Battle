@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# Local stats DB (server/index.mjs default DB_PATH)
+data/
+
 # Claude Code local (machine-specific) settings
 .claude/settings.local.json
 

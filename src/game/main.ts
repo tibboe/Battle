@@ -1,4 +1,5 @@
 import { AUTO, Game, Scale, Types } from 'phaser';
+import { SetupScene } from './scenes/SetupScene';
 import { GameScene } from './scenes/GameScene';
 import { applySavedSettings } from './settings';
 
@@ -16,7 +17,8 @@ const config: Types.Core.GameConfig = {
     },
     // Pixel-art friendly: no smoothing when we zoom into sprites later.
     pixelArt: true,
-    scene: [GameScene],
+    // The pre-game Setup screen runs first; it launches the battle on "Start".
+    scene: [SetupScene, GameScene],
 };
 
 const StartGame = (parent: string) => {

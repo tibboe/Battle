@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { Projectiles } from '../units/Projectiles';
 import { Faction, UnitManager } from '../units/UnitManager';
+import { matchStats } from '../stats/MatchStats';
 
 // Player-cast battlefield skills. Right now there is exactly one — the Arrow Volley — but this
 // manager owns the generic plumbing (per-skill cooldown + the staggered raining of arrows) so
@@ -62,6 +63,7 @@ export class Abilities {
         if (this.volleyCd > 0) return false;
         const av = CONFIG.abilities.arrowVolley;
         this.volleyCd = av.cooldown;
+        matchStats.skillCast(faction);
 
         for (let k = 0; k < av.arrows; k++) {
             // Uniform random point inside the target circle (sqrt keeps it even, not centre-heavy).

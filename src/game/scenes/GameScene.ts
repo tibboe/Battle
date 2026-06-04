@@ -22,6 +22,7 @@ import { Hud, loadHud } from '../ui/Hud';
 import { Abilities } from '../abilities/Abilities';
 import { EnemyAI } from '../ai/EnemyAI';
 import { resetUpgrades } from '../upgrades';
+import { matchStats, submitMatch } from '../stats/MatchStats';
 
 // The win/lose overlay sits above the whole HUD (which uses ~1_000_000) and the popups.
 const OVERLAY_DEPTH = 1_000_100;
@@ -86,6 +87,7 @@ export class GameScene extends Phaser.Scene {
         this.enemyKeepHp = CONFIG.keep.hp;
         this.gameOver = false;
         this.lastResRev = -1;
+        matchStats.reset(); // begin recording this match's stats
 
         // Subtle colour for anything outside the world bounds.
         this.cameras.main.setBackgroundColor(CONFIG.colors.sky);
@@ -248,6 +250,12 @@ export class GameScene extends Phaser.Scene {
     private endGame(playerWon: boolean) {
         this.gameOver = true;
 
+        // Record + ship this match's stats (best-effort; never blocks the end-of-game flow).
+        if (matchStats.isActive()) {
+            const summary = matchStats.finish(playerWon ? 0 : 1, this.playerKeepHp, this.enemyKeepHp);
+            void submitMatch(summary);
+        }
+
         const cx = this.scale.width / 2;
         const cy = this.scale.height / 2;
 
@@ -360,6 +368,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.gameOver) {
             this.enemyAI.update(delta);
             this.units.update(delta);
+            matchStats.tickPeak(this.units.livingCount(FACTION.player), this.units.livingCount(FACTION.enemy));
             // Peasants advance any build site before the buildings system checks completion.
             this.peasants.update(delta);
             this.buildings.update(delta);

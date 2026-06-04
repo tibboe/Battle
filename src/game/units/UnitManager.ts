@@ -3,6 +3,7 @@ import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
 import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
+import { matchStats } from '../stats/MatchStats';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -410,6 +411,7 @@ export class UnitManager {
         if (this.faction[best] === FACTION.player) scaled *= this.pArmourMult;
         const dmg = Math.max(1, Math.round(scaled));
         this.hp[best] -= dmg;
+        matchStats.unitDamage(attacker, at, this.faction[best], this.type[best], dmg);
         if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
         if (this.hp[best] <= 0) this.kill(best);
     }
@@ -435,6 +437,7 @@ export class UnitManager {
         if (best < 0) return false; // hit empty ground
         const dmg = Math.max(1, Math.round(av.damage));
         this.hp[best] -= dmg;
+        matchStats.skillDamageDealt(caster, this.faction[best], this.type[best], dmg);
         if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
         if (this.hp[best] <= 0) this.kill(best);
         return true;
@@ -498,6 +501,11 @@ export class UnitManager {
         return this.livingByType[typeIndex * 2 + faction];
     }
 
+    // Total living (non-dying) units on a side — for peak-army stats.
+    livingCount(faction: Faction): number {
+        return this.livingByFaction[faction];
+    }
+
     // ---- Player commands (selection lives in the UI; orders are stored per unit here) ----
 
     // Visit every living PLAYER unit (its index, type, and position). Used by the command UI to
@@ -538,6 +546,7 @@ export class UnitManager {
     // commanded-onto-the-keep paths).
     private reachKeep(i: number) {
         this.onReachKeep(this.faction[i] as Faction);
+        matchStats.reachedKeep(this.faction[i], this.type[i], CONFIG.keep.damagePerUnit);
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
         this.releaseProducer(i);
@@ -673,6 +682,7 @@ export class UnitManager {
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
         if (producerId >= 0) this.livingByProducer.set(producerId, (this.livingByProducer.get(producerId) ?? 0) + 1);
+        matchStats.produce(faction, t);
 
         sprite
             .setActive(true)
@@ -1003,6 +1013,7 @@ export class UnitManager {
                     if (this.faction[t] === FACTION.player) scaled *= this.pArmourMult;
                     const dmg = Math.max(1, Math.round(scaled));
                     this.hp[t] -= dmg;
+                    matchStats.unitDamage(atkF, acting, this.faction[t], this.type[t], dmg);
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
                         this.onDamage(this.x[t], this.y[t] - 50, dmg, crit ? '#ffd24a' : undefined);
                     }
@@ -1115,6 +1126,7 @@ export class UnitManager {
     // Begin dying: play the death anim once, then recycle when it finishes.
     private kill(i: number) {
         if (this.state[i] === STATE.dying) return;
+        matchStats.death(this.faction[i], this.type[i]);
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
         this.releaseProducer(i);

@@ -1,6 +1,6 @@
 # Railway (and any container host) deployment for Lanebreaker.
-# Two stages: build the static Vite bundle, then serve /dist with a tiny static server.
-# `serve` lives only in this image — it is NOT a project dependency.
+# Two stages: build the static Vite bundle, then serve /dist + the stats API with a tiny
+# dependency-free Node server (server/index.mjs, uses Node 22's built-in node:sqlite).
 
 # ---- build stage -------------------------------------------------------------
 FROM node:22-alpine AS build
@@ -13,9 +13,13 @@ RUN npm run build
 # ---- runtime stage -----------------------------------------------------------
 FROM node:22-alpine AS run
 WORKDIR /app
-RUN npm install -g serve@14
 COPY --from=build /app/dist ./dist
+COPY server ./server
 # Railway injects $PORT at runtime; fall back to 8080 for local `docker run`.
+# DB_PATH should point at a mounted Railway VOLUME so match stats survive redeploys (e.g. mount
+# a volume at /data). Without a volume the server still runs, but the SQLite file lives on
+# ephemeral storage and resets on each redeploy.
 ENV PORT=8080
+ENV DB_PATH=/data/lanebreaker.db
 EXPOSE 8080
-CMD ["sh", "-c", "serve -s dist -l ${PORT:-8080}"]
+CMD ["node", "--experimental-sqlite", "server/index.mjs"]
