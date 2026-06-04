@@ -169,6 +169,19 @@ export class SelectionHud {
                 },
             };
         });
+        // Buildings that can garrison archer defenders get a one-time "Garrison archers" buy.
+        if (this.buildings.canGarrison(this.selX, this.selY)) {
+            const owned = this.buildings.isGarrisoned(this.selX, this.selY);
+            const cost = this.buildings.garrisonCost();
+            const afford = this.store.canAfford(FACTION.player, cost);
+            cards.unshift({
+                name: 'Garrison archers',
+                cost: owned ? undefined : cost,
+                note: owned ? 'Defenders posted' : undefined,
+                state: owned ? 'owned' : (afford ? 'buy' : 'locked'),
+                onTap: () => { if (this.buildings.buyGarrison(this.selX, this.selY)) this.render(); },
+            });
+        }
         // Producer buildings (a unit-key tag, not the Castle or a House) get an enable/disable
         // toggle showing the per-unit food cost, ahead of their upgrades.
         if (sel.tag !== 'general' && sel.tag !== 'house') {

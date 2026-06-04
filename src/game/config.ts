@@ -37,6 +37,9 @@ export interface BuildingDef {
     // this many living units and resumes the moment one dies or reaches the keep. Omit (or 0)
     // for no cap (e.g. a House, which makes peasants, not capped combat units).
     maxUnits?: number;
+    // How many archer DEFENDERS this building can garrison on top of it (a paid per-building
+    // upgrade). 0/undefined = can't be garrisoned.
+    defenders?: number;
 }
 
 // One row of the unit roster. Stats are the director's to tune; `art` names the sprite
@@ -229,9 +232,9 @@ export const CONFIG = {
         // per-building rate.
         catalog: [
             { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,     cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
-            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000, maxUnits: 3 },
-            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000, maxUnits: 3 },
-            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000, maxUnits: 3 },
+            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
+            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
+            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
             { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000, maxUnits: 2 },
         ] as BuildingDef[],
 
@@ -418,6 +421,14 @@ export const CONFIG = {
         // AROUND buildings rather than hard-stopping against them (keeps are never obstacles, so
         // units can still reach and sack them).
         obstaclePush: 280,
+    },
+
+    // Garrison defenders: a paid per-building upgrade that posts archers on top of a building
+    // (count per building is BuildingDef.defenders). They behave exactly like archers but with
+    // their normal attack range multiplied by `rangeMul`, and they hold their post.
+    garrison: {
+        rangeMul: 2,
+        cost: { gold: 60, stone: 40, wood: 20 } as Cost,
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.

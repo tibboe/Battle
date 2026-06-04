@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { BuildingDef, CONFIG, laneBottom, laneTop } from '../config';
+import { BuildingDef, CONFIG, Cost, laneBottom, laneTop } from '../config';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 
@@ -53,6 +53,8 @@ interface Producer {
     barFill: Phaser.GameObjects.Rectangle;
     barWidth: number;
     needFood?: Phaser.GameObjects.Text; // shown when idle + under cap but can't afford a unit (player only)
+    defenders: number;   // how many archer defenders this building can garrison (0 = none)
+    garrisoned: boolean; // defenders have been posted (paid upgrade)
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -251,6 +253,8 @@ export class Buildings {
                     barFill,
                     barWidth,
                     needFood,
+                    defenders: def.defenders ?? 0,
+                    garrisoned: false,
                 });
             }
         } else {
@@ -411,6 +415,37 @@ export class Buildings {
     producerFoodCost(bx: number, by: number): number {
         const p = this.producerAt(bx, by);
         return p ? (CONFIG.unitTypes[p.typeIndex].foodCost ?? 0) : 0;
+    }
+
+    // ---- Garrison defenders (paid per-building upgrade: archers posted on top) ----
+
+    canGarrison(bx: number, by: number): boolean {
+        const p = this.producerAt(bx, by);
+        return !!p && p.defenders > 0;
+    }
+
+    isGarrisoned(bx: number, by: number): boolean {
+        return this.producerAt(bx, by)?.garrisoned ?? false;
+    }
+
+    garrisonCost(): Cost {
+        return CONFIG.garrison.cost;
+    }
+
+    // Buy the garrison upgrade for the building at (bx, by): pay the cost, then post `defenders`
+    // archer defenders across its roof. One-time per building.
+    buyGarrison(bx: number, by: number): boolean {
+        const p = this.producerAt(bx, by);
+        if (!p || p.defenders <= 0 || p.garrisoned) return false;
+        if (!this.store.spend(p.faction, CONFIG.garrison.cost)) return false;
+        const archer = CONFIG.unitTypes.findIndex((u) => u.key === 'archer');
+        if (archer < 0) return false;
+        for (let k = 0; k < p.defenders; k++) {
+            const dx = (k - (p.defenders - 1) / 2) * 26;
+            this.units.spawnDefender(p.faction, archer, p.bx + dx, p.by - 28);
+        }
+        p.garrisoned = true;
+        return true;
     }
 
     // Flip a producer on/off. Disabling mid-train refunds that unit's food and cancels it (so

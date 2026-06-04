@@ -62,6 +62,8 @@ export class UnitManager {
     private readonly destX: Float32Array;
     private readonly destY: Float32Array;
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
+    private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
     private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
     // Frontline x per faction (furthest-advanced combat unit) — support healers trail it so they
     // tuck behind the line and idle rather than charging ahead. Refreshed each targeting pass.
@@ -200,6 +202,8 @@ export class UnitManager {
         this.destX = new Float32Array(this.capacity);
         this.destY = new Float32Array(this.capacity);
         this.moving = new Uint8Array(this.capacity);
+        this.rangeMul = new Float32Array(this.capacity);
+        this.garrison = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -598,7 +602,7 @@ export class UnitManager {
         const maxStep = CONFIG.command.obstaclePush * (delta / 1000);
         const unitR = CONFIG.separation.radius * 0.5;
         for (let i = 0; i < this.count; i++) {
-            if (this.state[i] === STATE.dying) continue;
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue; // defenders are pinned
             const ln = this.lane[i];
             const yMin = this.laneY[ln] - this.laneHalf[ln];
             const yMax = this.laneY[ln] + this.laneHalf[ln];
@@ -695,6 +699,8 @@ export class UnitManager {
         this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
         this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
         this.moving[i] = 1; // spawns marching (walk anim)
+        this.rangeMul[i] = 1;
+        this.garrison[i] = 0;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
@@ -712,6 +718,56 @@ export class UnitManager {
             .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
         sprite.anims.timeScale = 1; // clear any stretched long-shot draw from a previous user
+        return true;
+    }
+
+    // Post a pinned building defender (an archer) at (x, y): same combat behaviour as a normal
+    // archer but with its normal range multiplied (CONFIG.garrison.rangeMul), holding its post.
+    // Bypasses the faction cap + lane clamp; rendered above buildings so it reads as "on top".
+    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+        const sprite = this.freeSprites.pop();
+        if (!sprite) return false;
+        const t = typeIndex;
+        const i = this.count++;
+
+        this.x[i] = x;
+        this.y[i] = y;
+        this.speed[i] = this.typeMoveSpeed[t];
+        const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
+        this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
+        this.faction[i] = faction;
+        this.state[i] = STATE.walk;
+        this.target[i] = -1;
+        this.animLock[i] = 0;
+        this.drawTimer[i] = 0;
+        this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]);
+        this.abilityCd[i] = this.typeLongshot[t] ? Phaser.Math.FloatBetween(0, CONFIG.abilities.longshot.cooldown) : 0;
+        this.deathTimer[i] = 0;
+        this.lane[i] = 0;
+        this.type[i] = t;
+        this.producer[i] = -1;
+        this.order[i] = ORDER.hold; // hold the post — never marches
+        this.destX[i] = x;
+        this.destY[i] = y;
+        this.moving[i] = 0;
+        this.rangeMul[i] = CONFIG.garrison.rangeMul;
+        this.garrison[i] = 1;
+        this.sprites[i] = sprite;
+        this.livingByFaction[faction]++;
+        this.livingByType[t * 2 + faction]++;
+        matchStats.produce(faction, t);
+
+        sprite
+            .setActive(true)
+            .setVisible(true)
+            .setAlpha(1)
+            .setScale(this.typeScale[t])
+            .setOrigin(0.5, this.typeFootAnchor[t])
+            .setPosition(x, y)
+            .setDepth(CONFIG.world.height + 800) // above buildings, so it reads as "on top"
+            .setFlipX(faction === FACTION.enemy)
+            .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'idle'));
+        sprite.anims.timeScale = 1;
         return true;
     }
 
@@ -761,9 +817,10 @@ export class UnitManager {
             }
 
             const ord = this.order[i];
-            const range2 = this.faction[i] === FACTION.player
+            const rm2 = this.rangeMul[i] * this.rangeMul[i]; // garrison archers see/strike 2× as far
+            const range2 = (this.faction[i] === FACTION.player
                 ? this.pRange2[this.type[i]]
-                : this.typeRange2[this.type[i]];
+                : this.typeRange2[this.type[i]]) * rm2;
             // Perceive at least the aggro radius (so melee chase) but never less than the unit's
             // own strike range (so long-range units still target everything they can hit). A
             // Hold order shrinks perception to strike range so the unit never leaves its post.
@@ -1026,7 +1083,8 @@ export class UnitManager {
             const atkF = this.faction[i];
             const validTarget =
                 t >= 0 && t < this.count && this.state[t] !== STATE.dying && this.faction[t] !== this.faction[i];
-            const reach2 = atkF === FACTION.player ? this.pReach2[acting] : this.typeReach2[acting];
+            const reach2 = (atkF === FACTION.player ? this.pReach2[acting] : this.typeReach2[acting])
+                * this.rangeMul[i] * this.rangeMul[i];
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
@@ -1093,16 +1151,17 @@ export class UnitManager {
         const radius = CONFIG.separation.radius;
         const r2 = radius * radius;
 
-        // Rebuild x-buckets for living units.
+        // Rebuild x-buckets for living units (garrison defenders are pinned — excluded entirely
+        // so they neither push nor get pushed).
         for (let c = 0; c < this.numSepCells; c++) this.sepBuckets[c].length = 0;
         for (let i = 0; i < this.count; i++) {
-            if (this.state[i] === STATE.dying) continue;
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue;
             this.sepBuckets[this.sepCellOf(i)].push(i);
         }
 
         // Accumulate a push vector per unit from neighbours in this + adjacent x-cells.
         for (let i = 0; i < this.count; i++) {
-            if (this.state[i] === STATE.dying) continue;
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue;
             let px = 0;
             let py = 0;
             const ci = this.sepCellOf(i);
@@ -1323,6 +1382,8 @@ export class UnitManager {
             this.destX[i] = this.destX[last];
             this.destY[i] = this.destY[last];
             this.moving[i] = this.moving[last];
+            this.rangeMul[i] = this.rangeMul[last];
+            this.garrison[i] = this.garrison[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;
