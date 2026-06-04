@@ -1,7 +1,7 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
-import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
+import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
 import { matchStats } from '../stats/MatchStats';
 
@@ -158,6 +158,7 @@ export class UnitManager {
     // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
     // landing calls back into resolveLongShotHit.
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
     constructor(
         scene: Phaser.Scene,
@@ -169,6 +170,7 @@ export class UnitManager {
         onBlock?: (x: number, y: number) => void,
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
     ) {
+        this.layer = layer;
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
         this.onShoot = onShoot;
@@ -1236,12 +1238,21 @@ export class UnitManager {
         s.setDepth(this.y[i]);
     }
 
-    // Brief green flash on a unit that just got healed (visual feedback on the TARGET).
+    // Play the Monk's heal effect over a unit that just got healed (visual feedback on the
+    // TARGET), plus a brief green flash on the unit itself.
     private healFlash(j: number) {
         const s = this.sprites[j];
         if (!s) return;
         s.setTint(0x7be08a);
         s.scene.time.delayedCall(260, () => { if (s.tintTopLeft === 0x7be08a) s.clearTint(); });
+
+        // A one-shot effect sprite centred on the unit's body; recycled when the anim finishes.
+        const fx = s.scene.add.sprite(this.x[j], this.y[j] - s.displayHeight * 0.35, healEffectKey(FACTION_NAME[this.faction[j]]))
+            .setDepth(this.y[j] + 1)
+            .setScale(this.typeScale[this.type[j]] * 0.9);
+        this.layer.add(fx);
+        fx.once('animationcomplete', () => fx.destroy());
+        fx.play(healEffectKey(FACTION_NAME[this.faction[j]]));
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
