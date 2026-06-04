@@ -64,6 +64,8 @@ export class UnitManager {
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
     private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
     private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
+    private readonly level: Uint8Array;      // elevation tier (0 = ground; roofs/high terrain > 0). Melee
+                                             // can only strike same-level targets; ranged can hit any level.
     private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
     // Frontline x per faction (furthest-advanced combat unit) — support healers trail it so they
     // tuck behind the line and idle rather than charging ahead. Refreshed each targeting pass.
@@ -204,6 +206,7 @@ export class UnitManager {
         this.moving = new Uint8Array(this.capacity);
         this.rangeMul = new Float32Array(this.capacity);
         this.garrison = new Uint8Array(this.capacity);
+        this.level = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -701,6 +704,7 @@ export class UnitManager {
         this.moving[i] = 1; // spawns marching (walk anim)
         this.rangeMul[i] = 1;
         this.garrison[i] = 0;
+        this.level[i] = 0;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
@@ -752,6 +756,7 @@ export class UnitManager {
         this.moving[i] = 0;
         this.rangeMul[i] = CONFIG.garrison.rangeMul;
         this.garrison[i] = 1;
+        this.level[i] = 1; // on the roof — only ranged enemies can hit it
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
@@ -836,6 +841,9 @@ export class UnitManager {
                 for (let k = 0; k < bucket.length; k++) {
                     const j = bucket[k];
                     if (this.faction[j] === this.faction[i]) continue;
+                    // Elevation: a melee attacker can't reach a target on a different level (e.g.
+                    // ground units can't hit roof-top garrison archers); ranged can hit any level.
+                    if (this.level[i] !== this.level[j] && !this.typeRanged[this.type[i]]) continue;
                     const dx = this.x[j] - this.x[i];
                     const dy = this.y[j] - this.y[i];
                     const d2 = dx * dx + dy * dy;
@@ -1384,6 +1392,7 @@ export class UnitManager {
             this.moving[i] = this.moving[last];
             this.rangeMul[i] = this.rangeMul[last];
             this.garrison[i] = this.garrison[last];
+            this.level[i] = this.level[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

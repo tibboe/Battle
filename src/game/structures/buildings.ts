@@ -55,6 +55,7 @@ interface Producer {
     needFood?: Phaser.GameObjects.Text; // shown when idle + under cap but can't afford a unit (player only)
     defenders: number;   // how many archer defenders this building can garrison (0 = none)
     garrisoned: boolean; // defenders have been posted (paid upgrade)
+    roofY: number;       // y to post garrison defenders at (~2/3 up the building art)
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -255,6 +256,7 @@ export class Buildings {
                     needFood,
                     defenders: def.defenders ?? 0,
                     garrisoned: false,
+                    roofY: p.y - img.displayHeight * 0.6, // ~2/3 up the building art (the roof)
                 });
             }
         } else {
@@ -440,9 +442,10 @@ export class Buildings {
         if (!this.store.spend(p.faction, CONFIG.garrison.cost)) return false;
         const archer = CONFIG.unitTypes.findIndex((u) => u.key === 'archer');
         if (archer < 0) return false;
+        // Spread them across the roof so they don't stack on one another.
         for (let k = 0; k < p.defenders; k++) {
-            const dx = (k - (p.defenders - 1) / 2) * 26;
-            this.units.spawnDefender(p.faction, archer, p.bx + dx, p.by - 28);
+            const dx = (k - (p.defenders - 1) / 2) * 42;
+            this.units.spawnDefender(p.faction, archer, p.bx + dx, p.roofY);
         }
         p.garrisoned = true;
         return true;
