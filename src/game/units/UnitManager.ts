@@ -527,7 +527,8 @@ export class UnitManager {
     // draw selection rings and to gather the units a command targets.
     forEachPlayerUnit(cb: (i: number, type: number, x: number, y: number) => void) {
         for (let i = 0; i < this.count; i++) {
-            if (this.faction[i] !== FACTION.player || this.state[i] === STATE.dying) continue;
+            // Garrison defenders are pinned to their building — never selectable/commandable.
+            if (this.faction[i] !== FACTION.player || this.state[i] === STATE.dying || this.garrison[i]) continue;
             cb(i, this.type[i], this.x[i], this.y[i]);
         }
     }
@@ -535,7 +536,7 @@ export class UnitManager {
     // Give unit `i` an order with an anchor / formation-slot at (ax, ay). The y is clamped into
     // the lane band so a slot is always reachable. Resets the unit to walk so movement re-plans.
     setOrder(i: number, order: Order, ax: number, ay: number) {
-        if (i < 0 || i >= this.count || this.state[i] === STATE.dying) return;
+        if (i < 0 || i >= this.count || this.state[i] === STATE.dying || this.garrison[i]) return;
         this.order[i] = order;
         this.destX[i] = ax;
         this.destY[i] = this.clampLaneY(ay);
