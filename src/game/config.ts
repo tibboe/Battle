@@ -9,9 +9,10 @@ export type Armour = 'Unarmored' | 'Light' | 'Medium' | 'Heavy';
 // Behaviour class: melee/ranged fight; support never attacks (the Monk heals in Phase 2).
 export type UnitRole = 'melee' | 'ranged' | 'support';
 
-// The three gatherable resources (Milestone 4 economy). Peasants harvest these from nodes
-// and bank them; later phases spend them on buildings and upgrades.
-export type ResourceType = 'gold' | 'stone' | 'wood';
+// The gatherable resources (Milestone 4 economy). Peasants harvest these from nodes and bank
+// them; buildings/upgrades cost them, and FOOD is spent to train each unit. Food is gathered
+// from renewable sheep pastures.
+export type ResourceType = 'gold' | 'stone' | 'wood' | 'food';
 
 // A resource price (Milestone 4). Spent from a side's stockpile to build or upgrade.
 export interface Cost {
@@ -54,6 +55,9 @@ export interface UnitType {
     armour: Armour;
     scale: number;          // display scale applied to the source frame
     footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
+    // Food paid to TRAIN one of this unit (deducted when its production countdown starts;
+    // refunded if the building is disabled mid-train). 0/undefined = free.
+    foodCost?: number;
     // Innate special ability: 'knockback' | 'longshot' | 'block' (upgrades may extend it).
     ability?: string;
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
@@ -115,16 +119,16 @@ export const CONFIG = {
     // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
     // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block',
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4,
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5,
           hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
-        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot',
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
-        { key: 'monk', art: 'monk', role: 'support',
+        { key: 'monk', art: 'monk', role: 'support', foodCost: 6,
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
           weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
@@ -263,7 +267,7 @@ export const CONFIG = {
     resources: {
         // Suggested opening balance (director to refine): enough to build one combat
         // producer immediately so you pick your first unit, but not two at once.
-        start: { gold: 100, stone: 60, wood: 80 },
+        start: { gold: 100, stone: 60, wood: 80, food: 60 },
     },
 
     // Peasant (worker) tunables. Workers spawn from Houses, walk to the nearest node of their
@@ -297,8 +301,8 @@ export const CONFIG = {
     // clash. Phase-1 peasants gather the nearer safe nodes; the mid nodes are placed now
     // (visible, fought over later). `scale` sizes each node's art by type.
     nodes: {
-        scale: { gold: 0.55, stone: 0.95, wood: 0.85 },
-        finiteAmount: 600, // every node now holds this and depletes (Milestone 4 tuning)
+        scale: { gold: 0.55, stone: 0.95, wood: 0.85, food: 0.5 },
+        finiteAmount: 600, // every FINITE node holds this and depletes (Milestone 4 tuning)
         // ALL nodes are finite now, so concentrating workers on one resource drains it and you
         // must spread out / push for the contested centre. Each base gets a CLUSTER of three of
         // each resource (in its back corners, off the lane) so it doesn't starve too fast.
@@ -327,6 +331,11 @@ export const CONFIG = {
             { type: 'gold',  x: 1820, y: 600,  finite: true },
             { type: 'stone', x: 2180, y: 600,  finite: true },
             { type: 'wood',  x: 2000, y: 1320, finite: true },
+            // ---- Sheep pastures: RENEWABLE food income (finite:false), one per side back-corner
+            // plus a contested centre pen, so unit production has a sustained food trickle ----
+            { type: 'food',  x: 900,  y: 760,  finite: false },
+            { type: 'food',  x: 3100, y: 760,  finite: false },
+            { type: 'food',  x: 2000, y: 980,  finite: false },
         ] as { type: ResourceType; x: number; y: number; finite: boolean }[],
     },
 

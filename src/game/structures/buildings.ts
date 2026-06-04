@@ -1,6 +1,7 @@
 import * as Phaser from 'phaser';
 import { BuildingDef, CONFIG, laneBottom, laneTop } from '../config';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
+import { ResourceStore } from '../economy/ResourceStore';
 
 // The per-side 3×3 build grid (spots 1-9, left→right, top→bottom). The Castle keep sits on
 // CONFIG.grid.keepSpot and the shared-upgrades building on its spot; everything else is
@@ -40,9 +41,17 @@ interface Producer {
     typeIndex: number;
     x: number;            // spawn x (the building's spot)
     y: number;            // band-clamped spawn y
-    acc: number;          // accumulator (ms toward the next spawn)
+    bx: number;           // building centre (for the cooldown bar + selection match)
+    by: number;
     id: number;           // unique id, used to attribute its units for the live-count cap
     cap: number;          // max units it may keep alive at once (0 = uncapped)
+    enabled: boolean;     // player can pause production; refunds an in-progress unit
+    training: boolean;    // a unit countdown is running (food already paid)
+    paidFood: number;     // food paid for the in-progress unit (refunded if cancelled)
+    acc: number;          // ms into the current training countdown
+    barBg: Phaser.GameObjects.Rectangle;
+    barFill: Phaser.GameObjects.Rectangle;
+    barWidth: number;
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -66,6 +75,7 @@ export class Buildings {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly units: UnitManager;
+    private readonly store: ResourceStore;
     // Selection callbacks (the SelectionHud): a building/Castle/House was tapped (tag = unit key
     // | 'general' | 'house', plus its world position for the highlight), or an empty slot was.
     private readonly onSelect?: (tag: string, x: number, y: number) => void;
@@ -104,12 +114,14 @@ export class Buildings {
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
         units: UnitManager,
+        store: ResourceStore,
         onSelect?: (tag: string, x: number, y: number) => void,                  // tap building/Castle/House
         onSelectSlot?: (faction: Faction, spot: number, x: number, y: number) => void, // tap empty slot
     ) {
         this.scene = scene;
         this.layer = layer;
         this.units = units;
+        this.store = store;
         this.onSelect = onSelect;
         this.onSelectSlot = onSelectSlot;
 
@@ -197,19 +209,36 @@ export class Buildings {
         this.obstacleList.push({ x: p.x, y: p.y, r: img.displayWidth * 0.32 });
 
         if (def.produces) {
-            // Combat producer: tappable for upgrades (player), and emits on a timer.
+            // Combat producer: tappable for upgrades + enable/disable (player), trains units that
+            // each cost food, on a per-building countdown shown by a bar above it.
             if (faction === FACTION.player) this.makeTappable(img, () => this.onSelect?.(def.produces!, p.x, p.y));
             const typeIndex = CONFIG.unitTypes.findIndex((u) => u.key === def.produces);
             if (typeIndex >= 0) {
+                // Cooldown bar above the building (hidden until a unit is actually training).
+                const barWidth = 50;
+                const barY = p.y - 70;
+                const barBg = this.scene.add.rectangle(p.x, barY, barWidth, 7, 0x000000, 0.6)
+                    .setOrigin(0.5, 0.5).setDepth(10_000).setVisible(false);
+                const barFill = this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 5, 0xffcf6a, 1)
+                    .setOrigin(0, 0.5).setDepth(10_001).setVisible(false);
+                barFill.scaleX = 0;
+                this.layer.add([barBg, barFill]);
                 this.producers.push({
                     faction,
                     typeIndex,
                     x: p.x,
                     y: Phaser.Math.Clamp(p.y, this.bandTop, this.bandBottom),
-                    // Random initial offset so producers don't all fire on the same beat.
-                    acc: Phaser.Math.FloatBetween(0, CONFIG.production.spawnSeconds * 1000),
+                    bx: p.x,
+                    by: p.y,
                     id: this.nextProducerId++,
                     cap: def.maxUnits ?? 0,
+                    enabled: true,
+                    training: false,
+                    paidFood: 0,
+                    acc: 0,
+                    barBg,
+                    barFill,
+                    barWidth,
                 });
             }
         } else {
@@ -303,24 +332,77 @@ export class Buildings {
     }
 
     update(delta: number) {
-        // One global cadence for every producer: spawn one unit each `spawnSeconds`.
-        const intervalMs = Math.max(250, CONFIG.production.spawnSeconds * 1000);
+        // Each producer trains ONE unit at a time on its own countdown. Food is spent when a
+        // countdown STARTS; the unit pops when it ends; then it tries the next (up to its cap).
+        const trainMs = Math.max(250, CONFIG.production.spawnSeconds * 1000);
         for (const p of this.producers) {
-            p.acc += delta;
-            if (p.acc < intervalMs) continue;
-            // A capped building pauses while it is already at its live-unit limit, holding the
-            // timer full so it spawns a replacement the instant one of its units dies/escapes.
-            if (p.cap > 0 && this.units.producerLivingCount(p.id) >= p.cap) {
-                p.acc = intervalMs;
+            if (!p.enabled) { this.hideBar(p); continue; } // paused by the player
+
+            if (p.training) {
+                p.acc += delta;
+                this.showBar(p, p.acc / trainMs);
+                if (p.acc >= trainMs) {
+                    this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y, p.id);
+                    p.training = false;
+                    p.acc = 0;
+                    this.hideBar(p);
+                }
                 continue;
             }
-            p.acc -= intervalMs;
-            this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y, p.id);
+
+            // Idle: start the next unit if there's room under the cap and food to pay for it.
+            if (p.cap > 0 && this.units.producerLivingCount(p.id) >= p.cap) { this.hideBar(p); continue; }
+            const cost = CONFIG.unitTypes[p.typeIndex].foodCost ?? 0;
+            if (cost > 0 && !this.store.spend(p.faction, { food: cost })) { this.hideBar(p); continue; }
+            p.training = true;
+            p.paidFood = cost;
+            p.acc = 0;
+            this.showBar(p, 0);
         }
         // Finish any site a peasant has hammered to completion (progress advanced elsewhere).
         for (let i = this.sites.length - 1; i >= 0; i--) {
             const s = this.sites[i];
             if (!s.done && s.progress >= s.def.buildTime) this.finishSite(s);
+        }
+    }
+
+    private showBar(p: Producer, frac: number) {
+        p.barBg.setVisible(true);
+        p.barFill.setVisible(true).scaleX = Phaser.Math.Clamp(frac, 0, 1);
+    }
+
+    private hideBar(p: Producer) {
+        p.barBg.setVisible(false);
+        p.barFill.setVisible(false);
+    }
+
+    // ---- Production enable/disable (player taps a producer; the SelectionHud shows the toggle) ----
+
+    private producerAt(bx: number, by: number): Producer | undefined {
+        return this.producers.find((p) => p.faction === FACTION.player && p.bx === bx && p.by === by);
+    }
+
+    isProducerEnabled(bx: number, by: number): boolean {
+        return this.producerAt(bx, by)?.enabled ?? true;
+    }
+
+    producerFoodCost(bx: number, by: number): number {
+        const p = this.producerAt(bx, by);
+        return p ? (CONFIG.unitTypes[p.typeIndex].foodCost ?? 0) : 0;
+    }
+
+    // Flip a producer on/off. Disabling mid-train refunds that unit's food and cancels it (so
+    // re-enabling starts a fresh countdown — the cancelled unit effectively re-queues at the back).
+    toggleProducer(bx: number, by: number) {
+        const p = this.producerAt(bx, by);
+        if (!p) return;
+        p.enabled = !p.enabled;
+        if (!p.enabled && p.training) {
+            if (p.paidFood > 0) this.store.add(p.faction, 'food', p.paidFood); // refund
+            p.paidFood = 0;
+            p.training = false;
+            p.acc = 0;
+            this.hideBar(p);
         }
     }
 

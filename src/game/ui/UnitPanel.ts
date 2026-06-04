@@ -52,6 +52,7 @@ const FIELDS: StatField[] = [
     { label: 'Range', step: 10, min: 10, max: 480, get: (i) => CONFIG.unitTypes[i].range, set: (i, v) => (CONFIG.unitTypes[i].range = v) },
     { label: 'Attack', step: 0.05, min: 0.05, max: 5, fmt: secs, get: (i) => CONFIG.unitTypes[i].attackInterval / 1000, set: (i, v) => (CONFIG.unitTypes[i].attackInterval = Math.round(v * 1000)) },
     { label: 'Speed', step: 5, min: 10, max: 200, get: (i) => CONFIG.unitTypes[i].moveSpeed, set: (i, v) => (CONFIG.unitTypes[i].moveSpeed = v) },
+    { label: 'Food', step: 1, min: 0, max: 50, get: (i) => CONFIG.unitTypes[i].foodCost ?? 0, set: (i, v) => (CONFIG.unitTypes[i].foodCost = v) },
     { label: 'Size', step: 0.05, min: 0.3, max: 1.6, fmt: (v) => `${v.toFixed(2)}×`, get: (i) => CONFIG.unitTypes[i].scale, set: (i, v) => (CONFIG.unitTypes[i].scale = Math.round(v * 100) / 100) },
     { label: 'Foot', step: 0.02, min: 0.4, max: 1.0, fmt: (v) => v.toFixed(2), get: (i) => CONFIG.unitTypes[i].footAnchor, set: (i, v) => (CONFIG.unitTypes[i].footAnchor = Math.round(v * 100) / 100) },
     { label: 'Heal', step: 1, min: 0, max: 50, monkOnly: true, get: (i) => CONFIG.unitTypes[i].heal?.amount ?? 0, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.amount = v; } },

@@ -143,6 +143,7 @@ export class GameScene extends Phaser.Scene {
             this,
             this.worldLayer,
             this.units,
+            this.resources,
             (tag, x, y) => { this.commandBar.clearSelection(); this.selectionHud.selectUpgrades(tag, x, y); },
             (faction, spot, x, y) => { this.commandBar.clearSelection(); this.selectionHud.selectBuild(faction, spot, x, y); },
         );
@@ -388,6 +389,7 @@ export class GameScene extends Phaser.Scene {
                 gold: this.peasants.workerCount(FACTION.player, 'gold'),
                 wood: this.peasants.workerCount(FACTION.player, 'wood'),
                 stone: this.peasants.workerCount(FACTION.player, 'stone'),
+                food: this.peasants.workerCount(FACTION.player, 'food'),
             },
         });
 

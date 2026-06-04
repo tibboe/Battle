@@ -19,14 +19,15 @@ const ICONS = {
     gold: `${ASSET}/Resources/Gold/Gold Resource/Gold_Resource.png`,
     stone: `${ASSET}/Decorations/Rocks/Rock1.png`,
     wood: `${ASSET}/Resources/Wood/Wood Resource/Wood Resource.png`,
+    food: `${ASSET}/Resources/Meat/Meat Resource/Meat Resource.png`,
 };
 const iconKey = (k: string) => `hud-icon-${k}`;
 
 // Bar geometry.
 const BAR_W = 188;
 const BAR_H = 18;
-const ICON_PX = 24;
-const SLOT_W = 88; // per-resource slot in the readout strip
+const ICON_PX = 22;
+const SLOT_W = 72; // per-resource slot in the readout strip (four resources now)
 
 const youCol = '#' + CONFIG.faction.player.tint.toString(16).padStart(6, '0');
 const foeCol = '#' + CONFIG.faction.enemy.tint.toString(16).padStart(6, '0');
@@ -42,7 +43,7 @@ export interface HudData {
     workers: Record<ResourceType, number>; // player's live worker count per resource
 }
 
-const RES_ORDER: ResourceType[] = ['gold', 'stone', 'wood'];
+const RES_ORDER: ResourceType[] = ['gold', 'stone', 'wood', 'food'];
 
 export function loadHud(scene: Phaser.Scene) {
     for (const [k, path] of Object.entries(ICONS)) scene.load.image(iconKey(k), encodeURI(path));
@@ -111,12 +112,12 @@ export class Hud {
     }
 
     private buildResourceStrip() {
-        this.resBg = this.scene.add.rectangle(8, 8, SLOT_W * 3 + 12, 38, 0x000000, 0.55)
+        this.resBg = this.scene.add.rectangle(8, 8, SLOT_W * RES_ORDER.length + 12, 38, 0x000000, 0.55)
             .setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0xffffff, 0.12);
         this.layer.add(this.resBg);
 
         const cy = 8 + 19;
-        ['gold', 'stone', 'wood'].forEach((k, i) => {
+        RES_ORDER.forEach((k, i) => {
             const x = 16 + i * SLOT_W;
             const icon = this.scene.add.image(x, cy, iconKey(k))
                 .setOrigin(0, 0.5).setDisplaySize(ICON_PX, ICON_PX)
@@ -206,18 +207,17 @@ export class Hud {
     }
 
     update(d: HudData) {
-        this.counts.gold.setText(String(d.player.gold));
-        this.counts.stone.setText(String(d.player.stone));
-        this.counts.wood.setText(String(d.player.wood));
-
-        for (const res of RES_ORDER) this.workCounts[res].setText(String(d.workers[res]));
+        for (const res of RES_ORDER) {
+            this.counts[res].setText(String(d.player[res]));
+            this.workCounts[res].setText(String(d.workers[res]));
+        }
 
         this.setBar(this.playerBar, d.playerHp, d.maxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
 
         if (this.devOnState) {
             const e = d.enemy;
-            this.debug.setText(`FPS ${d.fps}  Units ${d.units}    Enemy  G ${e.gold} S ${e.stone} W ${e.wood}`);
+            this.debug.setText(`FPS ${d.fps}  Units ${d.units}    Enemy  G ${e.gold} S ${e.stone} W ${e.wood} F ${e.food}`);
         }
     }
 
@@ -236,7 +236,7 @@ export class Hud {
         const h = this.scene.scale.height;
 
         // Peasant-allocation strip, centred along the top (between resources and the buttons).
-        const groupW = 96;
+        const groupW = 80;
         const labelW = 26;
         const panelW = labelW + groupW * RES_ORDER.length;
         const px = (w - panelW) / 2;

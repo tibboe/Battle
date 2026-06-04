@@ -52,6 +52,8 @@ export class SelectionHud {
     private cardObjects: Phaser.GameObjects.GameObject[] = [];
 
     private selection?: Selection;
+    private selX = 0; // world position of the current selection (to target the tapped building)
+    private selY = 0;
 
     constructor(
         scene: Phaser.Scene,
@@ -93,6 +95,8 @@ export class SelectionHud {
 
     selectUpgrades(tag: string, x: number, y: number) {
         this.selection = { type: 'upgrades', tag };
+        this.selX = x;
+        this.selY = y;
         this.markAt(x, y);
         this.render();
     }
@@ -156,10 +160,23 @@ export class SelectionHud {
                 },
             };
         });
+        // Producer buildings (a unit-key tag, not the Castle or a House) get an enable/disable
+        // toggle showing the per-unit food cost, ahead of their upgrades.
+        if (sel.tag !== 'general' && sel.tag !== 'house') {
+            const enabled = this.buildings.isProducerEnabled(this.selX, this.selY);
+            const food = this.buildings.producerFoodCost(this.selX, this.selY);
+            cards.unshift({
+                name: enabled ? '⏸ Producing' : '▶ Paused',
+                desc: enabled ? 'Tap to pause training' : 'Tap to resume training',
+                foot: food > 0 ? `Food ${food}/unit` : 'Free',
+                state: 'buy',
+                onTap: () => { this.buildings.toggleProducer(this.selX, this.selY); this.render(); },
+            });
+        }
         const title = sel.tag === 'general' ? 'Castle upgrades'
             : sel.tag === 'house' ? 'Peasant upgrades'
             : `${cap(sel.tag)} upgrades`;
-        return { title, cards: cards.length ? cards : [] };
+        return { title, cards };
     }
 
     private render() {

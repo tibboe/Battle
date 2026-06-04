@@ -11,6 +11,9 @@ import { ROCKS, TREES } from '../terrain/environment';
 
 const GOLD_KEY = 'node-gold';
 const GOLD_FILE = 'assets/environment/tiny-swords/Resources/Gold/Gold Resource/Gold_Resource.png';
+const SHEEP_KEY = 'node-sheep';
+const SHEEP_FILE = 'assets/environment/tiny-swords/Resources/Meat/Sheep/Sheep_Idle.png';
+const SHEEP_ANIM = 'sheep-idle';
 
 export interface ResourceNode {
     type: ResourceType;
@@ -23,9 +26,10 @@ export interface ResourceNode {
 }
 
 export function loadResourceNodes(scene: Phaser.Scene) {
-    // Stone (rocks) and wood (trees) art is already loaded by the environment; only the gold
-    // pile is new.
+    // Stone (rocks) and wood (trees) art is already loaded by the environment; the gold pile and
+    // the sheep (food) are new. Sheep_Idle is a 6-frame 128×128 strip.
     scene.load.image(GOLD_KEY, encodeURI(GOLD_FILE));
+    scene.load.spritesheet(SHEEP_KEY, encodeURI(SHEEP_FILE), { frameWidth: 128, frameHeight: 128 });
 }
 
 export class ResourceNodes {
@@ -33,12 +37,25 @@ export class ResourceNodes {
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
         const rnd = Phaser.Math.RND;
+        if (!scene.anims.exists(SHEEP_ANIM)) {
+            scene.anims.create({
+                key: SHEEP_ANIM,
+                frames: scene.anims.generateFrameNumbers(SHEEP_KEY, { start: 0, end: 5 }),
+                frameRate: 6,
+                repeat: -1,
+            });
+        }
         for (const def of CONFIG.nodes.list) {
             const scale = CONFIG.nodes.scale[def.type];
             let sprite: Phaser.GameObjects.Image | Phaser.GameObjects.Sprite;
 
             if (def.type === 'gold') {
                 sprite = scene.add.image(def.x, def.y, GOLD_KEY);
+            } else if (def.type === 'food') {
+                // A grazing sheep marks a renewable food pasture.
+                const s = scene.add.sprite(def.x, def.y, SHEEP_KEY).play(SHEEP_ANIM);
+                s.anims.setProgress(rnd.frac());
+                sprite = s;
             } else if (def.type === 'stone') {
                 // Biggest-looking rock variant reads as a stone deposit.
                 const rock = ROCKS[2] ?? ROCKS[0];

@@ -77,7 +77,7 @@ export function registerPeasantAnimations(scene: Phaser.Scene) {
 const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4, Flee: 5 } as const;
 type State = (typeof State)[keyof typeof State];
 
-const RESOURCES: ResourceType[] = ['gold', 'wood', 'stone'];
+const RESOURCES: ResourceType[] = ['gold', 'wood', 'stone', 'food'];
 
 interface Peasant {
     faction: Faction;
@@ -119,8 +119,8 @@ export class PeasantManager {
     // HUD's +/- (see adjustTarget); the enemy keeps an even split. Workers re-pick their
     // resource toward these targets each gather cycle (and immediately when a node runs dry).
     private readonly targets: [Record<ResourceType, number>, Record<ResourceType, number>] = [
-        { gold: 1, wood: 1, stone: 1 },
-        { gold: 1, wood: 1, stone: 1 },
+        { gold: 1, wood: 1, stone: 1, food: 1 },
+        { gold: 1, wood: 1, stone: 1, food: 1 },
     ];
 
     constructor(
@@ -158,7 +158,7 @@ export class PeasantManager {
 
     // Live worker count on each resource for a side.
     private counts(faction: Faction): Record<ResourceType, number> {
-        const c: Record<ResourceType, number> = { gold: 0, wood: 0, stone: 0 };
+        const c: Record<ResourceType, number> = { gold: 0, wood: 0, stone: 0, food: 0 };
         for (const p of this.peasants) if (!p.dead && p.faction === faction) c[p.resource]++;
         return c;
     }
