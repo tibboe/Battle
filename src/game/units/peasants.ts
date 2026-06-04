@@ -123,6 +123,11 @@ export class PeasantManager {
         { gold: 1, wood: 1, stone: 1, food: 1 },
     ];
 
+    // Player FIFO focus queue: the HUD pushes a resource onto it; each free PLAYER peasant
+    // (newly spawned or just-banked) takes the next one from the front. Empty = auto (spread
+    // out, then keep). The enemy ignores this and auto-balances toward `targets`.
+    private readonly focus: [ResourceType[], ResourceType[]] = [[], []];
+
     constructor(
         scene: Phaser.Scene,
         layer: Phaser.GameObjects.Layer,
@@ -183,9 +188,39 @@ export class PeasantManager {
         return best;
     }
 
-    // Re-pick a worker's resource only when it's over-allocated or its resource has run dry —
-    // so allocation converges toward the targets without workers thrashing every trip.
+    // The least-staffed resource that still has a live node (for the player's auto/default
+    // assignment when the focus queue is empty) — keeps idle workers spread out.
+    private pickLive(faction: Faction): ResourceType {
+        let cands = RESOURCES.filter((r) => this.nodes.anyLive(r));
+        if (!cands.length) cands = RESOURCES;
+        const c = this.counts(faction);
+        let best = cands[0];
+        let min = Infinity;
+        for (const r of cands) if (c[r] < min) { min = c[r]; best = r; }
+        return best;
+    }
+
+    // The resource a free worker should take next. Player: the front of the FIFO focus queue if
+    // any, else keep its current (if still live), else spread out. Enemy: target-based auto split.
+    private nextResource(faction: Faction, current?: ResourceType): ResourceType {
+        if (faction === FACTION.player) {
+            const q = this.focus[faction];
+            if (q.length) return q.shift()!;
+            if (current && this.nodes.anyLive(current)) return current;
+            return this.pickLive(faction);
+        }
+        return this.pickResource(faction);
+    }
+
+    // Re-pick a worker's resource at the end of a trip: player pulls from its focus queue (and
+    // only re-spreads if its current resource has run dry); the enemy converges toward targets.
     private rebalance(p: Peasant) {
+        if (p.faction === FACTION.player) {
+            const q = this.focus[p.faction];
+            if (q.length) { p.resource = q.shift()!; p.node = undefined; return; }
+            if (!this.nodes.anyLive(p.resource)) { p.resource = this.pickLive(p.faction); p.node = undefined; }
+            return;
+        }
         const c = this.counts(p.faction);
         if (c[p.resource] > this.targets[p.faction][p.resource] || !this.nodes.anyLive(p.resource)) {
             p.resource = this.pickResource(p.faction);
@@ -193,17 +228,10 @@ export class PeasantManager {
         }
     }
 
-    // The player's HUD +/- steers the target split; nudge currently-seeking workers right away
-    // so it feels responsive (counts() reflects each reassignment as we go, so it self-limits).
-    adjustTarget(faction: Faction, res: ResourceType, delta: number) {
-        const t = this.targets[faction];
-        t[res] = Phaser.Math.Clamp(t[res] + delta, 0, 20);
-        for (const p of this.peasants) {
-            if (p.faction !== faction || p.dead || p.state !== State.Seek) continue;
-            const np = this.pickResource(faction);
-            if (np !== p.resource) { p.resource = np; p.node = undefined; }
-        }
-    }
+    // ---- Player focus queue (driven by the HUD) ----
+    enqueueFocus(faction: Faction, res: ResourceType) { this.focus[faction].push(res); }
+    clearFocus(faction: Faction) { this.focus[faction].length = 0; }
+    focusList(faction: Faction): ResourceType[] { return this.focus[faction].slice(); }
 
     // Live worker count on a resource (for the HUD readout).
     workerCount(faction: Faction, res: ResourceType): number {
@@ -212,7 +240,7 @@ export class PeasantManager {
 
     private spawn(faction: Faction, house: number) {
         const home = this.buildings.housePositions(faction)[house];
-        const resource = this.pickResource(faction);
+        const resource = this.nextResource(faction);
 
         const jx = Phaser.Math.Between(-24, 24);
         const jy = Phaser.Math.Between(-12, 12);

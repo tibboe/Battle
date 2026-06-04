@@ -110,7 +110,8 @@ export class GameScene extends Phaser.Scene {
             this.uiLayer,
             () => this.cameraController.fitToMap(),
             (on) => this.setDevTools(on),
-            (res, delta) => this.peasants.adjustTarget(FACTION.player, res, delta),
+            (res) => this.peasants.enqueueFocus(FACTION.player, res),
+            () => this.peasants.clearFocus(FACTION.player),
         );
 
         // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
@@ -400,6 +401,7 @@ export class GameScene extends Phaser.Scene {
                 stone: this.peasants.workerCount(FACTION.player, 'stone'),
                 food: this.peasants.workerCount(FACTION.player, 'food'),
             },
+            focus: this.peasants.focusList(FACTION.player),
         });
 
         // When the stockpile changes (a peasant banks, or you spend), refresh any open menu so

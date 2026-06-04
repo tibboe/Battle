@@ -123,7 +123,7 @@ export const CONFIG = {
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
         { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5,
-          hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
+          hp: 46, damage: 14, range: 140, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
         { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,

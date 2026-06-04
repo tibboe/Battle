@@ -63,6 +63,9 @@ export class UnitManager {
     private readonly destY: Float32Array;
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
     private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
+    // Frontline x per faction (furthest-advanced combat unit) — support healers trail it so they
+    // tuck behind the line and idle rather than charging ahead. Refreshed each targeting pass.
+    private readonly frontX: [number, number] = [0, 0];
     // Standing order PER PLAYER UNIT TYPE: the last command issued to a type, so units that spawn
     // later inherit it (a Move/Free keeps a rally point; auto = no standing order). Length nTypes.
     private standingOrder!: Uint8Array;
@@ -467,7 +470,10 @@ export class UnitManager {
             if (dx * dx + dy * dy > r2) continue;
             const healed = Math.min(amt, maxHp - this.hp[j]);
             this.hp[j] += healed;
-            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[j], this.y[j] - 50, healed);
+            if (healed > 0) {
+                this.healFlash(j);
+                if (this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[j], this.y[j] - 50, healed);
+            }
         }
     }
 
@@ -707,11 +713,18 @@ export class UnitManager {
         const free2 = CONFIG.command.freeRadius * CONFIG.command.freeRadius;
         for (let c = 0; c < this.numCells; c++) this.buckets[c].length = 0;
 
-        // Bucket living units by x-cell (support units included — they are valid targets).
+        // Bucket living units by x-cell (support units included — they are valid targets), and
+        // track each side's frontline (furthest-forward combat unit) for the healers to trail.
+        this.frontX[FACTION.player] = this.playerKeepX;
+        this.frontX[FACTION.enemy] = this.enemyKeepX;
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
-            const c = this.cellOf(i);
-            this.buckets[c].push(i);
+            this.buckets[this.cellOf(i)].push(i);
+            if (this.typeCanAttack[this.type[i]]) {
+                const f = this.faction[i];
+                if (f === FACTION.player) { if (this.x[i] > this.frontX[f]) this.frontX[f] = this.x[i]; }
+                else if (this.x[i] < this.frontX[f]) this.frontX[f] = this.x[i];
+            }
         }
 
         for (let i = 0; i < this.count; i++) {
@@ -914,6 +927,22 @@ export class UnitManager {
                     continue;
                 }
 
+                // Support healers (Monks) trail the frontline and idle when caught up — they tend
+                // the army from behind and rest between heals, instead of charging the keep.
+                if (this.typeHealAmount[this.type[i]] > 0) {
+                    const goalX = this.faction[i] === FACTION.player ? this.frontX[0] - 90 : this.frontX[1] + 90;
+                    const dx = goalX - this.x[i];
+                    if (Math.abs(dx) > 10) {
+                        this.x[i] += Math.sign(dx) * Math.min(this.speed[i] * dt, Math.abs(dx));
+                        this.syncSprite(i);
+                        this.face(i, dx);
+                        this.setMoving(i, true);
+                    } else {
+                        this.setMoving(i, false); // caught up — idle behind the line
+                    }
+                    continue;
+                }
+
                 // ORDER.auto: the original flow — funnel into the lane-path centre, then march on
                 // the keep. Read lane width live so the Dev "Lane width" applies instantly.
                 const lane = CONFIG.lanes[this.lane[i]];
@@ -967,8 +996,9 @@ export class UnitManager {
                             this.attackCd[i] += this.typeHealInterval[acting];
                             const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
                             this.hp[t] += healed;
-                            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
-                                this.onHeal(this.x[t], this.y[t] - 50, healed);
+                            if (healed > 0) {
+                                this.healFlash(t);
+                                if (this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[t], this.y[t] - 50, healed);
                             }
                             this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                             continue;
@@ -1195,6 +1225,14 @@ export class UnitManager {
         s.x = this.x[i];
         s.y = this.y[i];
         s.setDepth(this.y[i]);
+    }
+
+    // Brief green flash on a unit that just got healed (visual feedback on the TARGET).
+    private healFlash(j: number) {
+        const s = this.sprites[j];
+        if (!s) return;
+        s.setTint(0x7be08a);
+        s.scene.time.delayedCall(260, () => { if (s.tintTopLeft === 0x7be08a) s.clearTint(); });
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's

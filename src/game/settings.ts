@@ -6,7 +6,7 @@ import { getUpgradeLevels, setUpgradeLevels } from './upgrades';
 // of editable values is stored (keyed by unit/building name, so reordering config is safe);
 // everything else always comes from config.ts. `resetSettings()` clears the snapshot.
 
-const KEY = 'lanebreaker.settings.v1';
+const KEY = 'lanebreaker.settings.v2';
 const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
 export function serializeSettings() {
