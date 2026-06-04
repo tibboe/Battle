@@ -162,6 +162,7 @@ export class GameScene extends Phaser.Scene {
         this.commandBar = new CommandBar(
             this, this.uiLayer, this.worldLayer, this.units,
             (mode) => this.beginTargeting(mode),
+            () => this.cancelTargeting(),
             () => this.selectionHud.clear(),
         );
 

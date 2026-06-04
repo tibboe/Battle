@@ -8,27 +8,47 @@ import {
 
 // The player's unit command system: selection (which unit TYPES are selected — driven by the
 // right-side roster) + the bottom command bar (stance + formation buttons) + the world-space
-// selection rings and the targeting preview. Issuing a Move/Attack-move/Free order hands the
-// scene a TargetingMode so the next field tap places the order; Hold is immediate.
+// selection rings and the targeting preview.
 //
-// Selection is by unit TYPE (e.g. "all your archers"), which is robust to units spawning and
-// dying — orders themselves are stored per-unit in the UnitManager, so they persist regardless.
+// Interaction model: there is always a CURRENT placement stance (Move / Atk-Move / Free),
+// highlighted in the bar and remembered between orders. Selecting units immediately ARMS that
+// stance, so the next tap on the field places the order (a brief pulse confirms it) — no extra
+// button press needed. Tapping a different stance changes the current one (and re-arms). Hold
+// and Auto are immediate one-shot actions on the current selection.
+//
+// Selection is by unit TYPE (e.g. "all your archers"), robust to units spawning/dying — orders
+// are stored per-unit in the UnitManager, so they (and the per-type standing order) persist.
 
 const BAR_DEPTH = 1_000_010;  // same band as the building selection HUD (mutually exclusive)
 const BAR_H = 96;
 const PAD = 12;
+const ACCENT = '#2a6cd6';
+const NEUTRAL = '#3a4350';
 
-// Formation choice is remembered across orders (and scene restarts) — defaults to a tight
-// rectangle, per the design.
+// Remembered across orders (and scene restarts): the current placement stance + the formation.
+// Defaults to Attack-move in a tight rectangle.
+let curStance: Order = ORDER.attackMove;
 let curShape: Shape = SHAPE.rectangle;
 let curTight = true;
 
 const FACE = 1; // the player's enemy keep is to the right (+x), so formations face that way
 
+const STANCE_LABEL: Record<number, string> = {
+    [ORDER.move]: 'Move',
+    [ORDER.attackMove]: 'Atk-Move',
+    [ORDER.free]: 'Free',
+};
+
+function isPlacement(o: Order): boolean {
+    return o === ORDER.move || o === ORDER.attackMove || o === ORDER.free;
+}
+
 export class CommandBar {
     private readonly scene: Phaser.Scene;
+    private readonly worldLayer: Phaser.GameObjects.Layer;
     private readonly units: UnitManager;
     private readonly beginTargeting: (mode: TargetingMode) => void;
+    private readonly endTargeting: () => void;
     private readonly clearBuildings: () => void;
 
     private readonly selected = new Set<number>(); // selected unit-type indices
@@ -49,11 +69,14 @@ export class CommandBar {
         worldLayer: Phaser.GameObjects.Layer,
         units: UnitManager,
         beginTargeting: (mode: TargetingMode) => void,
+        endTargeting: () => void,
         clearBuildings: () => void,
     ) {
         this.scene = scene;
+        this.worldLayer = worldLayer;
         this.units = units;
         this.beginTargeting = beginTargeting;
+        this.endTargeting = endTargeting;
         this.clearBuildings = clearBuildings;
 
         this.rings = scene.add.graphics().setDepth(CONFIG.world.height + 1500);
@@ -67,13 +90,14 @@ export class CommandBar {
             .setScrollFactor(0).setDepth(BAR_DEPTH + 1).setVisible(false);
         uiLayer.add([this.bg, this.title]);
 
-        // Stance row. "Auto" resumes the default auto-advance and clears the standing order.
+        // Stance row. Move / Atk-Move / Free are placement stances (one is the highlighted
+        // current stance); Hold and Auto are immediate actions on the selection.
         this.stanceBtns = [
-            { order: ORDER.move, btn: this.mkBtn(uiLayer, 'Move', () => this.startPlacing(ORDER.move)) },
-            { order: ORDER.attackMove, btn: this.mkBtn(uiLayer, 'Atk-Move', () => this.startPlacing(ORDER.attackMove)) },
-            { order: ORDER.hold, btn: this.mkBtn(uiLayer, 'Hold', () => this.issueHold()) },
-            { order: ORDER.free, btn: this.mkBtn(uiLayer, 'Free', () => this.startPlacing(ORDER.free)) },
-            { order: ORDER.auto, btn: this.mkBtn(uiLayer, 'Auto', () => this.issueAuto()) },
+            { order: ORDER.move, btn: this.mkBtn(uiLayer, 'Move', () => this.setStance(ORDER.move)) },
+            { order: ORDER.attackMove, btn: this.mkBtn(uiLayer, 'Atk-Move', () => this.setStance(ORDER.attackMove)) },
+            { order: ORDER.free, btn: this.mkBtn(uiLayer, 'Free', () => this.setStance(ORDER.free)) },
+            { order: ORDER.hold, btn: this.mkBtn(uiLayer, 'Hold', () => { this.issueHold(); this.flashStance(ORDER.hold); }) },
+            { order: ORDER.auto, btn: this.mkBtn(uiLayer, 'Auto', () => { this.issueAuto(); this.flashStance(ORDER.auto); }) },
         ];
         // Formation row.
         this.shapeBtns = ([SHAPE.rectangle, SHAPE.square, SHAPE.line] as Shape[]).map((s) => ({
@@ -91,7 +115,7 @@ export class CommandBar {
     private mkBtn(layer: Phaser.GameObjects.Layer, text: string, onTap: () => void) {
         const b = this.scene.add.text(0, 0, text, {
             fontFamily: 'monospace', fontSize: '14px', color: '#ffffff',
-            backgroundColor: '#3a4350', padding: { x: 8, y: 5 },
+            backgroundColor: NEUTRAL, padding: { x: 8, y: 5 },
         }).setScrollFactor(0).setDepth(BAR_DEPTH + 1).setInteractive({ useHandCursor: true }).setVisible(false);
         b.on('pointerup', onTap);
         layer.add(b);
@@ -122,8 +146,38 @@ export class CommandBar {
     }
 
     private onSelectionChanged() {
-        if (this.selected.size > 0) this.clearBuildings(); // one context at a time
+        if (this.selected.size > 0) {
+            this.clearBuildings();      // one context at a time
+            this.armCurrentStance();    // ready to place immediately
+        } else {
+            this.endTargeting();        // nothing selected → drop out of placement mode
+            this.preview.clear();
+        }
         this.render();
+    }
+
+    // ---- placement stance ----
+
+    private setStance(order: Order) {
+        curStance = order;
+        this.render();
+        if (this.selected.size > 0) this.armCurrentStance();
+    }
+
+    // Arm the field so the next tap places the current stance; re-arms itself after each order so
+    // you can keep issuing without re-selecting.
+    private armCurrentStance() {
+        const order = curStance;
+        this.beginTargeting({
+            onMove: (wx, wy) => this.drawPreview(order, wx, wy),
+            onCommit: (wx, wy) => {
+                this.issuePlaced(order, wx, wy);
+                this.preview.clear();
+                this.flashPlacement(order, wx, wy);
+                if (this.selected.size > 0) this.armCurrentStance();
+            },
+            onCancel: () => this.preview.clear(),
+        });
     }
 
     // ---- issuing orders ----
@@ -151,16 +205,6 @@ export class CommandBar {
             if (this.selected.has(type)) this.units.setOrder(i, ORDER.auto, 0, 0);
         });
         for (const t of this.selected) this.units.setStandingOrder(t, ORDER.auto, 0, 0);
-    }
-
-    // Move / Attack-move / Free need a target point — arm a targeting mode for the next tap.
-    private startPlacing(order: Order) {
-        if (this.selected.size === 0) return;
-        this.beginTargeting({
-            onMove: (wx, wy) => this.drawPreview(order, wx, wy),
-            onCommit: (wx, wy) => { this.issuePlaced(order, wx, wy); this.preview.clear(); },
-            onCancel: () => this.preview.clear(),
-        });
     }
 
     private issuePlaced(order: Order, wx: number, wy: number) {
@@ -197,7 +241,7 @@ export class CommandBar {
         return out;
     }
 
-    // ---- preview while targeting ----
+    // ---- preview while targeting + commit flash ----
 
     private drawPreview(order: Order, wx: number, wy: number) {
         const g = this.preview;
@@ -211,14 +255,38 @@ export class CommandBar {
         const group = this.gatherSelected();
         const slots = formationSlots(group.length, wx, wy, curShape, spacingFor(curTight), FACE);
         g.fillStyle(0x7fd0ff, 0.55);
-        g.lineStyle(2, 0x7fd0ff, 0.5);
-        for (const s of slots) {
-            const cy = this.units.clampLaneY(s.y);
-            g.fillCircle(s.x, cy, 6);
-        }
+        for (const s of slots) g.fillCircle(s.x, this.units.clampLaneY(s.y), 6);
     }
 
-    // ---- per-frame: draw a ring under each selected unit, keep the bar in sync ----
+    // A brief on-field confirmation: an expanding pulse at the order point, plus the slot dots
+    // (or the free-roam ring) fading out.
+    private flashPlacement(order: Order, wx: number, wy: number) {
+        const pulse = this.scene.add.circle(wx, wy, 16)
+            .setStrokeStyle(4, 0x9fe6ff, 1).setDepth(CONFIG.world.height + 2700);
+        this.worldLayer.add(pulse);
+        this.scene.tweens.add({ targets: pulse, scale: 3, alpha: 0, duration: 420, ease: 'Quad.out', onComplete: () => pulse.destroy() });
+
+        const f = this.scene.add.graphics().setDepth(CONFIG.world.height + 2699);
+        this.worldLayer.add(f);
+        if (order === ORDER.free) {
+            f.lineStyle(4, 0xffd24a, 1).strokeCircle(wx, wy, CONFIG.command.freeRadius);
+        } else {
+            const slots = formationSlots(this.gatherSelected().length, wx, wy, curShape, spacingFor(curTight), FACE);
+            f.fillStyle(0x9fe6ff, 1);
+            for (const s of slots) f.fillCircle(s.x, this.units.clampLaneY(s.y), 7);
+        }
+        this.scene.tweens.add({ targets: f, alpha: 0, duration: 500, onComplete: () => f.destroy() });
+    }
+
+    // Briefly light an immediate-action button (Hold / Auto) so the press registers visibly.
+    private flashStance(order: Order) {
+        const e = this.stanceBtns.find((s) => s.order === order);
+        if (!e) return;
+        e.btn.setBackgroundColor(ACCENT);
+        this.scene.time.delayedCall(170, () => e.btn.setBackgroundColor(NEUTRAL));
+    }
+
+    // ---- per-frame: draw a ring under each selected unit ----
 
     update() {
         const g = this.rings;
@@ -239,14 +307,16 @@ export class CommandBar {
         for (const b of this.allButtons) b.setVisible(open);
         if (!open) return;
 
-        // Count how many living units the selection covers, for the title.
         let n = 0;
         for (const t of this.selected) n += this.units.livingTypeCount(t, FACTION.player);
-        this.title.setText(`${n} unit${n === 1 ? '' : 's'} selected`);
+        this.title.setText(`${n} unit${n === 1 ? '' : 's'} selected — ${STANCE_LABEL[curStance]}: tap the field`);
 
-        // Highlight the active formation choices.
-        for (const s of this.shapeBtns) s.btn.setBackgroundColor(s.shape === curShape ? '#2a6cd6' : '#3a4350');
-        for (const d of this.densityBtns) d.btn.setBackgroundColor(d.tight === curTight ? '#2a6cd6' : '#3a4350');
+        // Highlight the current placement stance + the active formation choices.
+        for (const s of this.stanceBtns) {
+            s.btn.setBackgroundColor(isPlacement(s.order) && s.order === curStance ? ACCENT : NEUTRAL);
+        }
+        for (const s of this.shapeBtns) s.btn.setBackgroundColor(s.shape === curShape ? ACCENT : NEUTRAL);
+        for (const d of this.densityBtns) d.btn.setBackgroundColor(d.tight === curTight ? ACCENT : NEUTRAL);
 
         this.layout();
     }
