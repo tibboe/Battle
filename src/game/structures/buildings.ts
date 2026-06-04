@@ -52,6 +52,7 @@ interface Producer {
     barBg: Phaser.GameObjects.Rectangle;
     barFill: Phaser.GameObjects.Rectangle;
     barWidth: number;
+    needFood?: Phaser.GameObjects.Text; // shown when idle + under cap but can't afford a unit (player only)
 }
 
 // A building being hammered up on a slot. Progress only advances while a builder peasant is
@@ -223,6 +224,16 @@ export class Buildings {
                     .setOrigin(0, 0.5).setDepth(10_001).setVisible(false);
                 barFill.scaleX = 0;
                 this.layer.add([barBg, barFill]);
+                // "Need food" hint sits where the bar is (idle vs training are mutually exclusive);
+                // player-only, since it's an actionable prompt to allocate food workers.
+                let needFood: Phaser.GameObjects.Text | undefined;
+                if (faction === FACTION.player) {
+                    needFood = this.scene.add.text(p.x, barY, '🍖 need food', {
+                        fontFamily: 'monospace', fontSize: '12px', color: '#ffdede',
+                        backgroundColor: '#7a2a2a', padding: { x: 4, y: 2 },
+                    }).setOrigin(0.5, 0.5).setDepth(10_002).setVisible(false);
+                    this.layer.add(needFood);
+                }
                 this.producers.push({
                     faction,
                     typeIndex,
@@ -239,6 +250,7 @@ export class Buildings {
                     barBg,
                     barFill,
                     barWidth,
+                    needFood,
                 });
             }
         } else {
@@ -336,11 +348,12 @@ export class Buildings {
         // countdown STARTS; the unit pops when it ends; then it tries the next (up to its cap).
         const trainMs = Math.max(250, CONFIG.production.spawnSeconds * 1000);
         for (const p of this.producers) {
-            if (!p.enabled) { this.hideBar(p); continue; } // paused by the player
+            if (!p.enabled) { this.hideBar(p); this.setNeedFood(p, false); continue; } // paused
 
             if (p.training) {
                 p.acc += delta;
                 this.showBar(p, p.acc / trainMs);
+                this.setNeedFood(p, false);
                 if (p.acc >= trainMs) {
                     this.units.spawnAt(p.faction, p.typeIndex, p.x, p.y, p.id);
                     p.training = false;
@@ -351,13 +364,18 @@ export class Buildings {
             }
 
             // Idle: start the next unit if there's room under the cap and food to pay for it.
-            if (p.cap > 0 && this.units.producerLivingCount(p.id) >= p.cap) { this.hideBar(p); continue; }
+            if (p.cap > 0 && this.units.producerLivingCount(p.id) >= p.cap) {
+                this.hideBar(p); this.setNeedFood(p, false); continue; // at cap — satisfied
+            }
             const cost = CONFIG.unitTypes[p.typeIndex].foodCost ?? 0;
-            if (cost > 0 && !this.store.spend(p.faction, { food: cost })) { this.hideBar(p); continue; }
+            if (cost > 0 && !this.store.spend(p.faction, { food: cost })) {
+                this.hideBar(p); this.setNeedFood(p, true); continue; // can't afford → prompt the player
+            }
             p.training = true;
             p.paidFood = cost;
             p.acc = 0;
             this.showBar(p, 0);
+            this.setNeedFood(p, false);
         }
         // Finish any site a peasant has hammered to completion (progress advanced elsewhere).
         for (let i = this.sites.length - 1; i >= 0; i--) {
@@ -374,6 +392,10 @@ export class Buildings {
     private hideBar(p: Producer) {
         p.barBg.setVisible(false);
         p.barFill.setVisible(false);
+    }
+
+    private setNeedFood(p: Producer, on: boolean) {
+        p.needFood?.setVisible(on);
     }
 
     // ---- Production enable/disable (player taps a producer; the SelectionHud shows the toggle) ----
