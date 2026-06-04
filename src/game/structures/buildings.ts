@@ -256,7 +256,7 @@ export class Buildings {
                     needFood,
                     defenders: def.defenders ?? 0,
                     garrisoned: false,
-                    roofY: p.y - img.displayHeight * 0.6, // ~2/3 up the building art (the roof)
+                    roofY: p.y - img.displayHeight * CONFIG.garrison.roofFrac, // sit on the roof
                 });
             }
         } else {

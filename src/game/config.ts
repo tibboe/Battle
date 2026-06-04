@@ -429,6 +429,7 @@ export const CONFIG = {
     garrison: {
         rangeMul: 2,
         cost: { gold: 60, stone: 40, wood: 20 } as Cost,
+        roofFrac: 0.38, // defender height up the building art (fraction of its display height)
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
