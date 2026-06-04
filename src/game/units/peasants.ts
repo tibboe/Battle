@@ -82,7 +82,7 @@ const RESOURCES: ResourceType[] = ['gold', 'wood', 'stone', 'food'];
 interface Peasant {
     faction: Faction;
     house: number;        // index into that faction's houses (for refill accounting)
-    resource: ResourceType;
+    resource: ResourceType | null; // null = idle (no assignment) — player peasants start idle
     state: State;
     x: number;
     y: number;
@@ -164,7 +164,7 @@ export class PeasantManager {
     // Live worker count on each resource for a side.
     private counts(faction: Faction): Record<ResourceType, number> {
         const c: Record<ResourceType, number> = { gold: 0, wood: 0, stone: 0, food: 0 };
-        for (const p of this.peasants) if (!p.dead && p.faction === faction) c[p.resource]++;
+        for (const p of this.peasants) if (!p.dead && p.faction === faction && p.resource) c[p.resource]++;
         return c;
     }
 
@@ -188,41 +188,31 @@ export class PeasantManager {
         return best;
     }
 
-    // The least-staffed resource that still has a live node (for the player's auto/default
-    // assignment when the focus queue is empty) — keeps idle workers spread out.
-    private pickLive(faction: Faction): ResourceType {
-        let cands = RESOURCES.filter((r) => this.nodes.anyLive(r));
-        if (!cands.length) cands = RESOURCES;
-        const c = this.counts(faction);
-        let best = cands[0];
-        let min = Infinity;
-        for (const r of cands) if (c[r] < min) { min = c[r]; best = r; }
-        return best;
-    }
-
     // The resource a free worker should take next. Player: the front of the FIFO focus queue if
-    // any, else keep its current (if still live), else spread out. Enemy: target-based auto split.
-    private nextResource(faction: Faction, current?: ResourceType): ResourceType {
+    // any, else keep its current (if still live), else IDLE (null) — the player tells idle
+    // peasants what to gather. Enemy: target-based auto split (never idle).
+    private nextResource(faction: Faction, current?: ResourceType | null): ResourceType | null {
         if (faction === FACTION.player) {
             const q = this.focus[faction];
             if (q.length) return q.shift()!;
             if (current && this.nodes.anyLive(current)) return current;
-            return this.pickLive(faction);
+            return null;
         }
         return this.pickResource(faction);
     }
 
-    // Re-pick a worker's resource at the end of a trip: player pulls from its focus queue (and
-    // only re-spreads if its current resource has run dry); the enemy converges toward targets.
+    // Re-pick a worker's resource at the end of a trip: player pulls from its focus queue, keeps
+    // its current resource if still live, else goes idle (so you reassign it); the enemy
+    // converges toward targets.
     private rebalance(p: Peasant) {
         if (p.faction === FACTION.player) {
             const q = this.focus[p.faction];
             if (q.length) { p.resource = q.shift()!; p.node = undefined; return; }
-            if (!this.nodes.anyLive(p.resource)) { p.resource = this.pickLive(p.faction); p.node = undefined; }
+            if (!p.resource || !this.nodes.anyLive(p.resource)) { p.resource = null; p.node = undefined; }
             return;
         }
         const c = this.counts(p.faction);
-        if (c[p.resource] > this.targets[p.faction][p.resource] || !this.nodes.anyLive(p.resource)) {
+        if (c[p.resource as ResourceType] > this.targets[p.faction][p.resource as ResourceType] || !this.nodes.anyLive(p.resource as ResourceType)) {
             p.resource = this.pickResource(p.faction);
             p.node = undefined;
         }
@@ -352,21 +342,26 @@ export class PeasantManager {
 
         switch (p.state) {
             case State.Seek: {
+                // Idle (no assignment): grab the next focus ticket if one is queued, else stand
+                // and wait to be told what to gather (player peasants start here).
+                if (p.resource === null) {
+                    const q = this.focus[p.faction];
+                    if (p.faction === FACTION.player && q.length) { p.resource = q.shift()!; p.node = undefined; }
+                    else { p.sprite.anims.stop(); break; }
+                }
+                const res = p.resource;
+                if (!res) break;
                 if (!p.node || !p.node.alive) {
-                    // If this resource has been fully mined out, switch to one that still has nodes.
-                    if (!this.nodes.anyLive(p.resource)) this.rebalance(p);
-                    p.node = this.nodes.nearest(p.resource, p.x, p.y);
+                    // If this resource has been fully mined out, re-evaluate (player → idle).
+                    if (!this.nodes.anyLive(res)) { this.rebalance(p); break; }
+                    p.node = this.nodes.nearest(res, p.x, p.y);
                 }
-                if (!p.node) {
-                    // Every resource drained — idle in place.
-                    this.setAnim(p, 'walk');
-                    break;
-                }
+                if (!p.node) { this.setAnim(p, 'walk'); break; }
                 if (this.moveTo(p, p.node.x, p.node.y, CONFIG.peasant.arrive, dt)) {
                     p.state = State.Harvest;
                     p.timer = 0;
                     this.faceTo(p, p.node.x);
-                    this.setAnim(p, p.resource === 'wood' ? 'chop' : 'mine');
+                    this.setAnim(p, res === 'wood' ? 'chop' : 'mine');
                 } else {
                     this.setAnim(p, 'walk');
                 }
@@ -399,7 +394,7 @@ export class PeasantManager {
             case State.Bank: {
                 p.timer += delta;
                 if (p.timer >= CONFIG.peasant.bankTime) {
-                    this.store.add(p.faction, p.resource, p.carrying);
+                    if (p.resource) this.store.add(p.faction, p.resource, p.carrying);
                     p.carrying = 0;
                     this.rebalance(p); // converge toward the target split as workers recycle
                     p.state = State.Seek;

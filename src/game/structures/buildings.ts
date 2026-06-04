@@ -17,7 +17,7 @@ import { ResourceStore } from '../economy/ResourceStore';
 const BASE = 'assets/environment/tiny-swords/buildings';
 const DIR = ['Blue Buildings', 'Red Buildings']; // indexed by faction
 
-function buildingKey(faction: Faction, name: string) {
+export function buildingKey(faction: Faction, name: string) {
     return `bld-${faction}-${name}`;
 }
 

@@ -2,7 +2,7 @@ import * as Phaser from 'phaser';
 import { CONFIG, Cost } from '../config';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
-import { Buildings } from '../structures/buildings';
+import { Buildings, buildingKey } from '../structures/buildings';
 import { costOf, purchaseUpgrade, upgradeActive, upgradesForKind } from '../upgrades';
 
 // The unified selection HUD (replaces the old stacked upgrade/build popups). Tapping a player
@@ -16,20 +16,29 @@ import { costOf, purchaseUpgrade, upgradeActive, upgradesForKind } from '../upgr
 // UI layer; the highlight lives on the world layer so it tracks the object under pan/zoom.
 
 const DEPTH = 1_000_010;
-const BAR_H = 150;
-const PAD = 12;
-const CARD_GAP = 10;
-const CARD_H = 92;
-const CARD_MAX_W = 196;
+const BAR_H = 82;       // half the old height — takes less of the screen
+const PAD = 10;
+const CARD_GAP = 8;
+const CARD_H = 56;
+const CARD_MAX_W = 150;
+const IMG = 40;         // card thumbnail size
 
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
-const costLine = (c: Cost) => `G ${c.gold}  S ${c.stone}  W ${c.wood}`;
+
+// The resource columns shown stacked on a card (food isn't a build/upgrade cost). Each: key,
+// short letter, and the colour used when affordable.
+const COST_RES: { key: 'gold' | 'stone' | 'wood'; letter: string; color: string }[] = [
+    { key: 'gold', letter: 'G', color: '#e8c34a' },
+    { key: 'stone', letter: 'S', color: '#c2c2cc' },
+    { key: 'wood', letter: 'W', color: '#c79a5a' },
+];
 
 // One option rendered as a card. `onTap` runs when an enabled card is pressed.
 interface Card {
     name: string;
-    desc: string;
-    foot: string;       // cost line, "owned", etc.
+    image?: string;     // texture key (building art) shown at the left
+    cost?: Cost;        // resource requirement, stacked on the right (red where short)
+    note?: string;      // shown instead of costs (e.g. "Owned", a toggle hint)
     state: 'buy' | 'owned' | 'locked'; // colours the card
     onTap: () => void;
 }
@@ -127,9 +136,9 @@ export class SelectionHud {
             const cards = CONFIG.production.catalog.map((def): Card => {
                 const afford = this.store.canAfford(sel.faction, def.cost);
                 return {
-                    name: cap(def.key) + (def.produces ? '' : ' (peasants)'),
-                    desc: def.produces ? `Makes ${def.produces}s` : 'Trains peasants',
-                    foot: afford ? costLine(def.cost) : `Need ${costLine(def.cost)}`,
+                    name: cap(def.key),
+                    image: buildingKey(sel.faction, def.art),
+                    cost: def.cost,
                     state: afford ? 'buy' : 'locked',
                     onTap: () => {
                         if (!this.store.spend(sel.faction, def.cost)) return;
@@ -149,8 +158,8 @@ export class SelectionHud {
             const afford = this.store.canAfford(FACTION.player, cost);
             return {
                 name: u.label,
-                desc: u.desc,
-                foot: owned ? 'Owned' : (afford ? costLine(cost) : `Need ${costLine(cost)}`),
+                cost: owned ? undefined : cost,
+                note: owned ? 'Owned' : undefined,
                 state: owned ? 'owned' : (afford ? 'buy' : 'locked'),
                 onTap: () => {
                     if (owned || !this.store.spend(FACTION.player, cost)) return;
@@ -167,8 +176,7 @@ export class SelectionHud {
             const food = this.buildings.producerFoodCost(this.selX, this.selY);
             cards.unshift({
                 name: enabled ? '⏸ Producing' : '▶ Paused',
-                desc: enabled ? 'Tap to pause training' : 'Tap to resume training',
-                foot: food > 0 ? `Food ${food}/unit` : 'Free',
+                note: enabled ? `ON · ${food} food/unit` : 'OFF · tap to resume',
                 state: 'buy',
                 onTap: () => { this.buildings.toggleProducer(this.selX, this.selY); this.render(); },
             });
@@ -191,12 +199,12 @@ export class SelectionHud {
         // Keep the (tap-blocking) hit area in sync with the resized bar.
         const hit = this.bg.input?.hitArea as Phaser.Geom.Rectangle | undefined;
         if (hit) hit.setTo(0, 0, W, BAR_H);
-        this.title.setPosition(PAD, barY + 10).setText(title).setVisible(true);
-        this.closeBtn.setPosition(W - this.closeBtn.width - 10, barY + 8).setVisible(true);
+        this.title.setPosition(PAD, barY + 5).setText(title).setVisible(true);
+        this.closeBtn.setPosition(W - this.closeBtn.width - 8, barY + 4).setVisible(true);
 
         if (!cards.length) {
-            const t = this.scene.add.text(PAD, barY + 50, 'No upgrades yet.',
-                { fontFamily: 'monospace', fontSize: '14px', color: '#9fb3c8' })
+            const t = this.scene.add.text(PAD, barY + 34, 'No upgrades yet.',
+                { fontFamily: 'monospace', fontSize: '13px', color: '#9fb3c8' })
                 .setScrollFactor(0).setDepth(DEPTH + 1);
             this.layer.add(t);
             this.cardObjects.push(t);
@@ -208,7 +216,7 @@ export class SelectionHud {
         const cardW = Math.min(CARD_MAX_W, avail / n);
         const cardsW = cardW * n + CARD_GAP * (n - 1);
         const startX = (W - cardsW) / 2; // centre the row
-        const cy = barY + 42;
+        const cy = barY + 22;
 
         cards.forEach((c, i) => {
             const cx = startX + i * (cardW + CARD_GAP);
@@ -225,19 +233,45 @@ export class SelectionHud {
             card.setInteractive({ useHandCursor: true });
             card.on('pointerup', c.onTap);
         }
-        const name = this.scene.add.text(x + 8, y + 8, c.name,
-            { fontFamily: 'monospace', fontSize: '14px', color: lit ? '#e8f1ff' : '#6b7886' })
+        this.cardObjects.push(card);
+
+        let textX = x + 8;
+        if (c.image) {
+            const img = this.scene.add.image(x + 6 + IMG / 2, y + CARD_H / 2, c.image)
+                .setDisplaySize(IMG, IMG).setScrollFactor(0).setDepth(DEPTH + 2);
+            if (!lit) img.setTint(0x6a6a6a);
+            this.cardObjects.push(img);
+            textX = x + IMG + 14;
+        }
+
+        const name = this.scene.add.text(textX, y + 5, c.name,
+            { fontFamily: 'monospace', fontSize: '12px', color: lit ? '#e8f1ff' : '#6b7886' })
             .setScrollFactor(0).setDepth(DEPTH + 2);
-        const desc = this.scene.add.text(x + 8, y + 30, c.desc,
-            { fontFamily: 'monospace', fontSize: '10px', color: lit ? '#8aa0b5' : '#5a6572',
-              wordWrap: { width: w - 16 } })
-            .setScrollFactor(0).setDepth(DEPTH + 2);
-        const foot = this.scene.add.text(x + 8, y + CARD_H - 18, c.foot,
-            { fontFamily: 'monospace', fontSize: '10px',
-              color: c.state === 'owned' ? '#7be08a' : c.state === 'buy' ? '#c0b46a' : '#5a6572' })
-            .setScrollFactor(0).setDepth(DEPTH + 2);
-        this.layer.add([card, name, desc, foot]);
-        this.cardObjects.push(card, name, desc, foot);
+        this.cardObjects.push(name);
+
+        if (c.note !== undefined) {
+            const note = this.scene.add.text(textX, y + 26, c.note,
+                { fontFamily: 'monospace', fontSize: '11px',
+                  color: c.state === 'owned' ? '#7be08a' : '#9fb3c8' })
+                .setScrollFactor(0).setDepth(DEPTH + 2);
+            this.cardObjects.push(note);
+        } else if (c.cost) {
+            // Resource requirement stacked vertically; any resource you're short on shows the
+            // shortfall in red.
+            const have = this.store.bag(FACTION.player);
+            let ry = y + 21;
+            for (const r of COST_RES) {
+                const need = c.cost[r.key];
+                if (!need) continue;
+                const lack = Math.max(0, need - have[r.key]);
+                const txt = lack > 0 ? `${r.letter} ${need} (-${lack})` : `${r.letter} ${need}`;
+                const t = this.scene.add.text(textX, ry, txt,
+                    { fontFamily: 'monospace', fontSize: '10px', color: lack > 0 ? '#ff6a6a' : r.color })
+                    .setScrollFactor(0).setDepth(DEPTH + 2);
+                this.cardObjects.push(t);
+                ry += 11;
+            }
+        }
     }
 
     private clearCards() {
