@@ -607,17 +607,26 @@ export class UnitManager {
                 const minD = ob.r + unitR;
                 const d2 = dx * dx + dy * dy;
                 if (d2 >= minD * minD) continue;
+                const fwd = this.faction[i] === FACTION.player ? 1 : -1;
                 let nx: number;
                 let ny: number;
                 if (d2 < 0.01) {
                     // Dead-centre (e.g. just spawned inside its own producer): exit forwards.
-                    nx = (this.faction[i] === FACTION.player ? 1 : -1) * minD;
+                    nx = fwd * minD;
                     ny = 0;
                 } else {
                     const d = Math.sqrt(d2);
                     const pen = minD - d;
-                    nx = (dx / d) * pen;
-                    ny = (dy / d) * pen;
+                    // Radial push out of the footprint…
+                    const rxn = dx / d;
+                    const ryn = dy / d;
+                    // …plus a TANGENTIAL slide so a unit pressing straight into a building rounds
+                    // it instead of stalling. Bias the tangent toward the unit's forward heading.
+                    let txn = -ryn;
+                    let tyn = rxn;
+                    if (txn * fwd < 0) { txn = -txn; tyn = -tyn; }
+                    nx = (rxn + txn * 0.9) * pen;
+                    ny = (ryn + tyn * 0.9) * pen;
                 }
                 const m = Math.hypot(nx, ny);
                 if (m > maxStep) { const s = maxStep / m; nx *= s; ny *= s; }
