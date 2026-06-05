@@ -95,6 +95,8 @@ export class GameScene extends Phaser.Scene {
     create() {
         this.playerKeepHp = CONFIG.keep.hp;
         this.enemyKeepHp = CONFIG.keep.hp;
+        this.playerKeepMaxHp = CONFIG.keep.hp; // reset Fortify (Phaser reuses the scene instance)
+        this.levelUpQueue = 0;
         this.gameOver = false;
         this.lastResRev = -1;
         matchStats.reset(); // begin recording this match's stats

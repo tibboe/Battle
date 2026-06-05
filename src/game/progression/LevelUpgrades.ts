@@ -70,7 +70,6 @@ const byKey: Record<string, PerkDef> = Object.fromEntries(PERKS.map((p) => [p.ke
 const levels: Record<string, number> = {};
 
 export const perkLevel = (key: string) => levels[key] ?? 0;
-export const perkDef = (key: string) => byKey[key];
 
 // Raise a perk one level (clamped to its max). Returns the new level.
 export function choosePerk(key: string): number {
