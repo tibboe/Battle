@@ -1,4 +1,5 @@
 import * as Phaser from 'phaser';
+import { rotatesWithCamera, screenOffset, uprightAngle } from '../controls/billboard';
 
 // Pooled floating combat numbers — damage in white, heals in green. They live in WORLD
 // space (above the units) so they zoom and pan with the battle. A fixed pool is created
@@ -12,12 +13,16 @@ const LIFE = 650;   // ms visible
 const DEPTH = 2_000_000; // above every unit (units use world-y, up to ~1900, as depth)
 
 export class FloatingText {
+    private readonly scene: Phaser.Scene;
     private readonly texts: Phaser.GameObjects.Text[] = [];
     private readonly life = new Float32Array(POOL);
+    private readonly startX = new Float32Array(POOL);
     private readonly startY = new Float32Array(POOL);
+    private readonly up = new Phaser.Math.Vector2(); // scratch: "up on screen" reused each frame
     private next = 0;
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
+        this.scene = scene;
         for (let i = 0; i < POOL; i++) {
             const t = scene.add.text(0, 0, '', {
                 fontFamily: 'monospace',
@@ -30,6 +35,7 @@ export class FloatingText {
                 .setDepth(DEPTH)
                 .setActive(false)
                 .setVisible(false);
+            rotatesWithCamera(t); // we keep it upright ourselves in update()
             layer.add(t);
             this.texts.push(t);
         }
@@ -48,10 +54,14 @@ export class FloatingText {
             .setActive(true)
             .setVisible(true);
         this.life[i] = LIFE;
+        this.startX[i] = x;
         this.startY[i] = y - 8;
     }
 
     update(delta: number) {
+        // Drift UP on screen and stay upright even when the battlefield is rotated.
+        const angle = uprightAngle(this.scene);
+        const up = screenOffset(this.scene, 0, 1, this.up); // unit "up on screen" in world space
         for (let i = 0; i < POOL; i++) {
             const t = this.texts[i];
             if (!t.active) continue;
@@ -61,7 +71,10 @@ export class FloatingText {
                 continue;
             }
             const f = this.life[i] / LIFE; // 1 -> 0
-            t.y = this.startY[i] - (1 - f) * RISE;
+            const rise = (1 - f) * RISE;
+            t.x = this.startX[i] + up.x * rise;
+            t.y = this.startY[i] + up.y * rise;
+            t.rotation = angle;
             t.alpha = f < 0.4 ? f / 0.4 : 1; // hold, then fade out over the last 40%
         }
     }

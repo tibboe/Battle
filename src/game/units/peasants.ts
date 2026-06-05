@@ -5,6 +5,7 @@ import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
 import { Buildings, ConstructionSite } from '../structures/buildings';
 import { peasantCarryBonus, peasantFleeBurst, peasantSpeedBonus } from '../upgrades';
+import { cameraAngle } from '../controls/billboard';
 import { luPeasantCarry, luPeasantSpeed } from '../progression/LevelUpgrades';
 
 // Peasants (Milestone 4) — the repurposed Pawn, now a pure WORKER, kept deliberately apart
@@ -97,6 +98,7 @@ interface Peasant {
     anim: WorkerAnim;
     burst: number;        // ms of flee speed-burst remaining (peasantFlee upgrade)
     burstCd: number;      // ms until the flee burst can trigger again
+    faceX: number;        // world-facing sign (+1 right / −1 left); on-screen flip derives from this
 }
 
 export class PeasantManager {
@@ -260,6 +262,7 @@ export class PeasantManager {
             anim: 'walk',
             burst: 0,
             burstCd: 0,
+            faceX: faction === FACTION.enemy ? -1 : 1,
         });
         this.alive[faction][house]++;
     }
@@ -270,6 +273,7 @@ export class PeasantManager {
         this.maintain(delta);
         const dt = delta / 1000;
         for (const p of this.peasants) if (!p.dead) this.step(p, delta, dt);
+        this.applyFacing();
         if (this.removeDead) {
             this.peasants = this.peasants.filter((p) => !p.dead);
             this.removeDead = false;
@@ -461,8 +465,15 @@ export class PeasantManager {
     }
 
     private faceTo(p: Peasant, tx: number) {
-        // Art faces right; flip when the target is to the left.
-        p.sprite.setFlipX(tx < p.x);
+        // Record world-facing; the on-screen flip is applied (camera-angle aware) in update().
+        if (tx < p.x - 0.01) p.faceX = -1;
+        else if (tx > p.x + 0.01) p.faceX = 1;
+    }
+
+    // Flip each peasant to face its world direction ON SCREEN (see UnitManager.applyFacing).
+    private applyFacing() {
+        const cos = Math.cos(cameraAngle(this.scene));
+        for (const p of this.peasants) if (!p.dead) p.sprite.setFlipX(p.faceX * cos < 0);
     }
 
     // Effective walk speed: base + the player's worker-speed upgrade, ×burst while fleeing.

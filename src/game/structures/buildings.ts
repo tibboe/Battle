@@ -2,6 +2,7 @@ import * as Phaser from 'phaser';
 import { BuildingDef, CONFIG, Cost, laneBottom, laneTop } from '../config';
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
+import { rotatesWithCamera, screenOffset, uprightAngle } from '../controls/billboard';
 
 // The per-side 3×3 build grid (spots 1-9, left→right, top→bottom). The Castle keep sits on
 // CONFIG.grid.keepSpot and the shared-upgrades building on its spot; everything else is
@@ -221,20 +222,20 @@ export class Buildings {
                 // Cooldown bar above the building (hidden until a unit is actually training).
                 const barWidth = 50;
                 const barY = p.y - 70;
-                const barBg = this.scene.add.rectangle(p.x, barY, barWidth, 7, 0x000000, 0.6)
-                    .setOrigin(0.5, 0.5).setDepth(10_000).setVisible(false);
-                const barFill = this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 5, 0xffcf6a, 1)
-                    .setOrigin(0, 0.5).setDepth(10_001).setVisible(false);
+                const barBg = rotatesWithCamera(this.scene.add.rectangle(p.x, barY, barWidth, 7, 0x000000, 0.6)
+                    .setOrigin(0.5, 0.5).setDepth(10_000).setVisible(false));
+                const barFill = rotatesWithCamera(this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 5, 0xffcf6a, 1)
+                    .setOrigin(0, 0.5).setDepth(10_001).setVisible(false));
                 barFill.scaleX = 0;
                 this.layer.add([barBg, barFill]);
                 // "Need food" hint sits where the bar is (idle vs training are mutually exclusive);
                 // player-only, since it's an actionable prompt to allocate food workers.
                 let needFood: Phaser.GameObjects.Text | undefined;
                 if (faction === FACTION.player) {
-                    needFood = this.scene.add.text(p.x, barY, '🍖 need food', {
+                    needFood = rotatesWithCamera(this.scene.add.text(p.x, barY, '🍖 need food', {
                         fontFamily: 'monospace', fontSize: '12px', color: '#ffdede',
                         backgroundColor: '#7a2a2a', padding: { x: 4, y: 2 },
-                    }).setOrigin(0.5, 0.5).setDepth(10_002).setVisible(false);
+                    }).setOrigin(0.5, 0.5).setDepth(10_002).setVisible(false));
                     this.layer.add(needFood);
                 }
                 this.producers.push({
@@ -290,11 +291,11 @@ export class Buildings {
 
         const barWidth = 64;
         const barY = p.y - 70;
-        const barBg = this.scene.add.rectangle(p.x, barY, barWidth, 8, 0x000000, 0.6)
-            .setOrigin(0.5, 0.5).setDepth(10_000);
+        const barBg = rotatesWithCamera(this.scene.add.rectangle(p.x, barY, barWidth, 8, 0x000000, 0.6)
+            .setOrigin(0.5, 0.5).setDepth(10_000));
         // Full-width fill, scaled on the X axis as progress climbs (reliable on Shapes).
-        const barFill = this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 6, 0x7be08a, 1)
-            .setOrigin(0, 0.5).setDepth(10_001);
+        const barFill = rotatesWithCamera(this.scene.add.rectangle(p.x - barWidth / 2, barY, barWidth, 6, 0x7be08a, 1)
+            .setOrigin(0, 0.5).setDepth(10_001));
         barFill.scaleX = 0;
         this.layer.add([barBg, barFill]);
 
@@ -388,6 +389,30 @@ export class Buildings {
             const s = this.sites[i];
             if (!s.done && s.progress >= s.def.buildTime) this.finishSite(s);
         }
+        this.billboardBars();
+    }
+
+    // Keep the per-building cooldown/progress bars + "need food" prompt upright and above their
+    // building as the battlefield turns. The bars sit BAR_UP px above the building base on screen;
+    // the fill bar is anchored at its left end (origin 0,0.5) so its scaleX still grows rightward.
+    private billboardBars() {
+        const a = uprightAngle(this.scene);
+        const up = 70; // matches barY = p.y - 70 at placement
+        const c = new Phaser.Math.Vector2();
+        const l = new Phaser.Math.Vector2();
+        for (const p of this.producers) {
+            screenOffset(this.scene, 0, up, c);
+            p.barBg.setPosition(p.bx + c.x, p.by + c.y).setRotation(a);
+            p.needFood?.setPosition(p.bx + c.x, p.by + c.y).setRotation(a);
+            screenOffset(this.scene, -p.barWidth / 2, up, l);
+            p.barFill.setPosition(p.bx + l.x, p.by + l.y).setRotation(a);
+        }
+        for (const s of this.sites) {
+            screenOffset(this.scene, 0, up, c);
+            s.barBg.setPosition(s.x + c.x, s.y + c.y).setRotation(a);
+            screenOffset(this.scene, -s.barWidth / 2, up, l);
+            s.barFill.setPosition(s.x + l.x, s.y + l.y).setRotation(a);
+        }
     }
 
     private showBar(p: Producer, frac: number) {
@@ -442,10 +467,12 @@ export class Buildings {
         if (!this.store.spend(p.faction, CONFIG.garrison.cost)) return false;
         const archer = CONFIG.unitTypes.findIndex((u) => u.key === 'archer');
         if (archer < 0) return false;
-        // Spread them across the roof so they don't stack on one another.
+        // Spread them across the roof so they don't stack on one another. dx (along the roof) and
+        // the base→roof rise are SCREEN-space offsets so the defenders stay on the roof when the
+        // battlefield is turned (see UnitManager.repositionGarrison).
         for (let k = 0; k < p.defenders; k++) {
             const dx = (k - (p.defenders - 1) / 2) * 42;
-            this.units.spawnDefender(p.faction, archer, p.bx + dx, p.roofY);
+            this.units.spawnDefender(p.faction, archer, p.bx + dx, p.roofY, dx, p.by - p.roofY);
         }
         p.garrisoned = true;
         return true;

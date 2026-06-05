@@ -70,7 +70,9 @@ export function buildTunables(): Setting[] {
         { section: 'Skills', label: 'Mercs cd', get: () => merc.cooldown, set: (v) => (merc.cooldown = v), step: 1000, min: 0, max: 60000, live: true, fmt: (v) => `${v / 1000}s` },
 
         { section: 'Battlefield', label: 'Lane width', get: () => CONFIG.lanes[0].pathWidth, set: (v) => (CONFIG.lanes[0].pathWidth = v), step: 20, min: 40, max: 600, live: true },
-        { section: 'Battlefield', label: 'Map width', get: () => CONFIG.world.width, set: (v) => (CONFIG.world.width = v), step: 500, min: 2000, max: 8000, live: false },
+        // The world is kept SQUARE (width === height) so rotation frames it the same at every
+        // 90°. This one knob sets both; min 4000 keeps the lane + bases on the island.
+        { section: 'Battlefield', label: 'Map size', get: () => CONFIG.world.width, set: (v) => { CONFIG.world.width = v; CONFIG.world.height = v; }, step: 500, min: 4000, max: 8000, live: false },
         { section: 'Battlefield', label: 'Water edge', get: () => CONFIG.island.margin, set: (v) => (CONFIG.island.margin = v), step: 32, min: 64, max: 640, live: false },
 
         { section: 'Environment', label: 'Forest', get: () => CONFIG.decorations.forest, set: (v) => (CONFIG.decorations.forest = v), step: 4, min: 0, max: 120, live: false },

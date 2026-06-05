@@ -79,12 +79,12 @@ export interface UnitType {
 }
 
 export const CONFIG = {
-    // The battlefield is much larger than the phone viewport; the camera shows a
-    // slice of it and can zoom out to frame the whole thing. Aspect (~2.1:1) is close
-    // to a landscape phone so "fit to width" fills the screen with little letterboxing.
+    // The battlefield is SQUARE so the camera frames it identically at every 90° rotation
+    // (a rectangle lets you zoom out far along its long axis but not its short one). The lane
+    // runs across the middle (y = height/2); there's grass + water above and below to pan into.
     world: {
         width: 4000,
-        height: 1900,
+        height: 4000,
     },
 
     // ONE flat horizontal lane the armies march along (left↔right). `y` is the lane centre.
@@ -92,7 +92,7 @@ export const CONFIG = {
     // hold the buildings' spawn heights. `pathWidth` is the TIGHT path units funnel into as
     // they march (the "Lane width" knob); `funnelSpeed` is how fast (px/s) they drift to it.
     lanes: [
-        { y: 950, thickness: 700, pathWidth: 200, funnelSpeed: 70 },
+        { y: 2000, thickness: 700, pathWidth: 200, funnelSpeed: 70 },
     ],
 
     // The battlefield is a flat grass ISLAND on open water. `margin` = px of water framing
@@ -371,36 +371,37 @@ export const CONFIG = {
         // ALL nodes are finite now, so concentrating workers on one resource drains it and you
         // must spread out / push for the contested centre. Each base gets a CLUSTER of three of
         // each resource (in its back corners, off the lane) so it doesn't starve too fast.
+        // y's sit around the lane centre (2000); they track the lane, so they shift with it.
         list: [
             // ---- Player base (left): gold up-back, stone down-back, wood down-front ----
-            { type: 'gold',  x: 700,  y: 560,  finite: true },
-            { type: 'gold',  x: 840,  y: 540,  finite: true },
-            { type: 'gold',  x: 600,  y: 650,  finite: true },
-            { type: 'stone', x: 560,  y: 1300, finite: true },
-            { type: 'stone', x: 700,  y: 1360, finite: true },
-            { type: 'stone', x: 520,  y: 1180, finite: true },
-            { type: 'wood',  x: 1040, y: 1300, finite: true },
-            { type: 'wood',  x: 1140, y: 1220, finite: true },
-            { type: 'wood',  x: 940,  y: 1380, finite: true },
+            { type: 'gold',  x: 700,  y: 1610, finite: true },
+            { type: 'gold',  x: 840,  y: 1590, finite: true },
+            { type: 'gold',  x: 600,  y: 1700, finite: true },
+            { type: 'stone', x: 560,  y: 2350, finite: true },
+            { type: 'stone', x: 700,  y: 2410, finite: true },
+            { type: 'stone', x: 520,  y: 2230, finite: true },
+            { type: 'wood',  x: 1040, y: 2350, finite: true },
+            { type: 'wood',  x: 1140, y: 2270, finite: true },
+            { type: 'wood',  x: 940,  y: 2430, finite: true },
             // ---- Enemy base (right): mirrored ----
-            { type: 'gold',  x: 3300, y: 560,  finite: true },
-            { type: 'gold',  x: 3160, y: 540,  finite: true },
-            { type: 'gold',  x: 3400, y: 650,  finite: true },
-            { type: 'stone', x: 3440, y: 1300, finite: true },
-            { type: 'stone', x: 3300, y: 1360, finite: true },
-            { type: 'stone', x: 3480, y: 1180, finite: true },
-            { type: 'wood',  x: 2960, y: 1300, finite: true },
-            { type: 'wood',  x: 2860, y: 1220, finite: true },
-            { type: 'wood',  x: 3060, y: 1380, finite: true },
+            { type: 'gold',  x: 3300, y: 1610, finite: true },
+            { type: 'gold',  x: 3160, y: 1590, finite: true },
+            { type: 'gold',  x: 3400, y: 1700, finite: true },
+            { type: 'stone', x: 3440, y: 2350, finite: true },
+            { type: 'stone', x: 3300, y: 2410, finite: true },
+            { type: 'stone', x: 3480, y: 2230, finite: true },
+            { type: 'wood',  x: 2960, y: 2350, finite: true },
+            { type: 'wood',  x: 2860, y: 2270, finite: true },
+            { type: 'wood',  x: 3060, y: 2430, finite: true },
             // ---- Contested mid-field (reward holding the centre) ----
-            { type: 'gold',  x: 1820, y: 600,  finite: true },
-            { type: 'stone', x: 2180, y: 600,  finite: true },
-            { type: 'wood',  x: 2000, y: 1320, finite: true },
+            { type: 'gold',  x: 1820, y: 1650, finite: true },
+            { type: 'stone', x: 2180, y: 1650, finite: true },
+            { type: 'wood',  x: 2000, y: 2370, finite: true },
             // ---- Sheep pastures: RENEWABLE food income (finite:false), one per side back-corner
             // plus a contested centre pen, so unit production has a sustained food trickle ----
-            { type: 'food',  x: 900,  y: 760,  finite: false },
-            { type: 'food',  x: 3100, y: 760,  finite: false },
-            { type: 'food',  x: 2000, y: 980,  finite: false },
+            { type: 'food',  x: 900,  y: 1810, finite: false },
+            { type: 'food',  x: 3100, y: 1810, finite: false },
+            { type: 'food',  x: 2000, y: 2030, finite: false },
         ] as { type: ResourceType; x: number; y: number; finite: boolean }[],
     },
 
@@ -511,6 +512,15 @@ export const CONFIG = {
         // in. Less than world.height so the world is taller than the screen and dragging
         // up/down pans; there is also map to either side for left/right panning.
         defaultViewHeight: 1100,
+        // Screen rotation (the ↺/↻ HUD): each tap spins the whole battlefield 90° over
+        // `rotateMs` with `rotateEase`. Gentle defaults — tune the feel here, not in code.
+        rotateMs: 600,
+        rotateEase: 'Sine.easeInOut',
+        // Pan inertia: releasing a drag keeps the camera gliding at the fling speed, decaying
+        // exponentially (`panGlideDecay` per second — higher = stops sooner). It halts once the
+        // on-screen glide speed drops below `panGlideMinPx` px/sec.
+        panGlideDecay: 3,
+        panGlideMinPx: 12,
     },
 
     // The two armies use the pack's blue (player) and red (enemy) art sets directly.

@@ -4,6 +4,7 @@ import { Projectiles } from '../units/Projectiles';
 import { Faction, UnitManager } from '../units/UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { matchStats } from '../stats/MatchStats';
+import { screenOffset } from '../controls/billboard';
 import { luMercCdCut, luMercCount, luVolleyArrows, luVolleyCdCut } from '../progression/LevelUpgrades';
 
 // Player-cast battlefield skills. Right now there is exactly one — the Arrow Volley — but this
@@ -146,9 +147,11 @@ export class Abilities {
             const p = this.pending[i];
             p.delay -= delta;
             if (p.delay > 0) continue;
-            // Launch from above and off to one side so the arrow arcs down into the field.
-            const ox = p.tx + Phaser.Math.FloatBetween(-av.skySpread, av.skySpread);
-            const oy = p.ty - av.skyHeight;
+            // Launch from the TOP OF THE SCREEN (skyHeight up, off to one side) so arrows always
+            // rain down regardless of how the battlefield is turned.
+            const off = screenOffset(this.scene, Phaser.Math.FloatBetween(-av.skySpread, av.skySpread), av.skyHeight);
+            const ox = p.tx + off.x;
+            const oy = p.ty + off.y;
             this.projectiles.lob(ox, oy, p.tx, p.ty, p.faction, av.fallSpeed, (lx, ly, f) =>
                 this.units.resolveVolleyHit(lx, ly, f as Faction));
             this.pending.splice(i, 1);

@@ -12,7 +12,11 @@ import { BUSHES, CLOUDS, DUCK, FOAM, ROCKS, STUMPS, TREES, WATER, WATER_ROCKS } 
 // Leveling/plateaus are parked — this is a single flat plain.
 export class TerrainRenderer {
     private readonly scene: Phaser.Scene;
-    private readonly layer: Phaser.GameObjects.Layer;
+    // The ground (water + grass island) goes on `ground`, which turns with the camera when the
+    // screen is rotated. Decorations (trees, rocks, clouds) go on `deco` (the world layer) so
+    // they stay upright — they are anchored to the ground but billboarded by the scene.
+    private readonly ground: Phaser.GameObjects.Layer;
+    private readonly deco: Phaser.GameObjects.Layer;
     private readonly ts = CONFIG.terrain.renderTile;
 
     // Island bounds in world px (tile-aligned), computed from the water margin.
@@ -21,9 +25,10 @@ export class TerrainRenderer {
     private islandRight = 0;
     private islandBottom = 0;
 
-    constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
+    constructor(scene: Phaser.Scene, ground: Phaser.GameObjects.Layer, deco: Phaser.GameObjects.Layer) {
         this.scene = scene;
-        this.layer = layer;
+        this.ground = ground;
+        this.deco = deco;
     }
 
     /** The grass island rectangle in world coords — used to keep units/keeps on land. */
@@ -76,7 +81,7 @@ export class TerrainRenderer {
                         .play(t.anim);
                     s.anims.setProgress(rnd.frac());
                     s.setDepth(y);
-                    this.layer.add(s);
+                    this.deco.add(s);
                 } else if (roll < 0.78) {
                     const st = STUMPS[rnd.between(0, STUMPS.length - 1)];
                     const img = this.scene.add
@@ -85,7 +90,7 @@ export class TerrainRenderer {
                         .setScale(rnd.realInRange(0.7, 0.95))
                         .setFlipX(rnd.frac() < 0.5)
                         .setDepth(y);
-                    this.layer.add(img);
+                    this.deco.add(img);
                 } else {
                     const b = BUSHES[rnd.between(0, BUSHES.length - 1)];
                     const s = this.scene.add
@@ -95,7 +100,7 @@ export class TerrainRenderer {
                         .play(b.anim);
                     s.anims.setProgress(rnd.frac());
                     s.setDepth(y);
-                    this.layer.add(s);
+                    this.deco.add(s);
                 }
             }
         }
@@ -120,7 +125,7 @@ export class TerrainRenderer {
             .tileSprite(0, 0, world.width, world.height, WATER.key)
             .setOrigin(0, 0)
             .setDepth(DEPTH_WATER);
-        this.layer.add(sea);
+        this.ground.add(sea);
     }
 
     // Animated foam ring: a foam sprite straddling every coastline cell. The inland half
@@ -134,7 +139,7 @@ export class TerrainRenderer {
                 .setDepth(DEPTH_FOAM)
                 .play(FOAM.anim);
             s.anims.setProgress(Math.random());
-            this.layer.add(s);
+            this.ground.add(s);
         };
         // Centres of the perimeter cells (sprite origin is centre by default).
         for (let x = this.islandLeft; x < this.islandRight; x += ts) {
@@ -160,7 +165,7 @@ export class TerrainRenderer {
             .tileSprite(L, T, R - L, B - T, TILESET.key, TILES.flatFill)
             .setOrigin(0, 0)
             .setDepth(DEPTH_GROUND);
-        this.layer.add(fill);
+        this.ground.add(fill);
 
         this.runX(TILES.flatTop, L + ts, R - ts, T, DEPTH_EDGE);
         this.runX(TILES.flatBot, L + ts, R - ts, B - ts, DEPTH_EDGE);
@@ -192,11 +197,11 @@ export class TerrainRenderer {
                 const s = this.scene.add.sprite(x, y, b.key).setOrigin(0.5, 0.8).play(b.anim);
                 s.anims.setProgress(rnd.frac());
                 s.setDepth(y);
-                this.layer.add(s);
+                this.deco.add(s);
             } else {
                 const r = ROCKS[rnd.between(0, ROCKS.length - 1)];
                 const img = this.scene.add.image(x, y, r.key).setOrigin(0.5, 0.8).setDepth(y);
-                this.layer.add(img);
+                this.deco.add(img);
             }
         }
 
@@ -213,11 +218,11 @@ export class TerrainRenderer {
                 const w = WATER_ROCKS[rnd.between(0, WATER_ROCKS.length - 1)];
                 const s = this.scene.add.sprite(x, y, w.key).setDepth(DEPTH_SEADECO).play(w.anim);
                 s.anims.setProgress(rnd.frac());
-                this.layer.add(s);
+                this.deco.add(s);
             } else {
                 const s = this.scene.add.sprite(x, y, DUCK.key).setScale(1.4).setDepth(DEPTH_SEADECO).play(DUCK.anim);
                 s.anims.setProgress(rnd.frac());
-                this.layer.add(s);
+                this.deco.add(s);
             }
         }
     }
@@ -234,7 +239,7 @@ export class TerrainRenderer {
                 .setScale(rnd.realInRange(0.55, 0.9))
                 .setAlpha(0.9)
                 .setDepth(DEPTH_CLOUD);
-            this.layer.add(img);
+            this.deco.add(img);
         };
         const n = CONFIG.clouds.count;
         // Top band.
@@ -253,7 +258,7 @@ export class TerrainRenderer {
             .tileSprite(x0, y, x1 - x0, this.ts, TILESET.key, frame)
             .setOrigin(0, 0)
             .setDepth(depth);
-        this.layer.add(run);
+        this.ground.add(run);
     }
     private runY(frame: number, x: number, y0: number, y1: number, depth: number) {
         const ts = this.ts;
@@ -261,7 +266,7 @@ export class TerrainRenderer {
     }
     private tile(frame: number, x: number, y: number, depth: number) {
         const img = this.scene.add.image(x, y, TILESET.key, frame).setOrigin(0, 0).setDepth(depth);
-        this.layer.add(img);
+        this.ground.add(img);
     }
 }
 

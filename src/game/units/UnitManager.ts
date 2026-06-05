@@ -7,6 +7,7 @@ import {
 import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
 import { matchStats } from '../stats/MatchStats';
+import { cameraAngle, rotatesWithCamera, screenOffset } from '../controls/billboard';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -65,8 +66,17 @@ export class UnitManager {
     private readonly destX: Float32Array;
     private readonly destY: Float32Array;
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    // World-space facing: +1 = facing world-right, −1 = world-left. The on-screen flipX is derived
+    // from this AND the camera angle (applyFacing), so a unit faces its TRAVEL direction on screen
+    // even when the battlefield is turned (at 180° world-right is screen-left, so it flips).
+    private readonly faceX: Int8Array;
     private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
     private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
+    // Garrison defenders sit above their building's base by a SCREEN-space offset (so they stay on
+    // the roof when the battlefield is turned). destX/destY hold the building-base anchor; these
+    // hold the offset (px right / px up on screen) re-applied each frame in repositionGarrison.
+    private readonly gOffRight: Float32Array;
+    private readonly gOffUp: Float32Array;
     private readonly level: Uint8Array;      // elevation tier (0 = ground; roofs/high terrain > 0). Melee
                                              // can only strike same-level targets; ranged can hit any level.
     private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
@@ -171,6 +181,7 @@ export class UnitManager {
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
     // Emitted when a unit dies, so the scene can award player experience (enemy deaths only).
     private readonly onKill?: (faction: Faction, type: number, x: number, y: number) => void;
+    private readonly scene: Phaser.Scene; // kept for the live camera angle (health bars / garrison)
     private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
     constructor(
@@ -184,6 +195,7 @@ export class UnitManager {
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
         onKill?: (faction: Faction, type: number, x: number, y: number) => void,
     ) {
+        this.scene = scene;
         this.layer = layer;
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
@@ -215,8 +227,11 @@ export class UnitManager {
         this.destX = new Float32Array(this.capacity);
         this.destY = new Float32Array(this.capacity);
         this.moving = new Uint8Array(this.capacity);
+        this.faceX = new Int8Array(this.capacity);
         this.rangeMul = new Float32Array(this.capacity);
         this.garrison = new Uint8Array(this.capacity);
+        this.gOffRight = new Float32Array(this.capacity);
+        this.gOffUp = new Float32Array(this.capacity);
         this.level = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
@@ -334,7 +349,10 @@ export class UnitManager {
         this.deathDuration = CONFIG.combat.deathFadeMs;
 
         // Health bars draw above every unit sprite (unit depth == world-y, max ~world.height).
+        // Tagged rotatesWithCamera because drawHealthBars already draws each bar at the right
+        // screen-up offset and angle — the scene's billboard pass must not re-rotate it.
         this.healthBars = scene.add.graphics().setDepth(CONFIG.world.height + 1000);
+        rotatesWithCamera(this.healthBars);
         layer.add(this.healthBars);
 
         this.recomputeUpgrades();
@@ -655,6 +673,8 @@ export class UnitManager {
         this.step(delta);
         this.applySeparation(delta);
         this.applyObstacles(delta);
+        this.repositionGarrison();
+        this.applyFacing();
         this.drawHealthBars();
     }
 
@@ -779,6 +799,7 @@ export class UnitManager {
             this.destY[i] = 0;
         }
         this.moving[i] = 1; // spawns marching (walk anim)
+        this.faceX[i] = faction === FACTION.enemy ? -1 : 1; // enemy faces world-left; player world-right
         this.rangeMul[i] = 1;
         this.garrison[i] = 0;
         this.level[i] = 0;
@@ -796,7 +817,7 @@ export class UnitManager {
             .setOrigin(0.5, this.typeFootAnchor[t]) // feet on the lane line
             .setPosition(x, yClamped)
             .setDepth(yClamped) // lower on screen draws in front, so ranks overlap correctly
-            .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
+            .setFlipX(this.faceX[i] * Math.cos(cameraAngle(this.scene)) < 0) // face travel dir on screen
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
         sprite.anims.timeScale = 1; // clear any stretched long-shot draw from a previous user
         return true;
@@ -805,7 +826,10 @@ export class UnitManager {
     // Post a pinned building defender (an archer) at (x, y): same combat behaviour as a normal
     // archer but with its normal range multiplied (CONFIG.garrison.rangeMul), holding its post.
     // Bypasses the faction cap + lane clamp; rendered above buildings so it reads as "on top".
-    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+    // (x, y) is the defender's fixed combat point (its θ=0 roof spot). offRight/offUp are the
+    // SCREEN-space offset from the building base to that spot, so repositionGarrison can keep the
+    // sprite on the roof as the battlefield turns.
+    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number, offRight: number, offUp: number): boolean {
         const sprite = this.freeSprites.pop();
         if (!sprite) return false;
         const t = typeIndex;
@@ -813,6 +837,8 @@ export class UnitManager {
 
         this.x[i] = x;
         this.y[i] = y;
+        this.gOffRight[i] = offRight;
+        this.gOffUp[i] = offUp;
         this.speed[i] = this.typeMoveSpeed[t];
         const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
         this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
@@ -832,6 +858,7 @@ export class UnitManager {
         this.destY[i] = y;
         this.moving[i] = 0;
         this.rangeMul[i] = CONFIG.garrison.rangeMul;
+        this.faceX[i] = faction === FACTION.enemy ? -1 : 1;
         this.garrison[i] = 1;
         this.level[i] = 1; // on the roof — only ranged enemies can hit it
         this.sprites[i] = sprite;
@@ -847,7 +874,7 @@ export class UnitManager {
             .setOrigin(0.5, this.typeFootAnchor[t])
             .setPosition(x, y)
             .setDepth(CONFIG.world.height + 800) // above buildings, so it reads as "on top"
-            .setFlipX(faction === FACTION.enemy)
+            .setFlipX(this.faceX[i] * Math.cos(cameraAngle(this.scene)) < 0)
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'idle'));
         sprite.anims.timeScale = 1;
         return true;
@@ -1367,13 +1394,24 @@ export class UnitManager {
         if (this.state[i] === STATE.walk && this.animLock[i] <= 0) this.playStateAnim(i);
     }
 
-    // Face the sprite along a horizontal direction (the art faces right, so flipX = facing left).
-    // Ignores tiny/zero dx so purely-vertical motion doesn't waggle the facing.
+    // Record the unit's world-horizontal facing (the art faces right). The actual on-screen flip
+    // is applied by applyFacing once the camera angle is known. Ignores tiny/zero dx so
+    // purely-vertical motion doesn't waggle the facing.
     private face(i: number, dx: number) {
-        const s = this.sprites[i];
-        if (!s) return;
-        if (dx > 0.01) s.setFlipX(false);
-        else if (dx < -0.01) s.setFlipX(true);
+        if (dx > 0.01) this.faceX[i] = 1;
+        else if (dx < -0.01) this.faceX[i] = -1;
+    }
+
+    // Flip each sprite so it faces its world-facing direction ON SCREEN. World-right points
+    // screen-right when cos θ > 0 and screen-left when cos θ < 0, so flipX = (faceX·cos θ) < 0.
+    // (Right-facing art, so flipX mirrors it to point left.)
+    private applyFacing() {
+        const cos = Math.cos(cameraAngle(this.scene));
+        for (let i = 0; i < this.count; i++) {
+            const s = this.sprites[i];
+            if (!s) continue;
+            s.setFlipX(this.faceX[i] * cos < 0);
+        }
     }
 
     // Push a unit's logical (x, y) onto its sprite, sorting by base-y so nearer units draw in front.
@@ -1419,22 +1457,59 @@ export class UnitManager {
         g.clear();
         const W = 30;
         const H = 5;
+        // Draw each bar upright (φ = −θ) at a screen-up offset, so bars stay horizontal and
+        // above their unit even when the battlefield is turned.
+        const phi = -cameraAngle(this.scene);
+        const cos = Math.cos(phi);
+        const sin = Math.sin(phi);
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             const max = this.maxHpOf(i);
             if (this.hp[i] >= max) continue; // full health — no bar
             const frac = Math.max(0, this.hp[i] / max);
             const sprite = this.sprites[i]!;
-            const top = this.y[i] - sprite.displayHeight * this.typeFootAnchor[this.type[i]] - 2;
-            const x = this.x[i] - W / 2;
-            g.fillStyle(0x000000, 0.55);
-            g.fillRect(x - 1, top - 1, W + 2, H + 2);
-            // Lerp green (full) → red (empty).
+            // Centre of the bar: `up` px above the unit's anchor on screen (screen-up offset
+            // expressed via the same φ=−θ cos/sin already computed for the bar geometry).
+            const up = sprite.displayHeight * this.typeFootAnchor[this.type[i]] + 2 - H / 2;
+            const cx = this.x[i] + up * sin;
+            const cy = this.y[i] - up * cos;
+            // Backing box (W+2 × H+2), centred.
+            this.fillRotRect(g, cx, cy, -(W + 2) / 2, -(H + 2) / 2, (W + 2) / 2, (H + 2) / 2, 0x000000, 0.55, cos, sin);
+            // Fill bar grows from the left edge. Lerp green (full) → red (empty).
             const r = Math.round(0xd9 + (0x4a - 0xd9) * frac);
             const gg = Math.round(0x3a + (0xd6 - 0x3a) * frac);
             const b = Math.round(0x3a + (0x4a - 0x3a) * frac);
-            g.fillStyle((r << 16) | (gg << 8) | b, 1);
-            g.fillRect(x, top, W * frac, H);
+            this.fillRotRect(g, cx, cy, -W / 2, -H / 2, -W / 2 + W * frac, H / 2, (r << 16) | (gg << 8) | b, 1, cos, sin);
+        }
+    }
+
+    // Fill an axis-aligned rectangle (given as local corners around cx,cy) rotated by the angle
+    // whose cos/sin are passed in. Used to paint the health bars upright over a turned map.
+    private fillRotRect(
+        g: Phaser.GameObjects.Graphics,
+        cx: number, cy: number,
+        lx0: number, ly0: number, lx1: number, ly1: number,
+        color: number, alpha: number, cos: number, sin: number,
+    ) {
+        const p = (x: number, y: number) => new Phaser.Math.Vector2(cx + x * cos - y * sin, cy + x * sin + y * cos);
+        g.fillStyle(color, alpha);
+        g.fillPoints([p(lx0, ly0), p(lx1, ly0), p(lx1, ly1), p(lx0, ly1)], true);
+    }
+
+    // Re-place a pinned garrison defender's SPRITE on its building's roof for the current screen
+    // angle. The combat position (x/y) is the fixed θ=0 roof point; the building base is that
+    // minus the θ=0 offset, and the sprite renders at base + the rotated screen offset, so the
+    // defender appears on the roof at every orientation while its line-of-fire stays put.
+    private repositionGarrison() {
+        const off = new Phaser.Math.Vector2();
+        for (let i = 0; i < this.count; i++) {
+            if (!this.garrison[i] || this.state[i] === STATE.dying) continue;
+            const baseX = this.x[i] - this.gOffRight[i];
+            const baseY = this.y[i] + this.gOffUp[i];
+            screenOffset(this.scene, this.gOffRight[i], this.gOffUp[i], off);
+            const s = this.sprites[i]!;
+            s.x = baseX + off.x;
+            s.y = baseY + off.y;
         }
     }
 

@@ -84,7 +84,12 @@ export function applySavedSettings() {
         if (isNum(s.spawn.player)) CONFIG.spawn.unitsTarget.player = s.spawn.player;
         if (isNum(s.spawn.enemy)) CONFIG.spawn.unitsTarget.enemy = s.spawn.enemy;
     }
-    if (s.world && isNum(s.world.width)) CONFIG.world.width = s.world.width;
+    // The world is square; a saved map size sets both axes (clamped so the lane stays on land).
+    if (s.world && isNum(s.world.width)) {
+        const size = Math.max(4000, s.world.width);
+        CONFIG.world.width = size;
+        CONFIG.world.height = size;
+    }
     if (s.island && isNum(s.island.margin)) CONFIG.island.margin = s.island.margin;
     if (s.decorations && isNum(s.decorations.forest)) CONFIG.decorations.forest = s.decorations.forest;
     if (s.clouds && isNum(s.clouds.count)) CONFIG.clouds.count = s.clouds.count;
