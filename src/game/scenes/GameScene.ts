@@ -26,6 +26,7 @@ import { TargetingMode } from '../units/commands';
 import { Hud, loadHud } from '../ui/Hud';
 import { Abilities } from '../abilities/Abilities';
 import { EnemyAI } from '../ai/EnemyAI';
+import { EnemyMuster } from '../ai/EnemyMuster';
 import { resetUpgrades } from '../upgrades';
 import { matchStats, submitMatch } from '../stats/MatchStats';
 
@@ -55,6 +56,7 @@ export class GameScene extends Phaser.Scene {
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
+    private enemyMuster!: EnemyMuster;
 
     // Field targeting (shared by skills and unit commands): when a mode is active, the next field
     // tap commits it at that point; a full-field overlay captures the tap, a drag still pans.
@@ -234,6 +236,8 @@ export class GameScene extends Phaser.Scene {
 
         // The enemy's scripted build economy (spends its gathered income on a build order).
         this.enemyAI = new EnemyAI(this.buildings, this.resources);
+        // Gather-then-charge: holds new enemy units at a rally point until a point threshold.
+        this.enemyMuster = new EnemyMuster(this.units);
 
         // Right-edge unit roster: live counts, tap a type to select it for commands, "All" to
         // select everything. The ✎ stat-editing card stays behind the Dev toggle.
@@ -452,6 +456,7 @@ export class GameScene extends Phaser.Scene {
         const frozen = this.gameOver || this.isLevelUpPaused;
         if (!frozen) {
             this.enemyAI.update(delta);
+            this.enemyMuster.update(delta);
             this.units.update(delta);
             matchStats.tickPeak(this.units.livingCount(FACTION.player), this.units.livingCount(FACTION.enemy));
             // Peasants advance any build site before the buildings system checks completion.

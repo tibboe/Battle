@@ -147,6 +147,10 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
+    // Next free slot index in the enemy muster formation (reset each time a wave launches), so
+    // gathered units spread into distinct anchors instead of piling onto one jittering point.
+    private enemyMusterSlot = 0;
+
     // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
     // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
     private readonly healthBars: Phaser.GameObjects.Graphics;
@@ -566,6 +570,56 @@ export class UnitManager {
         return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
     }
 
+    // ── Enemy muster (gather-then-charge), driven by the EnemyMuster system ──────────────────
+    // World x of the enemy rally point: just BEYOND the building grid (toward the lane), so the
+    // gathered force forms up in the open instead of on top of a building. The grid fans toward
+    // the lane from the keep; its outermost column reaches `gridReach` px out, and we leave a
+    // configurable clearance gap past that. (Mirrors the slot maths in structures/buildings.ts.)
+    enemyRallyX(): number {
+        const g = CONFIG.grid;
+        const keepCol = (g.keepSpot - 1) % g.cols;
+        const gridReach = (g.cols - 1 - keepCol) * (g.cellW + g.gap) + g.cellW / 2;
+        return this.enemyKeepX - gridReach - CONFIG.enemyAI.muster.rallyClearance;
+    }
+
+    // Anchor for the `slot`-th unit in the muster formation: fill the lane width (columns), then
+    // stack rows back toward midfield — away from the keep, so deeper ranks don't sit on a
+    // building. Loose spacing (> the separation radius) lets the blob settle without jittering.
+    private musterSlotPos(slot: number): { x: number; y: number } {
+        const spacing = CONFIG.command.spacingLoose;
+        const cols = Math.max(1, Math.floor((this.laneHalf[0] * 2) / spacing));
+        const colMid = (cols - 1) / 2;
+        return {
+            x: this.enemyRallyX() - Math.floor(slot / cols) * spacing,
+            y: this.clampLaneY(this.laneY[0] + ((slot % cols) - colMid) * spacing),
+        };
+    }
+
+    // A unit currently waiting at the rally: a live, non-garrison enemy that is holding. Released
+    // units (now ORDER.auto) and roof defenders (garrison) don't count.
+    private isWaitingMusterer(i: number): boolean {
+        return this.faction[i] === FACTION.enemy && this.order[i] === ORDER.hold
+            && !this.garrison[i] && this.state[i] !== STATE.dying;
+    }
+
+    // Combined point value of the enemy units currently waiting at the rally.
+    enemyMusterPoints(): number {
+        let sum = 0;
+        for (let i = 0; i < this.count; i++) {
+            if (this.isWaitingMusterer(i)) sum += CONFIG.unitTypes[this.type[i]].points ?? 1;
+        }
+        return sum;
+    }
+
+    // Launch the gathered force: every waiting enemy unit flips to auto-march. The next wave
+    // forms up from the front slot again.
+    releaseEnemyMuster() {
+        for (let i = 0; i < this.count; i++) {
+            if (this.isWaitingMusterer(i)) this.setOrder(i, ORDER.auto, 0, 0);
+        }
+        this.enemyMusterSlot = 0;
+    }
+
     // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
     // commanded-onto-the-keep paths).
     private reachKeep(i: number) {
@@ -705,12 +759,25 @@ export class UnitManager {
         this.lane[i] = 0;
         this.type[i] = t;
         this.producer[i] = producerId;
-        // Inherit the type's standing order so reinforcements join the last command given to
-        // that type; otherwise march on the keep (auto). Enemy units never have a standing order.
-        const standing = faction === FACTION.player ? this.standingOrder[t] : ORDER.auto;
-        this.order[i] = standing;
-        this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
-        this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        // Player: inherit the type's standing order so reinforcements join the last command
+        // given to that type. Enemy: hold at the rally point while mustering (gather-then-charge),
+        // otherwise march on the keep (auto).
+        if (faction === FACTION.player) {
+            const standing = this.standingOrder[t];
+            this.order[i] = standing;
+            this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
+            this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        } else if (CONFIG.enemyAI.muster.enabled) {
+            // Park at its own distinct slot in the muster formation so the gathered blob settles.
+            const anchor = this.musterSlotPos(this.enemyMusterSlot++);
+            this.order[i] = ORDER.hold;
+            this.destX[i] = anchor.x;
+            this.destY[i] = anchor.y;
+        } else {
+            this.order[i] = ORDER.auto;
+            this.destX[i] = 0;
+            this.destY[i] = 0;
+        }
         this.moving[i] = 1; // spawns marching (walk anim)
         this.rangeMul[i] = 1;
         this.garrison[i] = 0;
