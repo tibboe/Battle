@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { arrowKey } from './animations';
-import { rotatesWithCamera } from '../controls/billboard';
+import { rotatesWithCamera, screenOffset } from '../controls/billboard';
 
 // Pooled arrow projectiles. Two kinds share the pool:
 //   • fire()  — a straight cosmetic arrow (the Archer's normal shot; damage was already
@@ -20,6 +20,9 @@ const FADE_MS = 1200;     // …fading out over the final stretch of that linger
 type LandCb = (x: number, y: number, faction: number) => void;
 
 export class Projectiles {
+    private readonly scene: Phaser.Scene; // for the live camera angle (lob arcs "up" on screen)
+    private readonly tmpA = new Phaser.Math.Vector2();
+    private readonly tmpB = new Phaser.Math.Vector2();
     private readonly sprites: Phaser.GameObjects.Sprite[] = [];
     private readonly sx = new Float32Array(POOL);
     private readonly sy = new Float32Array(POOL);
@@ -35,6 +38,7 @@ export class Projectiles {
     private readonly keys: string[];
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
+        this.scene = scene;
         this.keys = [arrowKey('player'), arrowKey('enemy')];
         for (let i = 0; i < POOL; i++) {
             const s = scene.add.sprite(0, 0, this.keys[0])
@@ -100,15 +104,23 @@ export class Projectiles {
             this.elapsed[i] += delta;
             const f = Math.min(1, this.elapsed[i] / this.dur[i]);
             const dxTotal = this.ex[i] - this.sx[i];
-            s.x = this.sx[i] + dxTotal * f;
+            const dyTotal = this.ey[i] - this.sy[i];
             if (this.arc[i] > 0) {
-                const dyTotal = this.ey[i] - this.sy[i];
-                s.y = this.sy[i] + dyTotal * f - this.arc[i] * Math.sin(Math.PI * f);
-                // Point the arrow along its (arcing) velocity: up on the way out, down on the way in.
-                const vy = dyTotal - this.arc[i] * Math.PI * Math.cos(Math.PI * f);
-                s.setRotation(Math.atan2(vy, dxTotal));
+                // The lob arc bows UP ON SCREEN (not up in the world), so it reads as "over and
+                // down" at every rotation. The straight source→target term rides the world (it
+                // rotates with the camera); only the hump is converted to a screen-up offset.
+                const hump = this.arc[i] * Math.sin(Math.PI * f);
+                const off = screenOffset(this.scene, 0, hump, this.tmpA);
+                s.x = this.sx[i] + dxTotal * f + off.x;
+                s.y = this.sy[i] + dyTotal * f + off.y;
+                // Heading along the on-screen velocity: world velocity + the hump's screen-up rate;
+                // the camera adds its angle on render, giving the true screen direction.
+                const humpVel = this.arc[i] * Math.PI * Math.cos(Math.PI * f);
+                const offv = screenOffset(this.scene, 0, humpVel, this.tmpB);
+                s.setRotation(Math.atan2(dyTotal + offv.y, dxTotal + offv.x));
             } else {
-                s.y = this.sy[i] + (this.ey[i] - this.sy[i]) * f;
+                s.x = this.sx[i] + dxTotal * f;
+                s.y = this.sy[i] + dyTotal * f;
             }
             if (f >= 1) {
                 const cb = this.landCb[i];
