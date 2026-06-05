@@ -159,9 +159,9 @@ export class EditorScene extends Phaser.Scene {
         const { x, y } = this.cellCentre(f.col, f.row);
         const go = r.anim
             ? this.add.sprite(x, y, r.texture).play(r.anim)
-            : this.add.image(x, y, r.texture);
+            : this.add.image(x, y, r.texture, r.frame);
         if (go instanceof Phaser.GameObjects.Sprite) go.anims.setProgress(Math.random());
-        go.setOrigin(0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
+        go.setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
         this.worldLayer.add(go);
         const i = cellIndex(this.map.cols, f.col, f.row);
         this.featureSprites.get(i)?.destroy();
@@ -172,7 +172,10 @@ export class EditorScene extends Phaser.Scene {
         const existing = this.map.features.find((f) => f.col === col && f.row === row);
         if (existing && existing.tileId === id) return; // already there — avoid drag churn
         this.map.features = this.map.features.filter((f) => !(f.col === col && f.row === row));
-        const f: MapFeature = { tileId: id, col, row, flipX: Math.random() < 0.5 };
+        // Mirror organic props (trees/bushes) for variety, but never directional cliff frames.
+        const def = getTile(id);
+        const directional = def?.render.kind === 'feature' && def.render.frame !== undefined;
+        const f: MapFeature = { tileId: id, col, row, flipX: !directional && Math.random() < 0.5 };
         this.map.features.push(f);
         this.spawnFeature(f);
         this.markDirty();

@@ -14,10 +14,10 @@ export type TileRender =
     | { kind: 'ground'; atlas: string; frame: number }
     // Open sea: draw nothing, the water backdrop shows through.
     | { kind: 'water' }
-    // A decoration placed ON TOP of the ground, anchored at its base (origin y). Bigger than
-    // a cell and optionally animated (sway). `texture` is a spritesheet when `anim` is set,
-    // otherwise a single image.
-    | { kind: 'feature'; texture: string; anim?: string; originY: number; scale: number };
+    // A decoration placed ON TOP of the ground, anchored at its base (origin y). May be a
+    // whole image, an animated spritesheet (`anim`), or a single tileset `frame` (used for
+    // cliffs, so the grass underneath shows through the rock's transparent gaps).
+    | { kind: 'feature'; texture: string; frame?: number; anim?: string; originX?: number; originY: number; scale: number };
 
 export interface TileDef {
     id: TileId;
@@ -106,8 +106,44 @@ const SEA_DEFS: TileDef[] = [
     },
 ];
 
+// Cliffs: the Tiny Swords elevation block (right side of the tileset). Frame indices were
+// verified by scanning the PNG — rows 0–3 of cols 5–7 are the raised grass PLATEAU surface
+// (row 3 = the front lip), rows 4–5 are the rock CLIFF FACE. You hand-assemble a cliff by
+// painting a plateau top, its front-lip edge, then the rock face below it. These are visual
+// authoring tiles; gameplay elevation (Milestone 2) is still parked.
+const CLIFF_FRAMES: { frame: number; label: string; desc: string }[] = [
+    { frame: 5, label: 'Plateau ◤ (top-left)', desc: 'Raised-grass plateau outer corner, top-left.' },
+    { frame: 6, label: 'Plateau ▲ (top)', desc: 'Raised-grass plateau back edge.' },
+    { frame: 7, label: 'Plateau ◥ (top-right)', desc: 'Raised-grass plateau outer corner, top-right.' },
+    { frame: 14, label: 'Plateau ◀ (left)', desc: 'Raised-grass plateau left edge.' },
+    { frame: 15, label: 'Plateau ■ (fill)', desc: 'Raised-grass plateau interior.' },
+    { frame: 16, label: 'Plateau ▶ (right)', desc: 'Raised-grass plateau right edge.' },
+    { frame: 32, label: 'Cliff lip ◣ (front-left)', desc: 'Front-left corner where the plateau meets the drop.' },
+    { frame: 33, label: 'Cliff lip ▼ (front)', desc: 'Grassy front edge of the plateau, overhanging the cliff.' },
+    { frame: 34, label: 'Cliff lip ◢ (front-right)', desc: 'Front-right corner where the plateau meets the drop.' },
+    { frame: 41, label: 'Cliff face (left)', desc: 'Rock wall below the plateau, left.' },
+    { frame: 42, label: 'Cliff face (middle)', desc: 'Rock wall below the plateau, middle.' },
+    { frame: 43, label: 'Cliff face (right)', desc: 'Rock wall below the plateau, right.' },
+    { frame: 50, label: 'Cliff base (left)', desc: 'Foot of the cliff wall, left.' },
+    { frame: 51, label: 'Cliff base (middle)', desc: 'Foot of the cliff wall, middle.' },
+    { frame: 52, label: 'Cliff base (right)', desc: 'Foot of the cliff wall, right.' },
+    { frame: 45, label: 'Cliff column (left)', desc: 'One-tile cliff: grass on top, rock face below (left end).' },
+    { frame: 48, label: 'Cliff column (right)', desc: 'One-tile cliff: grass on top, rock face below (right end).' },
+];
+const CLIFF_DEFS: TileDef[] = CLIFF_FRAMES.map((c) => ({
+    id: `cliff-${c.frame}`,
+    category: ['Ground', 'Cliffs'],
+    label: c.label,
+    desc: c.desc,
+    // Cliffs are placed as features (overlay) so the ground shows through their transparent
+    // edges. originX/Y centre the 64px frame on its cell.
+    render: { kind: 'feature', texture: TILESET.key, frame: c.frame, originX: 0.5, originY: 0.5, scale: 1 },
+    swatch: 0x6f8a86,
+}));
+
 export const TILE_CATALOG: TileDef[] = [
     ...GROUND,
+    ...CLIFF_DEFS,
     ...TREE_DEFS,
     ...BUSH_DEFS,
     ...ROCK_DEFS,
@@ -154,8 +190,13 @@ export function makeTileThumb(
     if (r.kind === 'water') {
         return scene.add.rectangle(0, 0, size, size, def.swatch).setOrigin(0.5);
     }
-    // feature: show the first frame, scaled to fit while keeping aspect.
-    const img = r.anim ? scene.add.image(0, 0, r.texture, 0) : scene.add.image(0, 0, r.texture);
+    // feature: show its frame (cliff tileset frame, animated frame 0, or whole image),
+    // scaled to fit while keeping aspect.
+    const img = r.frame !== undefined
+        ? scene.add.image(0, 0, r.texture, r.frame)
+        : r.anim
+            ? scene.add.image(0, 0, r.texture, 0)
+            : scene.add.image(0, 0, r.texture);
     const s = size / Math.max(img.width, img.height);
     return img.setOrigin(0.5).setScale(s);
 }
