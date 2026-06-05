@@ -574,6 +574,19 @@ export class UnitManager {
         return this.enemyKeepX - gridReach - CONFIG.enemyAI.muster.rallyClearance;
     }
 
+    // Anchor for the `slot`-th unit in the muster formation: fill the lane width (columns), then
+    // stack rows back toward midfield — away from the keep, so deeper ranks don't sit on a
+    // building. Loose spacing (> the separation radius) lets the blob settle without jittering.
+    private musterSlotPos(slot: number): { x: number; y: number } {
+        const spacing = CONFIG.command.spacingLoose;
+        const cols = Math.max(1, Math.floor((this.laneHalf[0] * 2) / spacing));
+        const colMid = (cols - 1) / 2;
+        return {
+            x: this.enemyRallyX() - Math.floor(slot / cols) * spacing,
+            y: this.clampLaneY(this.laneY[0] + ((slot % cols) - colMid) * spacing),
+        };
+    }
+
     // A unit currently waiting at the rally: a live, non-garrison enemy that is holding. Released
     // units (now ORDER.auto) and roof defenders (garrison) don't count.
     private isWaitingMusterer(i: number): boolean {
@@ -746,16 +759,11 @@ export class UnitManager {
             this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
             this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
         } else if (CONFIG.enemyAI.muster.enabled) {
-            // Park at its own slot in a formation that fills the lane width then stacks rows back
-            // toward midfield (never toward the keep, so deeper ranks don't sit on a building).
-            // Distinct anchors spaced at the separation gap keep the gathered blob from jittering.
-            const slot = this.enemyMusterSlot++;
-            const spacing = CONFIG.command.spacingLoose;
-            const cols = Math.max(1, Math.floor((this.laneHalf[0] * 2) / spacing));
-            const colMid = (cols - 1) / 2;
+            // Park at its own distinct slot in the muster formation so the gathered blob settles.
+            const anchor = this.musterSlotPos(this.enemyMusterSlot++);
             this.order[i] = ORDER.hold;
-            this.destX[i] = this.enemyRallyX() - Math.floor(slot / cols) * spacing;
-            this.destY[i] = this.clampLaneY(this.laneY[0] + ((slot % cols) - colMid) * spacing);
+            this.destX[i] = anchor.x;
+            this.destY[i] = anchor.y;
         } else {
             this.order[i] = ORDER.auto;
             this.destX[i] = 0;
