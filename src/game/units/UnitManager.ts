@@ -63,6 +63,10 @@ export class UnitManager {
     private readonly destX: Float32Array;
     private readonly destY: Float32Array;
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    // World-space facing: +1 = facing world-right, −1 = world-left. The on-screen flipX is derived
+    // from this AND the camera angle (applyFacing), so a unit faces its TRAVEL direction on screen
+    // even when the battlefield is turned (at 180° world-right is screen-left, so it flips).
+    private readonly faceX: Int8Array;
     private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
     private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
     // Garrison defenders sit above their building's base by a SCREEN-space offset (so they stay on
@@ -212,6 +216,7 @@ export class UnitManager {
         this.destX = new Float32Array(this.capacity);
         this.destY = new Float32Array(this.capacity);
         this.moving = new Uint8Array(this.capacity);
+        this.faceX = new Int8Array(this.capacity);
         this.rangeMul = new Float32Array(this.capacity);
         this.garrison = new Uint8Array(this.capacity);
         this.gOffRight = new Float32Array(this.capacity);
@@ -607,6 +612,7 @@ export class UnitManager {
         this.applySeparation(delta);
         this.applyObstacles(delta);
         this.repositionGarrison();
+        this.applyFacing();
         this.drawHealthBars();
     }
 
@@ -717,6 +723,7 @@ export class UnitManager {
         this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
         this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
         this.moving[i] = 1; // spawns marching (walk anim)
+        this.faceX[i] = faction === FACTION.enemy ? -1 : 1; // enemy faces world-left; player world-right
         this.rangeMul[i] = 1;
         this.garrison[i] = 0;
         this.level[i] = 0;
@@ -734,7 +741,7 @@ export class UnitManager {
             .setOrigin(0.5, this.typeFootAnchor[t]) // feet on the lane line
             .setPosition(x, yClamped)
             .setDepth(yClamped) // lower on screen draws in front, so ranks overlap correctly
-            .setFlipX(faction === FACTION.enemy)    // right-facing art; enemy marches left
+            .setFlipX(this.faceX[i] * Math.cos(cameraAngle(this.scene)) < 0) // face travel dir on screen
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'walk'));
         sprite.anims.timeScale = 1; // clear any stretched long-shot draw from a previous user
         return true;
@@ -775,6 +782,7 @@ export class UnitManager {
         this.destY[i] = y;
         this.moving[i] = 0;
         this.rangeMul[i] = CONFIG.garrison.rangeMul;
+        this.faceX[i] = faction === FACTION.enemy ? -1 : 1;
         this.garrison[i] = 1;
         this.level[i] = 1; // on the roof — only ranged enemies can hit it
         this.sprites[i] = sprite;
@@ -790,7 +798,7 @@ export class UnitManager {
             .setOrigin(0.5, this.typeFootAnchor[t])
             .setPosition(x, y)
             .setDepth(CONFIG.world.height + 800) // above buildings, so it reads as "on top"
-            .setFlipX(faction === FACTION.enemy)
+            .setFlipX(this.faceX[i] * Math.cos(cameraAngle(this.scene)) < 0)
             .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'idle'));
         sprite.anims.timeScale = 1;
         return true;
@@ -1308,13 +1316,24 @@ export class UnitManager {
         if (this.state[i] === STATE.walk && this.animLock[i] <= 0) this.playStateAnim(i);
     }
 
-    // Face the sprite along a horizontal direction (the art faces right, so flipX = facing left).
-    // Ignores tiny/zero dx so purely-vertical motion doesn't waggle the facing.
+    // Record the unit's world-horizontal facing (the art faces right). The actual on-screen flip
+    // is applied by applyFacing once the camera angle is known. Ignores tiny/zero dx so
+    // purely-vertical motion doesn't waggle the facing.
     private face(i: number, dx: number) {
-        const s = this.sprites[i];
-        if (!s) return;
-        if (dx > 0.01) s.setFlipX(false);
-        else if (dx < -0.01) s.setFlipX(true);
+        if (dx > 0.01) this.faceX[i] = 1;
+        else if (dx < -0.01) this.faceX[i] = -1;
+    }
+
+    // Flip each sprite so it faces its world-facing direction ON SCREEN. World-right points
+    // screen-right when cos θ > 0 and screen-left when cos θ < 0, so flipX = (faceX·cos θ) < 0.
+    // (Right-facing art, so flipX mirrors it to point left.)
+    private applyFacing() {
+        const cos = Math.cos(cameraAngle(this.scene));
+        for (let i = 0; i < this.count; i++) {
+            const s = this.sprites[i];
+            if (!s) continue;
+            s.setFlipX(this.faceX[i] * cos < 0);
+        }
     }
 
     // Push a unit's logical (x, y) onto its sprite, sorting by base-y so nearer units draw in front.
