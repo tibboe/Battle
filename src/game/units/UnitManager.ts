@@ -144,6 +144,12 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
+    // Enemy muster: while active, freshly-spawned enemy units hold at the rally point (just
+    // ahead of the enemy keep) instead of marching, until the EnemyMuster system releases them.
+    private enemyMustering = false;
+    private enemyRallyX = 0;
+    private enemyRallyY = 0;
+
     // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
     // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
     private readonly healthBars: Phaser.GameObjects.Graphics;
@@ -558,6 +564,40 @@ export class UnitManager {
         return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
     }
 
+    // ── Enemy muster (gather-then-charge), driven by the EnemyMuster system ──────────────────
+    // Arm/disarm mustering. While active, enemy units spawn holding at the rally point —
+    // `rallyOffset` px in front of the enemy keep, on the lane centre.
+    setEnemyMuster(active: boolean, rallyOffset: number) {
+        this.enemyMustering = active;
+        this.enemyRallyX = this.enemyKeepX - rallyOffset;
+        this.enemyRallyY = this.laneY[0];
+    }
+
+    // Combined point value of the enemy units currently waiting at the rally (held, non-garrison).
+    // Released units (now ORDER.auto) and roof defenders (garrison) are excluded.
+    enemyMusterPoints(): number {
+        let sum = 0;
+        for (let i = 0; i < this.count; i++) {
+            if (this.faction[i] !== FACTION.enemy || this.order[i] !== ORDER.hold
+                || this.garrison[i] || this.state[i] === STATE.dying) continue;
+            sum += CONFIG.unitTypes[this.type[i]].points ?? 1;
+        }
+        return sum;
+    }
+
+    // Launch the gathered force: every held, non-garrison enemy unit flips to auto-march.
+    releaseEnemyMuster() {
+        for (let i = 0; i < this.count; i++) {
+            if (this.faction[i] !== FACTION.enemy || this.order[i] !== ORDER.hold
+                || this.garrison[i] || this.state[i] === STATE.dying) continue;
+            this.order[i] = ORDER.auto;
+            this.destX[i] = 0;
+            this.destY[i] = 0;
+            this.target[i] = -1;
+            this.setState(i, STATE.walk);
+        }
+    }
+
     // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
     // commanded-onto-the-keep paths).
     private reachKeep(i: number) {
@@ -696,12 +736,23 @@ export class UnitManager {
         this.lane[i] = 0;
         this.type[i] = t;
         this.producer[i] = producerId;
-        // Inherit the type's standing order so reinforcements join the last command given to
-        // that type; otherwise march on the keep (auto). Enemy units never have a standing order.
-        const standing = faction === FACTION.player ? this.standingOrder[t] : ORDER.auto;
-        this.order[i] = standing;
-        this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
-        this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        // Player: inherit the type's standing order so reinforcements join the last command
+        // given to that type. Enemy: hold at the rally point while mustering (gather-then-charge),
+        // otherwise march on the keep (auto).
+        if (faction === FACTION.player) {
+            const standing = this.standingOrder[t];
+            this.order[i] = standing;
+            this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
+            this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        } else if (this.enemyMustering) {
+            this.order[i] = ORDER.hold;
+            this.destX[i] = this.enemyRallyX;
+            this.destY[i] = this.clampLaneY(this.enemyRallyY);
+        } else {
+            this.order[i] = ORDER.auto;
+            this.destX[i] = 0;
+            this.destY[i] = 0;
+        }
         this.moving[i] = 1; // spawns marching (walk anim)
         this.rangeMul[i] = 1;
         this.garrison[i] = 0;
