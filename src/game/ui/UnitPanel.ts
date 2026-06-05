@@ -52,6 +52,7 @@ const FIELDS: StatField[] = [
     { label: 'Range', step: 10, min: 10, max: 480, get: (i) => CONFIG.unitTypes[i].range, set: (i, v) => (CONFIG.unitTypes[i].range = v) },
     { label: 'Attack', step: 0.05, min: 0.05, max: 5, fmt: secs, get: (i) => CONFIG.unitTypes[i].attackInterval / 1000, set: (i, v) => (CONFIG.unitTypes[i].attackInterval = Math.round(v * 1000)) },
     { label: 'Speed', step: 5, min: 10, max: 200, get: (i) => CONFIG.unitTypes[i].moveSpeed, set: (i, v) => (CONFIG.unitTypes[i].moveSpeed = v) },
+    { label: 'Food', step: 1, min: 0, max: 50, get: (i) => CONFIG.unitTypes[i].foodCost ?? 0, set: (i, v) => (CONFIG.unitTypes[i].foodCost = v) },
     { label: 'Size', step: 0.05, min: 0.3, max: 1.6, fmt: (v) => `${v.toFixed(2)}×`, get: (i) => CONFIG.unitTypes[i].scale, set: (i, v) => (CONFIG.unitTypes[i].scale = Math.round(v * 100) / 100) },
     { label: 'Foot', step: 0.02, min: 0.4, max: 1.0, fmt: (v) => v.toFixed(2), get: (i) => CONFIG.unitTypes[i].footAnchor, set: (i, v) => (CONFIG.unitTypes[i].footAnchor = Math.round(v * 100) / 100) },
     { label: 'Heal', step: 1, min: 0, max: 50, monkOnly: true, get: (i) => CONFIG.unitTypes[i].heal?.amount ?? 0, set: (i, v) => { const h = CONFIG.unitTypes[i].heal; if (h) h.amount = v; } },
@@ -77,18 +78,35 @@ export class UnitPanel {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly units: UnitManager;
+    // Player command hooks: tap a tile to select that unit type, the "All" button to select
+    // everything; `isTypeSelected` colours the selected tiles.
+    private readonly onSelectType: (i: number) => void;
+    private readonly onSelectAll: () => void;
+    private readonly isTypeSelected: (i: number) => boolean;
 
     private toggle!: Phaser.GameObjects.Text;
+    private allBtn!: Phaser.GameObjects.Text;
     private readonly tiles: Tile[] = [];
+    private readonly editBtns: Phaser.GameObjects.Text[] = []; // per-tile ✎ (dev stat editing)
     private cardBg!: Phaser.GameObjects.Rectangle;
     private cardHeader!: Phaser.GameObjects.Text;
     private readonly cardRows: CardRow[] = [];
-    private visible = true; // master visibility (the HUD's Dev toggle hides the whole panel)
+    private devEdit = false; // the HUD's Dev toggle reveals the stat-editing affordances
 
-    constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, units: UnitManager) {
+    constructor(
+        scene: Phaser.Scene,
+        layer: Phaser.GameObjects.Layer,
+        units: UnitManager,
+        onSelectType: (i: number) => void,
+        onSelectAll: () => void,
+        isTypeSelected: (i: number) => boolean,
+    ) {
         this.scene = scene;
         this.layer = layer;
         this.units = units;
+        this.onSelectType = onSelectType;
+        this.onSelectAll = onSelectAll;
+        this.isTypeSelected = isTypeSelected;
         this.build();
         this.layout();
         this.setOpen(panelOpen);
@@ -100,12 +118,19 @@ export class UnitPanel {
 
         this.toggle = this.mkButton('Units', 0, 0, () => this.setOpen(!panelOpen));
         this.toggle.setBackgroundColor('#333a44');
+        this.allBtn = this.mkButton('▣ All', 0, 0, () => this.onSelectAll());
+        this.allBtn.setBackgroundColor('#2a6cd6');
 
         CONFIG.unitTypes.forEach((ut, i) => {
             const bg = this.scene.add.rectangle(0, 0, TILE_W, TILE_H, 0x000000, 0.55)
                 .setOrigin(0, 0).setScrollFactor(0).setDepth(PANEL_DEPTH)
                 .setInteractive({ useHandCursor: true });
-            bg.on('pointerup', () => this.toggleCard(i));
+            // Tapping a tile selects that unit type for commands. In Dev mode it ALSO opens the
+            // live stat-editing card (the builder workflow), via the ✎ button below.
+            bg.on('pointerup', () => this.onSelectType(i));
+
+            const edit = this.mkButton('✎', 0, 0, () => this.toggleCard(i)).setVisible(false);
+            this.editBtns.push(edit);
 
             const key = animKey(ut.art, 'player', 'walk');
             const icon = this.scene.add.sprite(0, 0, key)
@@ -160,6 +185,7 @@ export class UnitPanel {
         const w = this.scene.scale.width;
         const colLeft = w - TILE_W - MARGIN;
         this.toggle.setPosition(colLeft, TOP);
+        this.allBtn.setPosition(colLeft - this.allBtn.width - 8, TOP);
 
         const startY = TOP + 28;
         this.tiles.forEach((t, i) => {
@@ -169,6 +195,7 @@ export class UnitPanel {
             t.name.setPosition(colLeft + ICON + 14, ty + 6);
             t.you.setPosition(colLeft + ICON + 14, ty + 24);
             t.foe.setPosition(colLeft + ICON + 64, ty + 24);
+            this.editBtns[i].setPosition(colLeft + TILE_W - this.editBtns[i].width - 6, ty + 4);
         });
 
         if (selected >= 0) this.renderCard(selected);
@@ -257,45 +284,45 @@ export class UnitPanel {
         }
     }
 
+    // Tiles of selected unit TYPES glow azure (the player's command selection).
     private highlight() {
-        this.tiles.forEach((t, i) => t.bg.setFillStyle(0x000000, i === selected ? 0.8 : 0.55));
+        this.tiles.forEach((t, i) =>
+            this.isTypeSelected(i)
+                ? t.bg.setFillStyle(0x1d4e7a, 0.9)
+                : t.bg.setFillStyle(0x000000, 0.55));
     }
 
     private setOpen(open: boolean) {
         panelOpen = open;
         this.toggle.setText(open ? 'Units ▾' : 'Units ▸');
-        for (const t of this.tiles) {
+        this.allBtn.setVisible(open);
+        this.tiles.forEach((t, i) => {
             t.bg.setVisible(open); t.icon.setVisible(open); t.name.setVisible(open);
             t.you.setVisible(open); t.foe.setVisible(open);
-        }
-        if (open && selected >= 0) this.renderCard(selected);
+            this.editBtns[i].setVisible(open && this.devEdit);
+        });
+        if (open && this.devEdit && selected >= 0) this.renderCard(selected);
         else this.hideCard();
         this.highlight();
     }
 
-    // Master show/hide, driven by the HUD's Dev toggle (keeps its open/closed + selection).
-    setVisible(v: boolean) {
-        this.visible = v;
-        this.toggle.setVisible(v);
-        if (v) {
-            this.setOpen(panelOpen);
-        } else {
-            for (const t of this.tiles) {
-                t.bg.setVisible(false); t.icon.setVisible(false); t.name.setVisible(false);
-                t.you.setVisible(false); t.foe.setVisible(false);
-            }
-            this.hideCard();
-        }
+    // The HUD's Dev toggle reveals the per-type ✎ stat-editing buttons (a builder tool); the
+    // roster itself stays visible for the player at all times.
+    setDevEdit(on: boolean) {
+        this.devEdit = on;
+        for (const e of this.editBtns) e.setVisible(panelOpen && on);
+        if (!on) { selected = -1; this.hideCard(); }
     }
 
-    // Refresh live counts (cheap; called each frame).
+    // Refresh live counts + the selection highlight (cheap; called each frame).
     update() {
-        if (!this.visible || !panelOpen) return;
+        if (!panelOpen) return;
         this.tiles.forEach((t, i) => {
             const you = String(this.units.livingTypeCount(i, FACTION.player));
             const foe = String(this.units.livingTypeCount(i, FACTION.enemy));
             if (t.you.text !== you) t.you.setText(you);
             if (t.foe.text !== foe) t.foe.setText(foe);
         });
+        this.highlight();
     }
 }

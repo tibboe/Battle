@@ -1,7 +1,9 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
-import { animDurationMs, animKey, FactionName, POOL_TEXTURE } from './animations';
+import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
+import { ORDER, Order } from './commands';
+import { matchStats } from '../stats/MatchStats';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -53,7 +55,30 @@ export class UnitManager {
     private readonly drawLy: Float32Array;
     private readonly lane: Uint8Array;        // which lane index this unit marches on
     private readonly type: Uint8Array;        // index into the roster lookups below
+    private readonly producer: Int32Array;    // id of the building that spawned this unit (-1 = none)
+    // Player command state. `order` is one of ORDER.*; (destX, destY) is the unit's formation
+    // slot / move target, or its hold/free anchor. Enemy + un-commanded player units stay auto.
+    private readonly order: Uint8Array;
+    private readonly destX: Float32Array;
+    private readonly destY: Float32Array;
+    private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
+    private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
+    private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
+    private readonly level: Uint8Array;      // elevation tier (0 = ground; roofs/high terrain > 0). Melee
+                                             // can only strike same-level targets; ranged can hit any level.
+    private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
+    // Frontline x per faction (furthest-advanced combat unit) — support healers trail it so they
+    // tuck behind the line and idle rather than charging ahead. Refreshed each targeting pass.
+    private readonly frontX: [number, number] = [0, 0];
+    // Standing order PER PLAYER UNIT TYPE: the last command issued to a type, so units that spawn
+    // later inherit it (a Move/Free keeps a rally point; auto = no standing order). Length nTypes.
+    private standingOrder!: Uint8Array;
+    private standingX!: Float32Array;
+    private standingY!: Float32Array;
     private readonly sprites: (Phaser.GameObjects.Sprite | undefined)[];
+
+    // Living (non-dying) units per producer id — lets a building cap how many it keeps alive.
+    private readonly livingByProducer = new Map<number, number>();
 
     // Roster lookups: a typed-array mirror of CONFIG.unitTypes, indexed by unit type, so
     // the per-frame loops read scalars instead of walking config objects.
@@ -137,6 +162,7 @@ export class UnitManager {
     // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
     // landing calls back into resolveLongShotHit.
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
     constructor(
         scene: Phaser.Scene,
@@ -148,6 +174,7 @@ export class UnitManager {
         onBlock?: (x: number, y: number) => void,
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
     ) {
+        this.layer = layer;
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
         this.onShoot = onShoot;
@@ -172,6 +199,14 @@ export class UnitManager {
         this.drawLy = new Float32Array(this.capacity);
         this.lane = new Uint8Array(this.capacity);
         this.type = new Uint8Array(this.capacity);
+        this.producer = new Int32Array(this.capacity);
+        this.order = new Uint8Array(this.capacity);
+        this.destX = new Float32Array(this.capacity);
+        this.destY = new Float32Array(this.capacity);
+        this.moving = new Uint8Array(this.capacity);
+        this.rangeMul = new Float32Array(this.capacity);
+        this.garrison = new Uint8Array(this.capacity);
+        this.level = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
         // Mirror the unit roster into typed lookups.
@@ -234,6 +269,9 @@ export class UnitManager {
         this.nTypes = nTypes;
         this.pairMul = new Float32Array(nTypes * nTypes);
         this.livingByType = new Int32Array(nTypes * 2);
+        this.standingOrder = new Uint8Array(nTypes); // all ORDER.auto at match start
+        this.standingX = new Float32Array(nTypes);
+        this.standingY = new Float32Array(nTypes);
         const matrix = CONFIG.combat.matrix;
         for (let a = 0; a < nTypes; a++) {
             const row = matrix[types[a].weapon];
@@ -385,8 +423,36 @@ export class UnitManager {
         if (this.faction[best] === FACTION.player) scaled *= this.pArmourMult;
         const dmg = Math.max(1, Math.round(scaled));
         this.hp[best] -= dmg;
+        matchStats.unitDamage(attacker, at, this.faction[best], this.type[best], dmg);
         if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
         if (this.hp[best] <= 0) this.kill(best);
+    }
+
+    // Called when an Arrow Volley arrow lands at (x, y). `caster` is the side that cast the
+    // volley; the arrow damages the nearest OPPOSING unit within the volley's hitRadius (flat,
+    // tunable damage) — arrows landing on empty ground or on friendlies do nothing. Returns
+    // true if it actually struck a unit.
+    resolveVolleyHit(x: number, y: number, caster: Faction): boolean {
+        const av = CONFIG.abilities.arrowVolley;
+        let best = -1;
+        let bestD2 = av.hitRadius * av.hitRadius;
+        for (let j = 0; j < this.count; j++) {
+            if (this.state[j] === STATE.dying || this.faction[j] === caster) continue;
+            const dx = this.x[j] - x;
+            const dy = this.y[j] - y;
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= bestD2) {
+                bestD2 = d2;
+                best = j;
+            }
+        }
+        if (best < 0) return false; // hit empty ground
+        const dmg = Math.max(1, Math.round(av.damage));
+        this.hp[best] -= dmg;
+        matchStats.skillDamageDealt(caster, this.faction[best], this.type[best], dmg);
+        if (this.onDamage && CONFIG.debug.damageNumbers) this.onDamage(this.x[best], this.y[best] - 50, dmg);
+        if (this.hp[best] <= 0) this.kill(best);
+        return true;
     }
 
     // Max HP of a unit, including the player's +Health upgrade and the global HP scale (so
@@ -413,7 +479,10 @@ export class UnitManager {
             if (dx * dx + dy * dy > r2) continue;
             const healed = Math.min(amt, maxHp - this.hp[j]);
             this.hp[j] += healed;
-            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[j], this.y[j] - 50, healed);
+            if (healed > 0) {
+                this.healFlash(j);
+                if (this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[j], this.y[j] - 50, healed);
+            }
         }
     }
 
@@ -447,6 +516,59 @@ export class UnitManager {
         return this.livingByType[typeIndex * 2 + faction];
     }
 
+    // Total living (non-dying) units on a side — for peak-army stats.
+    livingCount(faction: Faction): number {
+        return this.livingByFaction[faction];
+    }
+
+    // ---- Player commands (selection lives in the UI; orders are stored per unit here) ----
+
+    // Visit every living PLAYER unit (its index, type, and position). Used by the command UI to
+    // draw selection rings and to gather the units a command targets.
+    forEachPlayerUnit(cb: (i: number, type: number, x: number, y: number) => void) {
+        for (let i = 0; i < this.count; i++) {
+            // Garrison defenders are pinned to their building — never selectable/commandable.
+            if (this.faction[i] !== FACTION.player || this.state[i] === STATE.dying || this.garrison[i]) continue;
+            cb(i, this.type[i], this.x[i], this.y[i]);
+        }
+    }
+
+    // Give unit `i` an order with an anchor / formation-slot at (ax, ay). The y is clamped into
+    // the lane band so a slot is always reachable. Resets the unit to walk so movement re-plans.
+    setOrder(i: number, order: Order, ax: number, ay: number) {
+        if (i < 0 || i >= this.count || this.state[i] === STATE.dying || this.garrison[i]) return;
+        this.order[i] = order;
+        this.destX[i] = ax;
+        this.destY[i] = this.clampLaneY(ay);
+        this.target[i] = -1;
+        this.setState(i, STATE.walk);
+    }
+
+    // Record the standing order for a player unit type, so units of that type that SPAWN later
+    // inherit it (with the given rally point). Pass ORDER.auto to clear it (resume auto-advance).
+    setStandingOrder(typeIndex: number, order: Order, x: number, y: number) {
+        if (typeIndex < 0 || typeIndex >= this.nTypes) return;
+        this.standingOrder[typeIndex] = order;
+        this.standingX[typeIndex] = x;
+        this.standingY[typeIndex] = y;
+    }
+
+    // Clamp a world y into the lane band (so commanded destinations stay on the battlefield).
+    clampLaneY(y: number): number {
+        return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
+    }
+
+    // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
+    // commanded-onto-the-keep paths).
+    private reachKeep(i: number) {
+        this.onReachKeep(this.faction[i] as Faction);
+        matchStats.reachedKeep(this.faction[i], this.type[i], CONFIG.keep.damagePerUnit);
+        this.livingByFaction[this.faction[i]]--;
+        this.livingByType[this.type[i] * 2 + this.faction[i]]--;
+        this.releaseProducer(i);
+        this.despawn(i);
+    }
+
     // Is any OPPOSING combat unit within `radius` of (x, y)? Used by the peasant system so
     // workers flee/die when an enemy army reaches their gathering line (Phase 4 harassment).
     // `faction` is the worker's own side — units of that side don't threaten it.
@@ -470,15 +592,78 @@ export class UnitManager {
 
         this.step(delta);
         this.applySeparation(delta);
+        this.applyObstacles(delta);
         this.drawHealthBars();
+    }
+
+    // Push units out of building footprints so they flow around buildings instead of through
+    // them. Soft (capped per frame) so a marching crowd slides around rather than hard-stopping;
+    // keeps are deliberately not in the list, so units can still reach and sack them.
+    private applyObstacles(delta: number) {
+        if (!this.obstacleProvider) return;
+        const obs = this.obstacleProvider();
+        if (obs.length === 0) return;
+        const maxStep = CONFIG.command.obstaclePush * (delta / 1000);
+        const unitR = CONFIG.separation.radius * 0.5;
+        for (let i = 0; i < this.count; i++) {
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue; // defenders are pinned
+            const ln = this.lane[i];
+            const yMin = this.laneY[ln] - this.laneHalf[ln];
+            const yMax = this.laneY[ln] + this.laneHalf[ln];
+            for (let o = 0; o < obs.length; o++) {
+                const ob = obs[o];
+                const dx = this.x[i] - ob.x;
+                const dy = this.y[i] - ob.y;
+                const minD = ob.r + unitR;
+                const d2 = dx * dx + dy * dy;
+                if (d2 >= minD * minD) continue;
+                const fwd = this.faction[i] === FACTION.player ? 1 : -1;
+                let nx: number;
+                let ny: number;
+                if (d2 < 0.01) {
+                    // Dead-centre (e.g. just spawned inside its own producer): exit forwards.
+                    nx = fwd * minD;
+                    ny = 0;
+                } else {
+                    const d = Math.sqrt(d2);
+                    const pen = minD - d;
+                    // Radial push out of the footprint…
+                    const rxn = dx / d;
+                    const ryn = dy / d;
+                    // …plus a TANGENTIAL slide so a unit pressing straight into a building rounds
+                    // it instead of stalling. Bias the tangent toward the unit's forward heading.
+                    let txn = -ryn;
+                    let tyn = rxn;
+                    if (txn * fwd < 0) { txn = -txn; tyn = -tyn; }
+                    nx = (rxn + txn * 0.9) * pen;
+                    ny = (ryn + tyn * 0.9) * pen;
+                }
+                const m = Math.hypot(nx, ny);
+                if (m > maxStep) { const s = maxStep / m; nx *= s; ny *= s; }
+                this.x[i] += nx;
+                this.y[i] = Phaser.Math.Clamp(this.y[i] + ny, yMin, yMax);
+                this.syncSprite(i);
+            }
+        }
+    }
+
+    // Wire the building system's footprints in (called once after buildings exist).
+    setObstacleProvider(fn: () => { x: number; y: number; r: number }[]) {
+        this.obstacleProvider = fn;
     }
 
     // ---- Spawning (driven externally by the production buildings) ----
 
+    // Living (non-dying) units attributed to a producer id — drives per-building unit caps.
+    producerLivingCount(producerId: number): number {
+        return this.livingByProducer.get(producerId) ?? 0;
+    }
+
     // Spawn one unit of `typeIndex` for `faction` at (x, y); y is clamped into the lane band
-    // so the horde stays readable. Returns false if the side is at its cap or the pool is
-    // exhausted. Called by the Buildings system on each production beat.
-    spawnAt(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+    // so the horde stays readable. `producerId` attributes the unit to the building that made
+    // it (-1 = unattributed) so that building can cap its live count. Returns false if the side
+    // is at its cap or the pool is exhausted. Called by the Buildings system on each beat.
+    spawnAt(faction: Faction, typeIndex: number, x: number, y: number, producerId = -1): boolean {
         const cap = faction === FACTION.player
             ? CONFIG.spawn.unitsTarget.player
             : CONFIG.spawn.unitsTarget.enemy;
@@ -510,9 +695,22 @@ export class UnitManager {
         this.deathTimer[i] = 0;
         this.lane[i] = 0;
         this.type[i] = t;
+        this.producer[i] = producerId;
+        // Inherit the type's standing order so reinforcements join the last command given to
+        // that type; otherwise march on the keep (auto). Enemy units never have a standing order.
+        const standing = faction === FACTION.player ? this.standingOrder[t] : ORDER.auto;
+        this.order[i] = standing;
+        this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
+        this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        this.moving[i] = 1; // spawns marching (walk anim)
+        this.rangeMul[i] = 1;
+        this.garrison[i] = 0;
+        this.level[i] = 0;
         this.sprites[i] = sprite;
         this.livingByFaction[faction]++;
         this.livingByType[t * 2 + faction]++;
+        if (producerId >= 0) this.livingByProducer.set(producerId, (this.livingByProducer.get(producerId) ?? 0) + 1);
+        matchStats.produce(faction, t);
 
         sprite
             .setActive(true)
@@ -528,23 +726,90 @@ export class UnitManager {
         return true;
     }
 
+    // Post a pinned building defender (an archer) at (x, y): same combat behaviour as a normal
+    // archer but with its normal range multiplied (CONFIG.garrison.rangeMul), holding its post.
+    // Bypasses the faction cap + lane clamp; rendered above buildings so it reads as "on top".
+    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+        const sprite = this.freeSprites.pop();
+        if (!sprite) return false;
+        const t = typeIndex;
+        const i = this.count++;
+
+        this.x[i] = x;
+        this.y[i] = y;
+        this.speed[i] = this.typeMoveSpeed[t];
+        const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
+        this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
+        this.faction[i] = faction;
+        this.state[i] = STATE.walk;
+        this.target[i] = -1;
+        this.animLock[i] = 0;
+        this.drawTimer[i] = 0;
+        this.attackCd[i] = Phaser.Math.FloatBetween(0, this.typeAttackInterval[t]);
+        this.abilityCd[i] = this.typeLongshot[t] ? Phaser.Math.FloatBetween(0, CONFIG.abilities.longshot.cooldown) : 0;
+        this.deathTimer[i] = 0;
+        this.lane[i] = 0;
+        this.type[i] = t;
+        this.producer[i] = -1;
+        this.order[i] = ORDER.hold; // hold the post — never marches
+        this.destX[i] = x;
+        this.destY[i] = y;
+        this.moving[i] = 0;
+        this.rangeMul[i] = CONFIG.garrison.rangeMul;
+        this.garrison[i] = 1;
+        this.level[i] = 1; // on the roof — only ranged enemies can hit it
+        this.sprites[i] = sprite;
+        this.livingByFaction[faction]++;
+        this.livingByType[t * 2 + faction]++;
+        matchStats.produce(faction, t);
+
+        sprite
+            .setActive(true)
+            .setVisible(true)
+            .setAlpha(1)
+            .setScale(this.typeScale[t])
+            .setOrigin(0.5, this.typeFootAnchor[t])
+            .setPosition(x, y)
+            .setDepth(CONFIG.world.height + 800) // above buildings, so it reads as "on top"
+            .setFlipX(faction === FACTION.enemy)
+            .play(animKey(this.typeArt[t], FACTION_NAME[faction], 'idle'));
+        sprite.anims.timeScale = 1;
+        return true;
+    }
+
     // ---- Targeting (bucketed by lane x; only nearby cells are tested) ----
 
     private acquireTargets() {
         // Units look this far to pick an enemy to advance on; they only STRIKE within their own
         // (shorter) range. Squared once per pass.
         const aggro2 = CONFIG.combat.aggroRange * CONFIG.combat.aggroRange;
+        const free2 = CONFIG.command.freeRadius * CONFIG.command.freeRadius;
         for (let c = 0; c < this.numCells; c++) this.buckets[c].length = 0;
 
-        // Bucket living units by x-cell (support units included — they are valid targets).
+        // Bucket living units by x-cell (support units included — they are valid targets), and
+        // track each side's frontline (furthest-forward combat unit) for the healers to trail.
+        this.frontX[FACTION.player] = this.playerKeepX;
+        this.frontX[FACTION.enemy] = this.enemyKeepX;
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
-            const c = this.cellOf(i);
-            this.buckets[c].push(i);
+            this.buckets[this.cellOf(i)].push(i);
+            if (this.typeCanAttack[this.type[i]]) {
+                const f = this.faction[i];
+                if (f === FACTION.player) { if (this.x[i] > this.frontX[f]) this.frontX[f] = this.x[i]; }
+                else if (this.x[i] < this.frontX[f]) this.frontX[f] = this.x[i];
+            }
         }
 
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
+
+            // A Move order ignores everything (even a Monk's heals) — the unit just walks to its
+            // slot. Checked first so it applies to combat and support units alike.
+            if (this.order[i] === ORDER.move) {
+                this.target[i] = -1;
+                this.setState(i, STATE.walk);
+                continue;
+            }
 
             // Non-combat units don't engage; a support healer instead seeks a hurt ally.
             if (!this.typeCanAttack[this.type[i]]) {
@@ -557,12 +822,15 @@ export class UnitManager {
                 continue;
             }
 
-            const range2 = this.faction[i] === FACTION.player
+            const ord = this.order[i];
+            const rm2 = this.rangeMul[i] * this.rangeMul[i]; // garrison archers see/strike 2× as far
+            const range2 = (this.faction[i] === FACTION.player
                 ? this.pRange2[this.type[i]]
-                : this.typeRange2[this.type[i]];
+                : this.typeRange2[this.type[i]]) * rm2;
             // Perceive at least the aggro radius (so melee chase) but never less than the unit's
-            // own strike range (so long-range units still target everything they can hit).
-            const seek2 = Math.max(range2, aggro2);
+            // own strike range (so long-range units still target everything they can hit). A
+            // Hold order shrinks perception to strike range so the unit never leaves its post.
+            const seek2 = ord === ORDER.hold ? range2 : Math.max(range2, aggro2);
             const ci = this.cellOf(i);
             let best = -1;
             let bestD2 = Infinity;
@@ -574,13 +842,21 @@ export class UnitManager {
                 for (let k = 0; k < bucket.length; k++) {
                     const j = bucket[k];
                     if (this.faction[j] === this.faction[i]) continue;
+                    // Elevation: a melee attacker can't reach a target on a different level (e.g.
+                    // ground units can't hit roof-top garrison archers); ranged can hit any level.
+                    if (this.level[i] !== this.level[j] && !this.typeRanged[this.type[i]]) continue;
                     const dx = this.x[j] - this.x[i];
                     const dy = this.y[j] - this.y[i];
                     const d2 = dx * dx + dy * dy;
-                    if (d2 <= seek2 && d2 < bestD2) {
-                        bestD2 = d2;
-                        best = j;
+                    if (d2 > seek2 || d2 >= bestD2) continue;
+                    // Free roam only hunts enemies inside the ordered area (around the anchor).
+                    if (ord === ORDER.free) {
+                        const ax = this.x[j] - this.destX[i];
+                        const ay = this.y[j] - this.destY[i];
+                        if (ax * ax + ay * ay > free2) continue;
                     }
+                    bestD2 = d2;
+                    best = j;
                 }
             }
             this.target[i] = best;
@@ -662,30 +938,90 @@ export class UnitManager {
 
             if (st === STATE.walk) {
                 const sprite = this.sprites[i]!;
+                const ln = this.lane[i];
+                const yMin = this.laneY[ln] - this.laneHalf[ln];
+                const yMax = this.laneY[ln] + this.laneHalf[ln];
+                const ord = this.order[i];
+
                 // Advance on an acquired-but-not-yet-reachable enemy: steer toward it in both
-                // axes so melee close the gap instead of marching past offset foes.
+                // axes so melee close the gap instead of marching past offset foes. A Holding
+                // unit never chases — it waits for the enemy to enter its strike range.
                 const tgt = this.target[i];
-                if (tgt >= 0 && tgt < this.count && this.state[tgt] !== STATE.dying
+                if (ord !== ORDER.hold && tgt >= 0 && tgt < this.count && this.state[tgt] !== STATE.dying
                     && this.faction[tgt] !== this.faction[i]) {
                     const dx = this.x[tgt] - this.x[i];
                     const dy = this.y[tgt] - this.y[i];
                     const d = Math.hypot(dx, dy) || 1;
+                    this.face(i, dx);
                     const stepLen = this.speed[i] * dt;
                     this.x[i] += (dx / d) * stepLen;
-                    const ln = this.lane[i];
-                    this.y[i] = Phaser.Math.Clamp(
-                        this.y[i] + (dy / d) * stepLen,
-                        this.laneY[ln] - this.laneHalf[ln],
-                        this.laneY[ln] + this.laneHalf[ln],
-                    );
-                    sprite.x = this.x[i];
-                    sprite.y = this.y[i];
-                    sprite.setDepth(this.y[i]);
+                    this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
+                    this.syncSprite(i);
+                    this.setMoving(i, true);
                     continue;
                 }
-                // Funnel: drift toward the lane-path centre until within the tight path,
-                // so the streams from the spread-out buildings merge into one lane. Read
-                // live from config so the Dev panel's "Lane width" applies instantly.
+
+                // Hold / Free with nothing to fight: sit on the anchor, drifting back to it if
+                // separation (or a chase that ended) shoved the unit off its post.
+                if (ord === ORDER.hold || ord === ORDER.free) {
+                    const dx = this.destX[i] - this.x[i];
+                    const dy = this.destY[i] - this.y[i];
+                    const d = Math.hypot(dx, dy);
+                    if (d > CONFIG.command.holdReturn) {
+                        const stepLen = Math.min(this.speed[i] * dt, d);
+                        this.x[i] += (dx / d) * stepLen;
+                        this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
+                        this.syncSprite(i);
+                        this.face(i, dx);
+                        this.setMoving(i, true);
+                    } else {
+                        this.setMoving(i, false); // standing on post → idle
+                    }
+                    continue;
+                }
+
+                // Move / Attack-move: walk to the formation slot, then dig in (Hold) on arrival.
+                if (ord === ORDER.move || ord === ORDER.attackMove) {
+                    const dx = this.destX[i] - this.x[i];
+                    const dy = this.destY[i] - this.y[i];
+                    const d = Math.hypot(dx, dy);
+                    if (d <= CONFIG.command.arrive) {
+                        this.order[i] = ORDER.hold;
+                        this.destX[i] = this.x[i];
+                        this.destY[i] = this.y[i];
+                        this.target[i] = -1;
+                        this.setMoving(i, false); // arrived → stand idle
+                        continue;
+                    }
+                    const stepLen = Math.min(this.speed[i] * dt, d);
+                    this.x[i] += (dx / d) * stepLen;
+                    this.y[i] = Phaser.Math.Clamp(this.y[i] + (dy / d) * stepLen, yMin, yMax);
+                    this.syncSprite(i);
+                    this.face(i, dx);
+                    this.setMoving(i, true);
+                    // A unit commanded onto the enemy keep still sacks it.
+                    if (this.faction[i] === FACTION.player && this.x[i] >= this.enemyKeepX) this.reachKeep(i);
+                    continue;
+                }
+
+                // Support healers (Monks) trail the frontline and idle when caught up — they tend
+                // the army from behind and rest between heals, instead of charging the keep.
+                if (this.typeHealAmount[this.type[i]] > 0) {
+                    const goalX = this.faction[i] === FACTION.player ? this.frontX[0] - 90 : this.frontX[1] + 90;
+                    const dx = goalX - this.x[i];
+                    if (Math.abs(dx) > 10) {
+                        this.x[i] += Math.sign(dx) * Math.min(this.speed[i] * dt, Math.abs(dx));
+                        this.syncSprite(i);
+                        this.face(i, dx);
+                        this.setMoving(i, true);
+                    } else {
+                        this.setMoving(i, false); // caught up — idle behind the line
+                    }
+                    continue;
+                }
+
+                // ORDER.auto: the original flow — funnel into the lane-path centre, then march on
+                // the keep. Read lane width live so the Dev "Lane width" applies instantly.
                 const lane = CONFIG.lanes[this.lane[i]];
                 const half = lane.pathWidth * 0.5;
                 const off = this.laneY[this.lane[i]] - this.y[i]; // +ve = unit is above centre
@@ -699,14 +1035,10 @@ export class UnitManager {
                 const dir = this.faction[i] === FACTION.player ? 1 : -1;
                 this.x[i] += dir * this.speed[i] * dt;
                 sprite.x = this.x[i];
+                this.face(i, dir);
+                this.setMoving(i, true);
                 const reachedEnd = dir > 0 ? this.x[i] >= this.enemyKeepX : this.x[i] <= this.playerKeepX;
-                if (reachedEnd) {
-                    // Damage the opposing keep, then recycle this unit.
-                    this.onReachKeep(this.faction[i] as Faction);
-                    this.livingByFaction[this.faction[i]]--;
-                    this.livingByType[this.type[i] * 2 + this.faction[i]]--;
-                    this.despawn(i);
-                }
+                if (reachedEnd) this.reachKeep(i);
                 continue;
             }
 
@@ -741,8 +1073,9 @@ export class UnitManager {
                             this.attackCd[i] += this.typeHealInterval[acting];
                             const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
                             this.hp[t] += healed;
-                            if (healed > 0 && this.onHeal && CONFIG.debug.damageNumbers) {
-                                this.onHeal(this.x[t], this.y[t] - 50, healed);
+                            if (healed > 0) {
+                                this.healFlash(t);
+                                if (this.onHeal && CONFIG.debug.damageNumbers) this.onHeal(this.x[t], this.y[t] - 50, healed);
                             }
                             this.playOneShot(i, 'heal', this.typeHealAnimMs[acting]);
                             continue;
@@ -759,10 +1092,12 @@ export class UnitManager {
             const atkF = this.faction[i];
             const validTarget =
                 t >= 0 && t < this.count && this.state[t] !== STATE.dying && this.faction[t] !== this.faction[i];
-            const reach2 = atkF === FACTION.player ? this.pReach2[acting] : this.typeReach2[acting];
+            const reach2 = (atkF === FACTION.player ? this.pReach2[acting] : this.typeReach2[acting])
+                * this.rangeMul[i] * this.rangeMul[i];
             if (validTarget) {
                 const dx = this.x[t] - this.x[i];
                 const dy = this.y[t] - this.y[i];
+                this.face(i, dx); // turn to face whatever we're striking
                 if (dx * dx + dy * dy <= reach2) {
                     this.attackCd[i] += this.typeAttackInterval[acting] * CONFIG.combat.attackIntervalScale;
                     this.playOneShot(i, 'attack', this.typeAttackAnimMs[acting]); // one swing per beat
@@ -786,6 +1121,7 @@ export class UnitManager {
                     if (this.faction[t] === FACTION.player) scaled *= this.pArmourMult;
                     const dmg = Math.max(1, Math.round(scaled));
                     this.hp[t] -= dmg;
+                    matchStats.unitDamage(atkF, acting, this.faction[t], this.type[t], dmg);
                     if (this.onDamage && CONFIG.debug.damageNumbers) {
                         this.onDamage(this.x[t], this.y[t] - 50, dmg, crit ? '#ffd24a' : undefined);
                     }
@@ -824,16 +1160,17 @@ export class UnitManager {
         const radius = CONFIG.separation.radius;
         const r2 = radius * radius;
 
-        // Rebuild x-buckets for living units.
+        // Rebuild x-buckets for living units (garrison defenders are pinned — excluded entirely
+        // so they neither push nor get pushed).
         for (let c = 0; c < this.numSepCells; c++) this.sepBuckets[c].length = 0;
         for (let i = 0; i < this.count; i++) {
-            if (this.state[i] === STATE.dying) continue;
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue;
             this.sepBuckets[this.sepCellOf(i)].push(i);
         }
 
         // Accumulate a push vector per unit from neighbours in this + adjacent x-cells.
         for (let i = 0; i < this.count; i++) {
-            if (this.state[i] === STATE.dying) continue;
+            if (this.state[i] === STATE.dying || this.garrison[i]) continue;
             let px = 0;
             let py = 0;
             const ci = this.sepCellOf(i);
@@ -898,8 +1235,10 @@ export class UnitManager {
     // Begin dying: play the death anim once, then recycle when it finishes.
     private kill(i: number) {
         if (this.state[i] === STATE.dying) return;
+        matchStats.death(this.faction[i], this.type[i]);
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
+        this.releaseProducer(i);
         this.state[i] = STATE.dying;
         this.target[i] = -1;
         this.deathTimer[i] = this.deathDuration;
@@ -907,6 +1246,17 @@ export class UnitManager {
         // dying branch in step() fades it out before recycling.
         this.sprites[i]!.anims.stop();
         this.sprites[i]!.setTint(0x6a6a6a);
+    }
+
+    // Drop a unit from its producer's live tally (on death or on reaching the keep) so the
+    // building may spawn a replacement. Clears the attribution so it can't be counted twice.
+    private releaseProducer(i: number) {
+        const id = this.producer[i];
+        if (id < 0) return;
+        const n = (this.livingByProducer.get(id) ?? 0) - 1;
+        if (n > 0) this.livingByProducer.set(id, n);
+        else this.livingByProducer.delete(id);
+        this.producer[i] = -1;
     }
 
     private setState(i: number, next: number) {
@@ -918,15 +1268,59 @@ export class UnitManager {
         this.playStateAnim(i);
     }
 
-    // Play the looping animation that matches a unit's current state (walk, or attack/heal).
+    // Play the looping animation that matches a unit's current state. Engaged units REST in idle
+    // between strikes/heals; a unit in walk state plays walk only while actually locomoting —
+    // a unit standing on its post (holding / arrived) shows idle, not a march in place.
     private playStateAnim(i: number) {
         const sprite = this.sprites[i];
         if (!sprite) return;
         const art = this.typeArt[this.type[i]];
         const name = FACTION_NAME[this.faction[i]];
-        // Engaged units REST in idle between strikes/heals (each strike plays a one-shot swing);
-        // marching units run.
-        sprite.play(animKey(art, name, this.state[i] === STATE.attack ? 'idle' : 'walk'));
+        const walking = this.state[i] === STATE.walk && this.moving[i] === 1;
+        sprite.play(animKey(art, name, walking ? 'walk' : 'idle'));
+    }
+
+    // Flip a unit's locomotion (walk vs idle) and reflect it immediately when it's in a plain
+    // walk pose (not attacking, not mid one-shot). Called from the step loop each frame.
+    private setMoving(i: number, m: boolean) {
+        const v = m ? 1 : 0;
+        if (this.moving[i] === v) return;
+        this.moving[i] = v;
+        if (this.state[i] === STATE.walk && this.animLock[i] <= 0) this.playStateAnim(i);
+    }
+
+    // Face the sprite along a horizontal direction (the art faces right, so flipX = facing left).
+    // Ignores tiny/zero dx so purely-vertical motion doesn't waggle the facing.
+    private face(i: number, dx: number) {
+        const s = this.sprites[i];
+        if (!s) return;
+        if (dx > 0.01) s.setFlipX(false);
+        else if (dx < -0.01) s.setFlipX(true);
+    }
+
+    // Push a unit's logical (x, y) onto its sprite, sorting by base-y so nearer units draw in front.
+    private syncSprite(i: number) {
+        const s = this.sprites[i]!;
+        s.x = this.x[i];
+        s.y = this.y[i];
+        s.setDepth(this.y[i]);
+    }
+
+    // Play the Monk's heal effect over a unit that just got healed (visual feedback on the
+    // TARGET), plus a brief green flash on the unit itself.
+    private healFlash(j: number) {
+        const s = this.sprites[j];
+        if (!s) return;
+        s.setTint(0x7be08a);
+        s.scene.time.delayedCall(260, () => { if (s.tintTopLeft === 0x7be08a) s.clearTint(); });
+
+        // A one-shot effect sprite centred on the unit's body; recycled when the anim finishes.
+        const fx = s.scene.add.sprite(this.x[j], this.y[j] - s.displayHeight * 0.35, healEffectKey(FACTION_NAME[this.faction[j]]))
+            .setDepth(this.y[j] + 1)
+            .setScale(this.typeScale[this.type[j]] * 0.9);
+        this.layer.add(fx);
+        fx.once('animationcomplete', () => fx.destroy());
+        fx.play(healEffectKey(FACTION_NAME[this.faction[j]]));
     }
 
     // Play a brief one-shot pose (a swing, heal gesture, or guard) over the current state's
@@ -992,6 +1386,14 @@ export class UnitManager {
             this.drawLy[i] = this.drawLy[last];
             this.lane[i] = this.lane[last];
             this.type[i] = this.type[last];
+            this.producer[i] = this.producer[last];
+            this.order[i] = this.order[last];
+            this.destX[i] = this.destX[last];
+            this.destY[i] = this.destY[last];
+            this.moving[i] = this.moving[last];
+            this.rangeMul[i] = this.rangeMul[last];
+            this.garrison[i] = this.garrison[last];
+            this.level[i] = this.level[last];
             this.sprites[i] = this.sprites[last];
         }
         this.sprites[last] = undefined;

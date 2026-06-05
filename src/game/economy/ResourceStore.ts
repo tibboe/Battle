@@ -1,5 +1,6 @@
-import { CONFIG, ResourceType } from '../config';
+import { CONFIG, ResourceType, RESOURCE_TYPES } from '../config';
 import { Faction } from '../units/UnitManager';
+import { matchStats } from '../stats/MatchStats';
 
 // Per-side resource stockpiles (gold / stone / wood) for Milestone 4. Peasants bank into it
 // here; later phases (build & upgrade costs) spend from it. Stockpiles are per-match — they
@@ -10,7 +11,7 @@ import { Faction } from '../units/UnitManager';
 
 export type ResourceBag = Record<ResourceType, number>;
 
-const TYPES: ResourceType[] = ['gold', 'stone', 'wood'];
+const TYPES = RESOURCE_TYPES;
 
 export class ResourceStore {
     // Indexed by faction (player = 0, enemy = 1).
@@ -21,8 +22,8 @@ export class ResourceStore {
     constructor() {
         const start = CONFIG.resources.start;
         this.bags = [
-            { gold: start.gold, stone: start.stone, wood: start.wood },
-            { gold: start.gold, stone: start.stone, wood: start.wood },
+            { gold: start.gold, stone: start.stone, wood: start.wood, food: start.food },
+            { gold: start.gold, stone: start.stone, wood: start.wood, food: start.food },
         ];
     }
 
@@ -38,6 +39,7 @@ export class ResourceStore {
     add(faction: Faction, type: ResourceType, amount: number) {
         if (amount <= 0) return;
         this.bags[faction][type] += amount;
+        matchStats.gather(faction, type, amount);
         this.ver++;
     }
 
@@ -50,7 +52,12 @@ export class ResourceStore {
     spend(faction: Faction, cost: Partial<ResourceBag>): boolean {
         if (!this.canAfford(faction, cost)) return false;
         const b = this.bags[faction];
-        for (const t of TYPES) b[t] -= cost[t] ?? 0;
+        for (const t of TYPES) {
+            const a = cost[t] ?? 0;
+            if (a <= 0) continue;
+            b[t] -= a;
+            matchStats.spend(faction, t, a);
+        }
         this.ver++;
         return true;
     }

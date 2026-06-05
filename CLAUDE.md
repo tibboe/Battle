@@ -20,11 +20,36 @@ Castle health bars, a 🛠 Dev toggle that hides the tuning/inspector tools), an
 work (unit flow, arcing/sticking arrows, swing-pause-swing pacing with idle poses, per-unit
 health bars). The next milestone, **`MILESTONE_5.md` (Siege & Base Assault — door→breach→sack→
 repair, sackable production buildings)**, is specced but **not started** — don't build it until
-told. M4 is the current playable state.
+told.
 
-> Heads-up for a fresh session: all M4 work lives on the **`claude/milestone-4-economy-ET6F4`**
-> branch (not merged to `main`), and the game is deployed for phone testing via the repo's
-> `Dockerfile` on Railway (see `DEPLOY.md`).
+**Since M4 (built on the `claude/nice-cori-bfiSA` branch — the current playable state):**
+- **Player skills** — a left-edge skill dock with cooldowns: **Arrow Volley** (rain arrows on a
+  point) and **Mercenaries** (hire archers at a tapped point for gold). Generic targeting
+  (arm a skill → tap the field). `abilities/Abilities.ts`, `ui/SkillBar.ts`.
+- **Unit command & control** — select your units by type from the right roster (or All) and
+  issue **Move / Attack-move / Hold / Free / Auto** orders with **formations** (square/rect/line,
+  tight/loose, ordered knight→lancer→archer→monk, facing the enemy). Orders are a per-type
+  *standing order* so reinforcements inherit them. Units face their travel/attack direction,
+  idle when stationary, and flow **around buildings**. `ui/CommandBar.ts`, `units/commands.ts`.
+- **Food economy** — a 4th resource (**food**, gathered from renewable sheep). Producers train
+  units one at a time, each costing food, with a per-building **cooldown bar**, an enable/disable
+  toggle, and a "need food" prompt. **Peasants start idle**; you assign them via a **FIFO focus
+  queue** on the merged resource HUD (each resource chip shows stockpile + worker count, tap to
+  enqueue). Per-building **unit caps**.
+- **Garrison defenders + elevation** — a paid per-building upgrade posts **archer defenders on
+  the roof** (range ×2, pinned). General per-unit **elevation level**: melee can only hit
+  same-level targets, ranged can hit any level (foundation for future terrain tiers).
+- **Pre-game Setup screen** — tweak the defaults before a match (shared tunables with the Dev
+  panel via `controls/tunables.ts`); remembered in `localStorage`.
+- **Match stats → SQLite** — every match POSTs a detailed summary to a small **Node server**
+  (`server/index.mjs`, built-in `node:sqlite`) that also serves the build and a **`/stats`
+  dashboard**. See DEPLOY.md.
+
+> Heads-up for a fresh session: the current work lives on the **`claude/nice-cori-bfiSA`** branch
+> (PR open against `main`). Deployment changed from a static file server to the **Node server in
+> `server/index.mjs`** (serves `/dist` + the stats API); on Railway it needs a **volume mounted at
+> `/data`** so the SQLite match stats persist across redeploys (see `DEPLOY.md`). Settings persist
+> in `localStorage` under key `lanebreaker.settings.v2`.
 
 ## Roles
 - The human is the **creative director**: they decide how it should feel, play it, and

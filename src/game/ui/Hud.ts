@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG, ResourceType } from '../config';
+import { CONFIG, ResourceType, RESOURCE_TYPES } from '../config';
 import { ResourceBag } from '../economy/ResourceStore';
 
 // The player-facing HUD (the M4 HUD pass): a clean resource readout with icons, both Castles'
@@ -19,14 +19,15 @@ const ICONS = {
     gold: `${ASSET}/Resources/Gold/Gold Resource/Gold_Resource.png`,
     stone: `${ASSET}/Decorations/Rocks/Rock1.png`,
     wood: `${ASSET}/Resources/Wood/Wood Resource/Wood Resource.png`,
+    food: `${ASSET}/Resources/Meat/Meat Resource/Meat Resource.png`,
 };
 const iconKey = (k: string) => `hud-icon-${k}`;
 
 // Bar geometry.
 const BAR_W = 188;
 const BAR_H = 18;
-const ICON_PX = 24;
-const SLOT_W = 88; // per-resource slot in the readout strip
+const ICON_PX = 20;
+const CHIP_W = 64;  // per-resource chip: icon + stockpile count over a worker badge (tap to focus)
 
 const youCol = '#' + CONFIG.faction.player.tint.toString(16).padStart(6, '0');
 const foeCol = '#' + CONFIG.faction.enemy.tint.toString(16).padStart(6, '0');
@@ -40,9 +41,11 @@ export interface HudData {
     enemyHp: number;
     maxHp: number;
     workers: Record<ResourceType, number>; // player's live worker count per resource
+    focus: ResourceType[];                 // the FIFO focus queue (next assignments)
 }
 
-const RES_ORDER: ResourceType[] = ['gold', 'stone', 'wood'];
+const RES_ORDER = RESOURCE_TYPES;
+const RES_LETTER: Record<ResourceType, string> = { gold: 'G', stone: 'S', wood: 'W', food: 'F' };
 
 export function loadHud(scene: Phaser.Scene) {
     for (const [k, path] of Object.entries(ICONS)) scene.load.image(iconKey(k), encodeURI(path));
@@ -59,18 +62,19 @@ export class Hud {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
     private readonly onDev: (on: boolean) => void;
-    private readonly onPeasantAdjust: (res: ResourceType, delta: number) => void;
+    private readonly onFocus: (res: ResourceType) => void;
+    private readonly onFocusClear: () => void;
 
     private resBg!: Phaser.GameObjects.Rectangle;
-    private readonly counts: Record<string, Phaser.GameObjects.Text> = {};
-
-    // Top-centre peasant-allocation strip: per-resource worker count with −/+.
-    private workBg!: Phaser.GameObjects.Rectangle;
-    private workLabel!: Phaser.GameObjects.Text;
-    private readonly workCounts: Record<string, Phaser.GameObjects.Text> = {};
+    // One combined top strip: per resource a tappable CHIP showing the stockpile count AND the
+    // live worker count, tap to push that resource onto the gather FIFO. A queue line + clear
+    // button follow. (Resource readout and peasant focus are now the same control.)
+    private readonly counts: Record<string, Phaser.GameObjects.Text> = {};      // stockpile
+    private readonly workCounts: Record<string, Phaser.GameObjects.Text> = {};  // worker badge
+    private readonly focusBtns: Phaser.GameObjects.Rectangle[] = [];
     private readonly workIcons: Phaser.GameObjects.Image[] = [];
-    private readonly workMinus: Phaser.GameObjects.Text[] = [];
-    private readonly workPlus: Phaser.GameObjects.Text[] = [];
+    private queueText!: Phaser.GameObjects.Text;
+    private clearBtn!: Phaser.GameObjects.Text;
     private playerBar!: Bar;
     private enemyBar!: Bar;
     private fitBtn!: Phaser.GameObjects.Text;
@@ -84,16 +88,17 @@ export class Hud {
         layer: Phaser.GameObjects.Layer,
         onFit: () => void,
         onDev: (on: boolean) => void,
-        onPeasantAdjust: (res: ResourceType, delta: number) => void,
+        onFocus: (res: ResourceType) => void,
+        onFocusClear: () => void,
     ) {
         this.scene = scene;
         this.layer = layer;
         this.onDev = onDev;
-        this.onPeasantAdjust = onPeasantAdjust;
+        this.onFocus = onFocus;
+        this.onFocusClear = onFocusClear;
         this.devOnState = readDev();
 
-        this.buildResourceStrip();
-        this.buildPeasantStrip();
+        this.buildStrip();
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
 
@@ -110,57 +115,39 @@ export class Hud {
         this.layout();
     }
 
-    private buildResourceStrip() {
-        this.resBg = this.scene.add.rectangle(8, 8, SLOT_W * 3 + 12, 38, 0x000000, 0.55)
+    // One strip: a tappable chip per resource (icon + stockpile count + worker badge) that pushes
+    // the resource onto the gather FIFO, then the pending queue + a clear button. Positioned in
+    // layout().
+    private buildStrip() {
+        this.resBg = this.scene.add.rectangle(8, 8, 100, 40, 0x000000, 0.55)
             .setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0xffffff, 0.12);
         this.layer.add(this.resBg);
 
-        const cy = 8 + 19;
-        ['gold', 'stone', 'wood'].forEach((k, i) => {
-            const x = 16 + i * SLOT_W;
-            const icon = this.scene.add.image(x, cy, iconKey(k))
-                .setOrigin(0, 0.5).setDisplaySize(ICON_PX, ICON_PX)
-                .setScrollFactor(0).setDepth(DEPTH + 1);
-            const count = this.scene.add.text(x + ICON_PX + 6, cy, '0', {
-                fontFamily: 'monospace', fontSize: '17px', color: '#ffffff',
-            }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-            this.layer.add([icon, count]);
-            this.counts[k] = count;
-        });
-    }
-
-    private buildPeasantStrip() {
-        this.workBg = this.scene.add.rectangle(0, 8, 320, 34, 0x000000, 0.55)
-            .setOrigin(0, 0).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0xffffff, 0.12);
-        this.layer.add(this.workBg);
-
-        this.workLabel = this.scene.add.text(0, 0, '👷', { fontFamily: 'monospace', fontSize: '16px', color: '#cfe6ff' })
-            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-        this.layer.add(this.workLabel);
-
         RES_ORDER.forEach((res) => {
+            const chip = this.scene.add.rectangle(0, 0, CHIP_W, 34, 0x182434, 0.9)
+                .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0x2a3543)
+                .setInteractive({ useHandCursor: true });
+            chip.on('pointerup', () => this.onFocus(res));
             const icon = this.scene.add.image(0, 0, iconKey(res))
-                .setOrigin(0, 0.5).setDisplaySize(18, 18).setScrollFactor(0).setDepth(DEPTH + 1);
+                .setOrigin(0, 0.5).setDisplaySize(ICON_PX, ICON_PX).setScrollFactor(0).setDepth(DEPTH + 1);
             const count = this.scene.add.text(0, 0, '0', { fontFamily: 'monospace', fontSize: '15px', color: '#ffffff' })
-                .setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
-            const minus = this.mkStepBtn('−', () => this.onPeasantAdjust(res, -1));
-            const plus = this.mkStepBtn('+', () => this.onPeasantAdjust(res, +1));
-            this.layer.add([icon, count, minus, plus]);
+                .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+            const work = this.scene.add.text(0, 0, '👷0', { fontFamily: 'monospace', fontSize: '10px', color: '#9fd0ff' })
+                .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+            this.layer.add([chip, icon, count, work]);
+            this.focusBtns.push(chip);
             this.workIcons.push(icon);
-            this.workCounts[res] = count;
-            this.workMinus.push(minus);
-            this.workPlus.push(plus);
+            this.counts[res] = count;
+            this.workCounts[res] = work;
         });
-    }
 
-    private mkStepBtn(text: string, onTap: () => void) {
-        const b = this.scene.add.text(0, 0, text, {
-            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff',
-            backgroundColor: '#3a4350', padding: { x: 6, y: 2 },
+        this.queueText = this.scene.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#cfe6ff' })
+            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+        this.clearBtn = this.scene.add.text(0, 0, '✕', {
+            fontFamily: 'monospace', fontSize: '13px', color: '#ffffff', backgroundColor: '#5a3a3a', padding: { x: 6, y: 3 },
         }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DEPTH + 1).setInteractive({ useHandCursor: true });
-        b.on('pointerup', onTap);
-        this.layer.add(b);
-        return b;
+        this.clearBtn.on('pointerup', () => this.onFocusClear());
+        this.layer.add([this.queueText, this.clearBtn]);
     }
 
     private buildBar(label: string, color: string): Bar {
@@ -206,18 +193,25 @@ export class Hud {
     }
 
     update(d: HudData) {
-        this.counts.gold.setText(String(d.player.gold));
-        this.counts.stone.setText(String(d.player.stone));
-        this.counts.wood.setText(String(d.player.wood));
-
-        for (const res of RES_ORDER) this.workCounts[res].setText(String(d.workers[res]));
+        for (const res of RES_ORDER) {
+            this.counts[res].setText(String(d.player[res]));
+            this.workCounts[res].setText('👷' + d.workers[res]);
+        }
+        // Pending focus queue as a short letter run, e.g. "→ G G W" (capped).
+        const q = d.focus;
+        if (!q.length) {
+            this.queueText.setText('→ auto');
+        } else {
+            const shown = q.slice(0, 10).map((r) => RES_LETTER[r]).join(' ');
+            this.queueText.setText('→ ' + shown + (q.length > 10 ? ` +${q.length - 10}` : ''));
+        }
 
         this.setBar(this.playerBar, d.playerHp, d.maxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
 
         if (this.devOnState) {
             const e = d.enemy;
-            this.debug.setText(`FPS ${d.fps}  Units ${d.units}    Enemy  G ${e.gold} S ${e.stone} W ${e.wood}`);
+            this.debug.setText(`FPS ${d.fps}  Units ${d.units}    Enemy  G ${e.gold} S ${e.stone} W ${e.wood} F ${e.food}`);
         }
     }
 
@@ -235,21 +229,23 @@ export class Hud {
         const w = this.scene.scale.width;
         const h = this.scene.scale.height;
 
-        // Peasant-allocation strip, centred along the top (between resources and the buttons).
-        const groupW = 96;
-        const labelW = 26;
-        const panelW = labelW + groupW * RES_ORDER.length;
-        const px = (w - panelW) / 2;
-        const cy = 8 + 17;
-        this.workBg.setPosition(px - 8, 8).setSize(panelW + 16, 34);
-        this.workLabel.setPosition(px, cy);
+        // Combined resource+focus strip, anchored top-left. Each chip: icon, stockpile count
+        // (top), worker badge (below); tap to focus. Then the queue line + clear button.
+        const cy = 8 + 20;
+        const gap = 4;
+        const queueW = 88;
+        let bx = 12;
         RES_ORDER.forEach((res, i) => {
-            const gx = px + labelW + i * groupW;
-            this.workIcons[i].setPosition(gx, cy);
-            this.workCounts[res].setPosition(gx + 30, cy);
-            this.workMinus[i].setPosition(gx + 52, cy);
-            this.workPlus[i].setPosition(gx + 76, cy);
+            this.focusBtns[i].setPosition(bx, cy);
+            this.workIcons[i].setPosition(bx + 6, cy);
+            this.counts[res].setPosition(bx + 6 + ICON_PX + 4, cy - 7);
+            this.workCounts[res].setPosition(bx + 6 + ICON_PX + 4, cy + 8);
+            bx += CHIP_W + gap;
         });
+        this.queueText.setPosition(bx + 4, cy);
+        this.clearBtn.setPosition(bx + 4 + queueW + 4, cy);
+        const endX = bx + 4 + queueW + 4 + 14;
+        this.resBg.setPosition(8, 8).setSize(endX - 8, 40);
 
         // Top-right buttons: Fit, then Dev to its left.
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);

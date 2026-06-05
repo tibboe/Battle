@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Lanebreaker — Match Stats</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    background: #0b1119; color: #dfe9f5;
+  }
+  header { padding: 18px 20px; border-bottom: 1px solid #2a3543; display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0; color: #e8f1ff; }
+  .muted { color: #8aa0b5; font-size: 12px; }
+  button {
+    font: inherit; font-size: 13px; color: #fff; background: #2a6cd6; border: 0;
+    padding: 7px 12px; border-radius: 6px; cursor: pointer;
+  }
+  main { padding: 20px; max-width: 1100px; margin: 0 auto; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 24px; }
+  .card { background: #121a24; border: 1px solid #2a3543; border-radius: 8px; padding: 14px; }
+  .card .k { font-size: 12px; color: #8aa0b5; }
+  .card .v { font-size: 26px; color: #e8f1ff; margin-top: 4px; }
+  .card .v small { font-size: 13px; color: #8aa0b5; }
+  h2 { font-size: 15px; color: #7fd0ff; margin: 26px 0 10px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid #1d2733; white-space: nowrap; }
+  th:first-child, td:first-child { text-align: left; }
+  th { color: #8aa0b5; font-weight: normal; }
+  .you { color: #4aa3ff; } .foe { color: #ff5a5a; }
+  .bar { height: 8px; background: #1d2733; border-radius: 4px; overflow: hidden; min-width: 60px; }
+  .bar > i { display: block; height: 100%; background: #2a6cd6; }
+  .barwrap { display: flex; align-items: center; gap: 8px; justify-content: flex-end; }
+  tr.match { cursor: pointer; }
+  tr.match:hover td { background: #131c27; }
+  tr.detail td { background: #0d141d; }
+  .win-you { color: #4aa3ff; } .win-foe { color: #ff5a5a; }
+  .empty { color: #8aa0b5; padding: 40px 0; text-align: center; }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 10px; font-size: 11px; }
+  .pill.you { background: #14304f; } .pill.foe { background: #4a1c1c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>⚔ Lanebreaker — Match Stats</h1>
+  <span id="updated" class="muted"></span>
+  <button onclick="load()" style="margin-left:auto">↻ Refresh</button>
+</header>
+<main>
+  <div id="cards" class="cards"></div>
+  <h2>Per unit type — totals across all matches</h2>
+  <div id="byType"></div>
+  <h2>Recent matches</h2>
+  <div id="matches"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const fmtDur = (ms) => ms == null ? '—' : `${Math.floor(ms / 60000)}m ${Math.round((ms % 60000) / 1000)}s`;
+const num = (v) => (v == null || isNaN(v)) ? '0' : Math.round(v).toLocaleString();
+
+async function load() {
+  let stats = {}, matches = [];
+  try {
+    [stats, matches] = await Promise.all([
+      fetch('/api/stats').then((r) => r.json()),
+      fetch('/api/matches?limit=300').then((r) => r.json()).then((d) => d.matches || []),
+    ]);
+  } catch (e) {
+    $('cards').innerHTML = `<div class="empty">Could not reach the stats API.</div>`;
+    return;
+  }
+  $('updated').textContent = 'updated ' + new Date().toLocaleTimeString();
+  renderCards(stats);
+  renderByType(matches);
+  renderMatches(matches);
+}
+
+function renderCards(s) {
+  const total = s.total || 0;
+  const pw = s.player_wins || 0, ew = s.enemy_wins || 0;
+  const rate = total ? Math.round((pw / total) * 100) : 0;
+  const cards = [
+    ['Matches', num(total)],
+    ['Your win rate', `${rate}<small>%</small>`, `${pw} you / ${ew} enemy`],
+    ['Avg length', fmtDur(s.avg_duration_ms)],
+    ['Avg units produced', `${num(s.avg_player_produced)} <small>vs ${num(s.avg_enemy_produced)}</small>`],
+  ];
+  $('cards').innerHTML = cards.map(([k, v, sub]) =>
+    `<div class="card"><div class="k">${k}</div><div class="v">${v}</div>${sub ? `<div class="k">${sub}</div>` : ''}</div>`).join('');
+}
+
+// Aggregate per unit-type across all matches, both sides.
+function renderByType(matches) {
+  if (!matches.length) { $('byType').innerHTML = `<div class="empty">No matches recorded yet.</div>`; return; }
+  const agg = {}; // key -> { p:{produced,deaths,dealt}, e:{...} }
+  const bump = (key, side, u) => {
+    agg[key] = agg[key] || { p: { produced: 0, deaths: 0, dealt: 0 }, e: { produced: 0, deaths: 0, dealt: 0 } };
+    const t = agg[key][side];
+    t.produced += u.produced || 0; t.deaths += (u.deaths || 0) + (u.reachedKeep || 0); t.dealt += u.damageDealt || 0;
+  };
+  for (const m of matches) {
+    const u = m.summary && m.summary.units; if (!u) continue;
+    for (const k in (u.player || {})) bump(k, 'p', u.player[k]);
+    for (const k in (u.enemy || {})) bump(k, 'e', u.enemy[k]);
+  }
+  const keys = Object.keys(agg);
+  const maxProd = Math.max(1, ...keys.flatMap((k) => [agg[k].p.produced, agg[k].e.produced]));
+  const bar = (v, cls) => `<div class="barwrap"><span>${num(v)}</span><div class="bar"><i class="${cls}" style="width:${(v / maxProd) * 100}%;${cls === 'foe' ? 'background:#ff5a5a' : ''}"></i></div></div>`;
+  const rows = keys.map((k) => `<tr>
+    <td>${k}</td>
+    <td>${bar(agg[k].p.produced, 'you')}</td>
+    <td>${bar(agg[k].e.produced, 'foe')}</td>
+    <td class="you">${num(agg[k].p.dealt)}</td>
+    <td class="foe">${num(agg[k].e.dealt)}</td>
+    <td class="you">${num(agg[k].p.deaths)}</td>
+    <td class="foe">${num(agg[k].e.deaths)}</td>
+  </tr>`).join('');
+  $('byType').innerHTML = `<table>
+    <thead><tr><th>Unit</th><th>You produced</th><th>Enemy produced</th><th>Your dmg</th><th>Enemy dmg</th><th>You lost</th><th>Enemy lost</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function renderMatches(matches) {
+  if (!matches.length) { $('matches').innerHTML = ''; return; }
+  const rows = matches.map((m, i) => {
+    const s = m.summary || {};
+    const pf = (s.factions && s.factions.player) || {}, ef = (s.factions && s.factions.enemy) || {};
+    const when = new Date(m.created_at || s.endedAt || Date.now()).toLocaleString();
+    const win = s.winner === 'player' ? '<span class="pill you">You won</span>'
+      : s.winner === 'enemy' ? '<span class="pill foe">Enemy won</span>' : '—';
+    return `<tr class="match" onclick="toggle(${i})">
+      <td>${when}</td><td>${win}</td><td>${fmtDur(s.durationMs)}</td>
+      <td class="you">${num(pf.unitsProduced)}</td><td class="you">${num(pf.kills)}</td>
+      <td class="foe">${num(ef.unitsProduced)}</td><td class="foe">${num(ef.kills)}</td>
+      <td>${num(s.playerKeepHp)}/${num(s.enemyKeepHp)}</td>
+    </tr>
+    <tr class="detail" id="d${i}" style="display:none"><td colspan="8"><pre style="white-space:pre-wrap;margin:0">${escapeHtml(JSON.stringify(s, null, 2))}</pre></td></tr>`;
+  }).join('');
+  $('matches').innerHTML = `<table>
+    <thead><tr><th>When</th><th>Result</th><th>Length</th><th>You made</th><th>Your kills</th><th>Enemy made</th><th>Enemy kills</th><th>Keep HP</th></tr></thead>
+    <tbody>${rows}</tbody></table>`;
+}
+
+function toggle(i) { const d = $('d' + i); if (d) d.style.display = d.style.display === 'none' ? 'table-row' : 'none'; }
+function escapeHtml(s) { return s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+load();
+</script>
+</body>
+</html>

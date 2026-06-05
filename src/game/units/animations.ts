@@ -131,11 +131,19 @@ export function arrowKey(faction: FactionName) {
     return `arrow-${faction}`;
 }
 
-// Load the Archer's arrow sprite for both factions (a single 64×64 image, not a strip).
+// Texture/animation key for the Monk's heal effect (played ON the healed target).
+export function healEffectKey(faction: FactionName) {
+    return `heal-fx-${faction}`;
+}
+const HEAL_FX_FRAMES = 11; // Heal_Effect.png is an 11-frame 192×192 strip
+
+// Load the Archer's arrow sprite + the Monk's heal effect for both factions.
 export function loadProjectiles(scene: Phaser.Scene) {
     for (const faction of FACTIONS) {
         const path = encodeURI(`${BASE}/${FACTION_DIR[faction]}/Archer/Arrow.png`);
         scene.load.image(arrowKey(faction), path);
+        const hp = encodeURI(`${BASE}/${FACTION_DIR[faction]}/Monk/Heal_Effect.png`);
+        scene.load.spritesheet(healEffectKey(faction), hp, { frameWidth: 192, frameHeight: 192 });
     }
 }
 
@@ -157,5 +165,16 @@ export function registerUnitAnimations(scene: Phaser.Scene) {
                 });
             }
         }
+    }
+    // Heal effect (one-shot) per faction, played over a healed unit.
+    for (const faction of FACTIONS) {
+        const key = healEffectKey(faction);
+        if (scene.anims.exists(key)) scene.anims.remove(key);
+        scene.anims.create({
+            key,
+            frames: scene.anims.generateFrameNumbers(key, { start: 0, end: HEAL_FX_FRAMES - 1 }),
+            frameRate: 24,
+            repeat: 0,
+        });
     }
 }

@@ -9,9 +9,13 @@ export type Armour = 'Unarmored' | 'Light' | 'Medium' | 'Heavy';
 // Behaviour class: melee/ranged fight; support never attacks (the Monk heals in Phase 2).
 export type UnitRole = 'melee' | 'ranged' | 'support';
 
-// The three gatherable resources (Milestone 4 economy). Peasants harvest these from nodes
-// and bank them; later phases spend them on buildings and upgrades.
-export type ResourceType = 'gold' | 'stone' | 'wood';
+// The gatherable resources (Milestone 4 economy). Peasants harvest these from nodes and bank
+// them; buildings/upgrades cost them, and FOOD is spent to train each unit. Food is gathered
+// from renewable sheep pastures.
+export type ResourceType = 'gold' | 'stone' | 'wood' | 'food';
+
+// Canonical resource order — the single source of truth used by the store, peasants and HUD.
+export const RESOURCE_TYPES: ResourceType[] = ['gold', 'stone', 'wood', 'food'];
 
 // A resource price (Milestone 4). Spent from a side's stockpile to build or upgrade.
 export interface Cost {
@@ -32,6 +36,13 @@ export interface BuildingDef {
     every: number;     // spawn cadence (ms); 0 for a House
     cost: Cost;
     buildTime: number; // ms of hammering to finish
+    // Max units this building may keep alive at once. The producer pauses while it is at
+    // this many living units and resumes the moment one dies or reaches the keep. Omit (or 0)
+    // for no cap (e.g. a House, which makes peasants, not capped combat units).
+    maxUnits?: number;
+    // How many archer DEFENDERS this building can garrison on top of it (a paid per-building
+    // upgrade). 0/undefined = can't be garrisoned.
+    defenders?: number;
 }
 
 // One row of the unit roster. Stats are the director's to tune; `art` names the sprite
@@ -50,6 +61,9 @@ export interface UnitType {
     armour: Armour;
     scale: number;          // display scale applied to the source frame
     footAnchor: number;     // origin.y — where the feet sit in the frame (feet on the lane)
+    // Food paid to TRAIN one of this unit (deducted when its production countdown starts;
+    // refunded if the building is disabled mid-train). 0/undefined = free.
+    foodCost?: number;
     // Innate special ability: 'knockback' | 'longshot' | 'block' (upgrades may extend it).
     ability?: string;
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
@@ -111,16 +125,16 @@ export const CONFIG = {
     // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
     // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block',
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4,
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback',
-          hp: 46, damage: 14, range: 96, attackInterval: 750, moveSpeed: 66,
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5,
+          hp: 46, damage: 14, range: 140, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
-        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot',
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
-        { key: 'monk', art: 'monk', role: 'support',
+        { key: 'monk', art: 'monk', role: 'support', foodCost: 6,
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
           weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
@@ -221,10 +235,10 @@ export const CONFIG = {
         // per-building rate.
         catalog: [
             { key: 'house',     produces: null,     art: 'House1',    scale: 1.0, every: 0,     cost: { gold: 0,  stone: 20, wood: 60 }, buildTime: 5000 },
-            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000 },
-            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000 },
-            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000 },
-            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000 },
+            { key: 'barracks',  produces: 'warrior', art: 'Barracks',  scale: 0.9, every: 10000, cost: { gold: 60, stone: 40, wood: 40 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
+            { key: 'tower',     produces: 'lancer',  art: 'Tower',     scale: 0.9, every: 10000, cost: { gold: 80, stone: 60, wood: 20 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
+            { key: 'archery',   produces: 'archer',  art: 'Archery',   scale: 0.9, every: 10000, cost: { gold: 50, stone: 10, wood: 70 }, buildTime: 6000, maxUnits: 3, defenders: 2 },
+            { key: 'monastery', produces: 'monk',    art: 'Monastery', scale: 0.8, every: 10000, cost: { gold: 90, stone: 30, wood: 40 }, buildTime: 7000, maxUnits: 2 },
         ] as BuildingDef[],
 
         // Pre-built at match start (free, instant), per side. BOTH sides start lean and build
@@ -259,7 +273,7 @@ export const CONFIG = {
     resources: {
         // Suggested opening balance (director to refine): enough to build one combat
         // producer immediately so you pick your first unit, but not two at once.
-        start: { gold: 100, stone: 60, wood: 80 },
+        start: { gold: 100, stone: 60, wood: 80, food: 60 },
     },
 
     // Peasant (worker) tunables. Workers spawn from Houses, walk to the nearest node of their
@@ -293,8 +307,8 @@ export const CONFIG = {
     // clash. Phase-1 peasants gather the nearer safe nodes; the mid nodes are placed now
     // (visible, fought over later). `scale` sizes each node's art by type.
     nodes: {
-        scale: { gold: 0.55, stone: 0.95, wood: 0.85 },
-        finiteAmount: 600, // every node now holds this and depletes (Milestone 4 tuning)
+        scale: { gold: 0.55, stone: 0.95, wood: 0.85, food: 0.5 },
+        finiteAmount: 600, // every FINITE node holds this and depletes (Milestone 4 tuning)
         // ALL nodes are finite now, so concentrating workers on one resource drains it and you
         // must spread out / push for the contested centre. Each base gets a CLUSTER of three of
         // each resource (in its back corners, off the lane) so it doesn't starve too fast.
@@ -323,6 +337,11 @@ export const CONFIG = {
             { type: 'gold',  x: 1820, y: 600,  finite: true },
             { type: 'stone', x: 2180, y: 600,  finite: true },
             { type: 'wood',  x: 2000, y: 1320, finite: true },
+            // ---- Sheep pastures: RENEWABLE food income (finite:false), one per side back-corner
+            // plus a contested centre pen, so unit production has a sustained food trickle ----
+            { type: 'food',  x: 900,  y: 760,  finite: false },
+            { type: 'food',  x: 3100, y: 760,  finite: false },
+            { type: 'food',  x: 2000, y: 980,  finite: false },
         ] as { type: ResourceType; x: number; y: number; finite: boolean }[],
     },
 
@@ -369,6 +388,60 @@ export const CONFIG = {
         // Peasant flee-burst upgrade: while fleeing a nearby enemy, sprint at ×mult for
         // `duration` ms, then `cooldown` ms before it can burst again.
         peasantFlee: { mult: 1.9, duration: 1500, cooldown: 6000 },
+        // Arrow Volley (player-cast skill): the player selects the skill, then taps the field;
+        // `arrows` arrows rain from the sky across a circle of `radius` around that point over
+        // `duration` ms. Each arrow only damages the nearest opposing unit within `hitRadius` of
+        // where it lands (arrows that hit empty ground do nothing), dealing `damage` each.
+        // `cooldown` ms must pass before it can be cast again. `skyHeight`/`skySpread` shape the
+        // "from the sky" launch (how far up / to the side each arrow starts); `fallSpeed` is the
+        // arrow travel speed.
+        arrowVolley: {
+            arrows: 50,
+            damage: 8,
+            radius: 200,
+            hitRadius: 30,
+            cooldown: 12000,
+            duration: 1200,
+            skyHeight: 1000,
+            skySpread: 320,
+            fallSpeed: 1300,
+        },
+        // Mercenaries (player skill): hire a squad of archers that drop in at the tapped point and
+        // fight for you (normal player archers). `count` archers scatter within `spread` px; `cost`
+        // gold is paid on cast (0 = free); `cooldown` ms between casts.
+        mercenaries: {
+            count: 4,
+            spread: 90,
+            cost: 50,
+            cooldown: 20000,
+        },
+    },
+
+    // Player unit commands (move / attack-move / hold / free + formations). Tunables for how
+    // ordered units behave. `arrive` is how close to its formation slot a unit must get to count
+    // as "arrived" (then it holds there). `holdReturn` is how far a holding/free unit may be
+    // shoved off its anchor before it walks back. `freeRadius` is the area around a Free order
+    // within which units hunt enemies. `spacingTight`/`spacingLoose` are the gaps between
+    // formation slots.
+    command: {
+        arrive: 20,
+        holdReturn: 26,
+        freeRadius: 340,
+        spacingTight: 42,
+        spacingLoose: 76,
+        // How hard units are shoved out of a building footprint (px/sec). Soft, so a crowd flows
+        // AROUND buildings rather than hard-stopping against them (keeps are never obstacles, so
+        // units can still reach and sack them).
+        obstaclePush: 280,
+    },
+
+    // Garrison defenders: a paid per-building upgrade that posts archers on top of a building
+    // (count per building is BuildingDef.defenders). They behave exactly like archers but with
+    // their normal attack range multiplied by `rangeMul`, and they hold their post.
+    garrison: {
+        rangeMul: 2,
+        cost: { gold: 60, stone: 40, wood: 20 } as Cost,
+        roofFrac: 0.38, // defender height up the building art (fraction of its display height)
     },
 
     // Camera limits. zoomMin must be small enough to fit the whole world on a phone.
