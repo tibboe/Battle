@@ -277,9 +277,9 @@ export const CONFIG = {
         // old steady stream. `startThreshold` / `growth` are live Dev knobs (Enemy section).
         muster: {
             enabled: true,
-            startThreshold: 12, // points needed to launch the first wave
-            growth: 6,          // added to the threshold after each wave released
-            rallyOffset: 260,   // px in front of the enemy keep where the force gathers
+            startThreshold: 12,  // points needed to launch the first wave
+            growth: 6,           // added to the threshold after each wave released
+            rallyClearance: 90,  // px of gap between the front of the building grid and the rally
         },
     },
 

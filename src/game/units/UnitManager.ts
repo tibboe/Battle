@@ -559,9 +559,16 @@ export class UnitManager {
     }
 
     // ── Enemy muster (gather-then-charge), driven by the EnemyMuster system ──────────────────
-    // World x/y of the enemy rally point (just ahead of the enemy keep, on the lane centre).
-    // Read by spawnAt to park new enemy units there while mustering.
-    enemyRallyX(): number { return this.enemyKeepX - CONFIG.enemyAI.muster.rallyOffset; }
+    // World x of the enemy rally point: just BEYOND the building grid (toward the lane), so the
+    // gathered force forms up in the open instead of on top of a building. The grid fans toward
+    // the lane from the keep; its outermost column reaches `gridReach` px out, and we leave a
+    // configurable clearance gap past that. (Mirrors the slot maths in structures/buildings.ts.)
+    enemyRallyX(): number {
+        const g = CONFIG.grid;
+        const keepCol = (g.keepSpot - 1) % g.cols;
+        const gridReach = (g.cols - 1 - keepCol) * (g.cellW + g.gap) + g.cellW / 2;
+        return this.enemyKeepX - gridReach - CONFIG.enemyAI.muster.rallyClearance;
+    }
 
     // A unit currently waiting at the rally: a live, non-garrison enemy that is holding. Released
     // units (now ORDER.auto) and roof defenders (garrison) don't count.
