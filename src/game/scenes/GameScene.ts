@@ -413,6 +413,7 @@ export class GameScene extends Phaser.Scene {
     }
 
     update(_time: number, delta: number) {
+        this.cameraController.update(delta); // pan inertia glide
         if (!this.gameOver) {
             this.enemyAI.update(delta);
             this.units.update(delta);

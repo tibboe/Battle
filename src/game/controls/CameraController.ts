@@ -17,6 +17,12 @@ export class CameraController {
     private orientation = 0;
     // True while a 90° rotation tween is mid-flight — blocks new rotations (debounce).
     private isRotating = false;
+    // Pan inertia: after a drag is released the camera keeps gliding at the fling velocity
+    // (world scroll units/sec) and decays, so panning eases to a stop instead of cutting dead.
+    private velX = 0;
+    private velY = 0;
+    private gliding = false;
+    private lastMoveAt = 0; // ms timestamp of the last drag move (to measure fling speed)
 
     constructor(scene: Phaser.Scene) {
         this.scene = scene;
@@ -27,6 +33,7 @@ export class CameraController {
         scene.input.addPointer(2);
 
         // Pointer/wheel listeners are scene-scoped, so they're cleaned up on shutdown.
+        scene.input.on('pointerdown', this.onPointerDown, this);
         scene.input.on('pointermove', this.onPointerMove, this);
         scene.input.on('pointerup', this.onPointerUp, this);
         scene.input.on('wheel', this.onWheel, this);
@@ -75,6 +82,7 @@ export class CameraController {
         if (this.cam.zoom < floor) this.cam.setZoom(floor);
 
         this.isRotating = true;
+        this.gliding = false; // a turn takes over the view; drop any pan momentum
         this.userInteracted = true; // a deliberate view change — resize should re-clamp, not re-frame
         this.cam.useBounds = false; // let the spin run unclamped; restored for orientation 0 below
 
@@ -152,13 +160,61 @@ export class CameraController {
             if (dx !== 0 || dy !== 0) this.userInteracted = true;
             const cos = Math.cos(-this.camRotation);
             const sin = Math.sin(-this.camRotation);
-            this.cam.scrollX -= (dx * cos - dy * sin) / this.cam.zoom;
-            this.cam.scrollY -= (dx * sin + dy * cos) / this.cam.zoom;
+            const sdx = -(dx * cos - dy * sin) / this.cam.zoom; // change applied to scrollX
+            const sdy = -(dx * sin + dy * cos) / this.cam.zoom;
+            this.cam.scrollX += sdx;
+            this.cam.scrollY += sdy;
+            // Track the fling speed (world units/sec) from the most recent motion, lightly
+            // smoothed, so releasing the drag can carry it on with momentum.
+            const now = this.scene.time.now;
+            const dt = now - this.lastMoveAt;
+            this.lastMoveAt = now;
+            if (dt > 0 && dt < 100) {
+                this.velX = this.velX * 0.4 + (sdx / (dt / 1000)) * 0.6;
+                this.velY = this.velY * 0.4 + (sdy / (dt / 1000)) * 0.6;
+            }
         }
+    }
+
+    // A new touch grabs the camera — stop any glide so it doesn't fight the finger.
+    private onPointerDown() {
+        this.gliding = false;
+        this.velX = 0;
+        this.velY = 0;
+        this.lastMoveAt = this.scene.time.now;
     }
 
     private onPointerUp() {
         this.pinchDist = 0;
+        // Still touching with another finger (e.g. a pinch) — not a release, don't glide yet.
+        if (this.scene.input.pointer1.isDown || this.scene.input.pointer2.isDown) return;
+        // Glide only if the finger was actually moving at the moment it lifted (a held-still
+        // release, or a tap, should stop dead).
+        const movingAtRelease = this.scene.time.now - this.lastMoveAt < 80;
+        if (movingAtRelease && (this.velX !== 0 || this.velY !== 0)) {
+            this.gliding = true;
+        } else {
+            this.velX = 0;
+            this.velY = 0;
+        }
+    }
+
+    // Per-frame pan inertia: glide on at the released velocity, easing to a stop. Called from
+    // the scene's update loop.
+    update(delta: number) {
+        if (!this.gliding) return;
+        if (this.scene.input.pointer1.isDown) { this.gliding = false; return; } // grabbed again
+        const dt = delta / 1000;
+        this.cam.scrollX += this.velX * dt;
+        this.cam.scrollY += this.velY * dt;
+        const decay = Math.exp(-CONFIG.camera.panGlideDecay * dt);
+        this.velX *= decay;
+        this.velY *= decay;
+        if (Math.hypot(this.velX, this.velY) * this.cam.zoom < CONFIG.camera.panGlideMinPx) {
+            this.gliding = false;
+            this.velX = 0;
+            this.velY = 0;
+        }
     }
 
     private onWheel(pointer: Phaser.Input.Pointer, _objs: unknown, _dx: number, dy: number) {
