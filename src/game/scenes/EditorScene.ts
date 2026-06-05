@@ -1,52 +1,61 @@
 import * as Phaser from 'phaser';
 import { loadTerrainTileset } from '../terrain/tileset';
-import { cellIndex, createEmptyMap, MapData, TileId } from '../editor/MapData';
-import { getTile, TILE_CATALOG, WATER_FILE, WATER_KEY } from '../editor/tileCatalog';
+import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
+import { cellIndex, createEmptyMap, MapData, MapFeature, TileId } from '../editor/MapData';
+import { getTile, makeTileThumb, WATER_KEY } from '../editor/tileCatalog';
+import { TilePalette } from '../editor/TilePalette';
 import { MapStore } from '../editor/MapStore';
 
-// The map editor (foundation slice). Renders a MapData grid, lets the director paint ground
-// tiles (grass / water) cell-by-cell with a toggleable grid overlay, pan/zoom the canvas, and
-// save back to the store. Decorations/features and the hierarchical tile browser come next.
-//
-// Two interaction modes (mobile-friendly): ✏️ Paint — drag to paint cells; ✋ Pan — drag to
-// move the canvas. Pinch / wheel always zoom. Toolbars are screen-fixed; taps inside them
-// never paint.
+// The map editor. Paint GROUND tiles (grass/water) cell-by-cell and place FEATURES (trees,
+// bushes, rocks, …) on top, chosen from a hierarchical palette with thumbnails + a recent
+// row. A toggleable grid overlay, ✏️ Paint / ✋ Pan modes, an eraser, pinch/wheel zoom, and
+// save round it out. The canvas pans/zooms on the main camera; the toolbars are drawn by a
+// separate zoom-1 UI camera so they stay anchored to the screen edges.
 
 const TOP_H = 48;
-const BOTTOM_H = 70;
+const BOTTOM_H = 72;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 4;
+const THUMB = 38;
 
 type Mode = 'paint' | 'pan';
+type ThumbGO = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform & Phaser.GameObjects.Components.Depth;
 
 export class EditorScene extends Phaser.Scene {
     private map!: MapData;
     private ts = 64;
     private cells: (Phaser.GameObjects.Image | null)[] = [];
+    private featureSprites = new Map<number, Phaser.GameObjects.GameObject>();
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
 
     private brush: TileId = 'grass';
+    private erasing = false;
     private mode: Mode = 'paint';
     private gridOn = true;
+    private recent: TileId[] = [];
 
-    // The map canvas (water, cells, grid) lives on `worldLayer`, which the main camera
-    // pans/zooms. The toolbars live on `uiLayer`, drawn by a separate `uiCamera` fixed at
-    // zoom 1 so the camera zoom never shrinks the HUD toward screen-centre (the bug where
-    // the toolbars bunched up in the middle). Mirrors GameScene's main/uiCamera split.
+    // Layer/camera split (see GameScene): world on the main camera, UI on a zoom-1 camera.
     private worldLayer!: Phaser.GameObjects.Layer;
     private uiLayer!: Phaser.GameObjects.Layer;
     private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+    private palette!: TilePalette;
 
-    // Fixed UI we reposition on resize.
-    private ui: Phaser.GameObjects.GameObject[] = [];
-    private statusText!: Phaser.GameObjects.Text;
+    // Toolbar widgets (named, so dynamic recreation never breaks the layout).
+    private topBar!: Phaser.GameObjects.Rectangle;
+    private botBar!: Phaser.GameObjects.Rectangle;
+    private menuBtn!: Phaser.GameObjects.Text;
     private nameText!: Phaser.GameObjects.Text;
+    private saveBtn!: Phaser.GameObjects.Text;
+    private statusText!: Phaser.GameObjects.Text;
+    private activeBg!: Phaser.GameObjects.Rectangle;
+    private activeLabel!: Phaser.GameObjects.Text;
+    private activeThumb: ThumbGO | null = null;
+    private recentSlots: { bg: Phaser.GameObjects.Rectangle; thumb: ThumbGO; id: TileId }[] = [];
+    private eraserBtn!: Phaser.GameObjects.Text;
     private modeBtn!: Phaser.GameObjects.Text;
     private gridBtn!: Phaser.GameObjects.Text;
-    private chips: { id: TileId; bg: Phaser.GameObjects.Rectangle }[] = [];
 
-    // Pinch / pan bookkeeping.
     private pinchDist = 0;
 
     constructor() {
@@ -55,36 +64,37 @@ export class EditorScene extends Phaser.Scene {
 
     preload() {
         loadTerrainTileset(this);
-        this.load.image(WATER_KEY, encodeURI(WATER_FILE));
+        loadEnvironment(this); // water backdrop + tree/bush/rock/… feature art
     }
 
     create(data: { map?: MapData }) {
         this.map = data?.map ?? createEmptyMap();
         this.ts = this.map.tileSize;
         this.cells = new Array(this.map.cols * this.map.rows).fill(null);
+        this.featureSprites.clear();
+        registerEnvironmentAnims(this);
 
         this.cameras.main.setBackgroundColor('#0b1119');
-        this.input.addPointer(2); // enable pinch on the phone
+        this.input.addPointer(2);
 
         this.worldLayer = this.add.layer();
         this.uiLayer = this.add.layer();
 
         this.drawWaterBackdrop();
         this.renderAllCells();
+        this.renderAllFeatures();
         this.drawGridAndBorder();
         this.setupCamera();
         this.buildToolbars();
+        this.palette = new TilePalette(this, this.uiLayer, (id) => this.selectBrush(id));
         this.setupUiCamera();
         this.layoutUI();
 
         this.bindInput();
-
         this.scale.on('resize', this.onResize, this);
         this.events.once('shutdown', () => this.scale.off('resize', this.onResize, this));
     }
 
-    // The UI camera renders only the toolbars (zoom 1, screen-anchored); the main camera
-    // renders only the world. Each ignores the other's layer.
     private setupUiCamera() {
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
         this.cameras.main.ignore(this.uiLayer);
@@ -94,14 +104,17 @@ export class EditorScene extends Phaser.Scene {
     private onResize = () => {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.layoutUI();
+        this.palette.layout();
     };
 
-    // ── rendering ────────────────────────────────────────────────────────────
+    // ── world rendering ────────────────────────────────────────────────────────
     private get mapW() { return this.map.cols * this.ts; }
     private get mapH() { return this.map.rows * this.ts; }
+    private cellCentre(col: number, row: number) {
+        return { x: col * this.ts + this.ts / 2, y: row * this.ts + this.ts / 2 };
+    }
 
     private drawWaterBackdrop() {
-        // Sea under the whole canvas (plus a margin) — open water shows wherever no grass is.
         const pad = this.ts * 2;
         const sea = this.add
             .tileSprite(-pad, -pad, this.mapW + pad * 2, this.mapH + pad * 2, WATER_KEY)
@@ -113,43 +126,76 @@ export class EditorScene extends Phaser.Scene {
     private renderAllCells() {
         for (let row = 0; row < this.map.rows; row++) {
             for (let col = 0; col < this.map.cols; col++) {
-                this.applyCell(col, row, this.map.ground[cellIndex(this.map.cols, col, row)], false);
+                this.setGround(col, row, this.map.ground[cellIndex(this.map.cols, col, row)], false);
             }
         }
     }
 
-    /** Set a cell's tile (data + sprite). `commit` marks the map dirty for the status line. */
-    private applyCell(col: number, row: number, id: TileId, commit = true) {
+    /** Paint one cell's ground tile (data + sprite). */
+    private setGround(col: number, row: number, id: TileId, commit = true) {
         const i = cellIndex(this.map.cols, col, row);
         this.map.ground[i] = id;
         const def = getTile(id);
-        const existing = this.cells[i];
-        if (existing) { existing.destroy(); this.cells[i] = null; }
-        if (def && def.render.kind === 'sprite') {
-            const img = this.add
-                .image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame)
-                .setOrigin(0, 0)
-                .setDepth(0);
+        this.cells[i]?.destroy();
+        this.cells[i] = null;
+        if (def && def.render.kind === 'ground') {
+            const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame)
+                .setOrigin(0, 0).setDepth(0);
             this.worldLayer.add(img);
             this.cells[i] = img;
         }
         if (commit) this.markDirty();
     }
 
+    private renderAllFeatures() {
+        for (const f of this.map.features) this.spawnFeature(f);
+    }
+
+    /** Create the sprite for a stored feature (no data change). */
+    private spawnFeature(f: MapFeature) {
+        const def = getTile(f.tileId);
+        if (!def || def.render.kind !== 'feature') return;
+        const r = def.render;
+        const { x, y } = this.cellCentre(f.col, f.row);
+        const go = r.anim
+            ? this.add.sprite(x, y, r.texture).play(r.anim)
+            : this.add.image(x, y, r.texture);
+        if (go instanceof Phaser.GameObjects.Sprite) go.anims.setProgress(Math.random());
+        go.setOrigin(0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
+        this.worldLayer.add(go);
+        const i = cellIndex(this.map.cols, f.col, f.row);
+        this.featureSprites.get(i)?.destroy();
+        this.featureSprites.set(i, go);
+    }
+
+    private placeFeature(col: number, row: number, id: TileId) {
+        const existing = this.map.features.find((f) => f.col === col && f.row === row);
+        if (existing && existing.tileId === id) return; // already there — avoid drag churn
+        this.map.features = this.map.features.filter((f) => !(f.col === col && f.row === row));
+        const f: MapFeature = { tileId: id, col, row, flipX: Math.random() < 0.5 };
+        this.map.features.push(f);
+        this.spawnFeature(f);
+        this.markDirty();
+    }
+
+    private eraseFeature(col: number, row: number) {
+        const i = cellIndex(this.map.cols, col, row);
+        const before = this.map.features.length;
+        this.map.features = this.map.features.filter((f) => !(f.col === col && f.row === row));
+        this.featureSprites.get(i)?.destroy();
+        this.featureSprites.delete(i);
+        if (this.map.features.length !== before) this.markDirty();
+    }
+
     private drawGridAndBorder() {
         this.grid = this.add.graphics().setDepth(100);
         this.grid.lineStyle(1, 0xffffff, 0.18);
-        for (let c = 0; c <= this.map.cols; c++) {
-            this.grid.lineBetween(c * this.ts, 0, c * this.ts, this.mapH);
-        }
-        for (let r = 0; r <= this.map.rows; r++) {
-            this.grid.lineBetween(0, r * this.ts, this.mapW, r * this.ts);
-        }
+        for (let c = 0; c <= this.map.cols; c++) this.grid.lineBetween(c * this.ts, 0, c * this.ts, this.mapH);
+        for (let r = 0; r <= this.map.rows; r++) this.grid.lineBetween(0, r * this.ts, this.mapW, r * this.ts);
         this.grid.setVisible(this.gridOn);
 
         this.border = this.add.graphics().setDepth(101);
         this.border.lineStyle(2, 0x7fd0ff, 0.9).strokeRect(0, 0, this.mapW, this.mapH);
-
         this.worldLayer.add([this.grid, this.border]);
     }
 
@@ -158,7 +204,6 @@ export class EditorScene extends Phaser.Scene {
         const cam = this.cameras.main;
         const pad = this.ts * 3;
         cam.setBounds(-pad, -pad, this.mapW + pad * 2, this.mapH + pad * 2);
-        // Frame the whole map with a little breathing room.
         const zoom = Math.min(
             this.scale.width / (this.mapW + this.ts * 2),
             (this.scale.height - TOP_H - BOTTOM_H) / (this.mapH + this.ts * 2),
@@ -193,34 +238,37 @@ export class EditorScene extends Phaser.Scene {
     private paintAt(sx: number, sy: number) {
         const cell = this.cellAt(sx, sy);
         if (!cell) return;
-        const i = cellIndex(this.map.cols, cell.col, cell.row);
-        if (this.map.ground[i] === this.brush) return; // no-op, avoid churn
-        this.applyCell(cell.col, cell.row, this.brush);
+        if (this.erasing) { this.eraseFeature(cell.col, cell.row); return; }
+        const def = getTile(this.brush);
+        if (!def) return;
+        if (def.render.kind === 'feature') {
+            this.placeFeature(cell.col, cell.row, this.brush);
+        } else {
+            const i = cellIndex(this.map.cols, cell.col, cell.row);
+            if (this.map.ground[i] !== this.brush) this.setGround(cell.col, cell.row, this.brush);
+        }
     }
 
     private bindInput() {
         this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-            if (this.overToolbar(p.y)) return;
+            if (this.palette.isOpen() || this.overToolbar(p.y)) return;
             if (this.mode === 'paint' && !this.twoFingers()) this.paintAt(p.x, p.y);
         });
 
         this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
+            if (this.palette.isOpen()) return;
             const p1 = this.input.pointer1;
             const p2 = this.input.pointer2;
-
-            if (p1.isDown && p2.isDown) { // pinch zoom (either mode)
+            if (p1.isDown && p2.isDown) {
                 const dist = Phaser.Math.Distance.Between(p1.x, p1.y, p2.x, p2.y);
-                if (this.pinchDist > 0 && dist > 0) {
-                    this.zoomAt(dist / this.pinchDist, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
-                }
+                if (this.pinchDist > 0 && dist > 0) this.zoomAt(dist / this.pinchDist, (p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
                 this.pinchDist = dist;
                 return;
             }
             this.pinchDist = 0;
-
             if (!p.isDown || this.overToolbar(p.y)) return;
             if (this.mode === 'paint') {
-                this.paintAt(p.x, p.y); // drag-paint
+                this.paintAt(p.x, p.y);
             } else {
                 const cam = this.cameras.main;
                 cam.scrollX -= (p.position.x - p.prevPosition.x) / cam.zoom;
@@ -230,111 +278,137 @@ export class EditorScene extends Phaser.Scene {
 
         this.input.on('pointerup', () => { this.pinchDist = 0; });
         this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-            this.zoomAt(dy > 0 ? 0.9 : 1.1, p.x, p.y);
+            if (!this.palette.isOpen()) this.zoomAt(dy > 0 ? 0.9 : 1.1, p.x, p.y);
         });
     }
 
-    private twoFingers() {
-        return this.input.pointer1.isDown && this.input.pointer2.isDown;
-    }
+    private twoFingers() { return this.input.pointer1.isDown && this.input.pointer2.isDown; }
 
     // ── toolbars ───────────────────────────────────────────────────────────--
+    private btn(text: string, bg: string, onTap: () => void) {
+        const t = this.add.text(0, 0, text, {
+            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', backgroundColor: bg, padding: { x: 12, y: 7 },
+        }).setOrigin(0, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
+        t.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) onTap(); });
+        this.uiLayer.add(t);
+        return t;
+    }
+
     private buildToolbars() {
-        const mk = (x: number, y: number, text: string, bg: string, onTap: () => void) => {
-            const t = this.add.text(x, y, text, {
-                fontFamily: 'monospace', fontSize: '15px', color: '#ffffff',
-                backgroundColor: bg, padding: { x: 12, y: 7 },
-            }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(1000).setInteractive({ useHandCursor: true });
-            t.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) onTap(); });
-            this.ui.push(t);
-            return t;
-        };
-
-        // Top bar background + controls.
-        const topBar = this.add.rectangle(0, 0, 10, TOP_H, 0x0e1620, 1).setOrigin(0, 0)
-            .setScrollFactor(0).setDepth(999).setStrokeStyle(1, 0x2a3543);
-        this.ui.push(topBar);
-        mk(0, 0, '← Menu', '#33455a', () => this.scene.start('Menu'));
-        this.nameText = this.add.text(0, 0, this.map.name, {
-            fontFamily: 'monospace', fontSize: '16px', color: '#e8f1ff', fontStyle: 'bold',
-        }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(1000).setInteractive({ useHandCursor: true });
+        // Top bar.
+        this.topBar = this.add.rectangle(0, 0, 10, TOP_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
+        this.menuBtn = this.btn('← Menu', '#33455a', () => this.scene.start('Menu'));
+        this.nameText = this.add.text(0, 0, this.map.name, { fontFamily: 'monospace', fontSize: '16px', color: '#e8f1ff', fontStyle: 'bold' })
+            .setOrigin(0.5, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
         this.nameText.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.rename(); });
-        this.ui.push(this.nameText);
-        mk(0, 0, '💾 Save', '#2a8c4a', () => this.save());
-        this.statusText = this.add.text(0, 0, '', {
-            fontFamily: 'monospace', fontSize: '12px', color: '#8aa0b5',
-        }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(1000);
-        this.ui.push(this.statusText);
+        this.saveBtn = this.btn('💾 Save', '#2a8c4a', () => this.save());
+        this.statusText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#8aa0b5' }).setOrigin(1, 0.5).setDepth(1000);
 
-        // Bottom bar background.
-        const botBar = this.add.rectangle(0, 0, 10, BOTTOM_H, 0x0e1620, 1).setOrigin(0, 0)
-            .setScrollFactor(0).setDepth(999).setStrokeStyle(1, 0x2a3543);
-        this.ui.push(botBar);
+        // Bottom bar.
+        this.botBar = this.add.rectangle(0, 0, 10, BOTTOM_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
+        // Active-brush card → opens the palette.
+        this.activeBg = this.add.rectangle(0, 0, 150, 50, 0x16202c, 1).setOrigin(0, 0.5).setDepth(1000).setStrokeStyle(1, 0x3a4a5a)
+            .setInteractive({ useHandCursor: true });
+        this.activeBg.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.palette.show([]); });
+        this.activeLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#ffffff' }).setOrigin(0, 0.5).setDepth(1001);
 
-        // Brush chips (one per ground tile in the catalog).
-        for (const def of TILE_CATALOG) {
-            const bg = this.add.rectangle(0, 0, 96, 40, def.swatch, 1).setOrigin(0, 0.5)
-                .setScrollFactor(0).setDepth(1000).setStrokeStyle(2, 0x000000, 0.3)
-                .setInteractive({ useHandCursor: true });
-            const lbl = this.add.text(0, 0, def.label, {
-                fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', fontStyle: 'bold',
-            }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(1001);
-            bg.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectBrush(def.id); });
-            this.chips.push({ id: def.id, bg });
-            this.ui.push(bg, lbl);
-            // Keep the label paired with its chip for layout.
-            (bg as Phaser.GameObjects.Rectangle & { _lbl?: Phaser.GameObjects.Text })._lbl = lbl;
-        }
+        this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
+        this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
+        this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
 
-        this.modeBtn = mk(0, 0, '✏️ Paint', '#4a5a33', () => this.toggleMode());
-        this.gridBtn = mk(0, 0, '# Grid', '#33455a', () => this.toggleGrid());
+        this.uiLayer.add([this.topBar, this.nameText, this.statusText, this.botBar, this.activeBg, this.activeLabel]);
 
-        // Hand the whole toolbar to the UI layer so only the uiCamera draws it.
-        this.uiLayer.add(this.ui);
-
-        this.refreshBrushHighlight();
+        this.refreshActive();
     }
 
     private layoutUI = () => {
         const w = this.scale.width;
         const h = this.scale.height;
-        const cy = TOP_H / 2;
-        const find = (i: number) => this.ui[i] as Phaser.GameObjects.Text;
+        const tcy = TOP_H / 2;
+        this.topBar.setPosition(0, 0).setSize(w, TOP_H);
+        this.menuBtn.setPosition(8, tcy);
+        this.nameText.setPosition(w / 2, tcy);
+        this.saveBtn.setPosition(w - 220, tcy);
+        this.statusText.setPosition(w - 10, tcy);
 
-        // ui order: [topBar, Menu, nameText, Save, statusText, botBar, chip0,lbl0, chip1,lbl1, ..., modeBtn, gridBtn]
-        const topBar = this.ui[0] as Phaser.GameObjects.Rectangle;
-        topBar.setPosition(0, 0).setSize(w, TOP_H);
-        find(1).setPosition(8, cy);                       // Menu
-        this.nameText.setPosition(w / 2, cy);
-        const save = find(3); save.setPosition(w - 230, cy);
-        this.statusText.setPosition(w - 10, cy);
-
-        const botBar = this.ui[5] as Phaser.GameObjects.Rectangle;
-        botBar.setPosition(0, h - BOTTOM_H).setSize(w, BOTTOM_H);
         const by = h - BOTTOM_H / 2;
-        let x = 10;
-        for (const chip of this.chips) {
-            chip.bg.setPosition(x, by);
-            const lbl = (chip.bg as Phaser.GameObjects.Rectangle & { _lbl?: Phaser.GameObjects.Text })._lbl;
-            lbl?.setPosition(x + 48, by);
-            x += 104;
+        this.botBar.setPosition(0, h - BOTTOM_H).setSize(w, BOTTOM_H);
+        this.activeBg.setPosition(10, by);
+        this.activeThumb?.setPosition(10 + 25, by);
+        this.activeLabel.setPosition(10 + 48, by);
+
+        // Recent thumbnails after the active card.
+        let rx = 176;
+        for (const slot of this.recentSlots) {
+            slot.bg.setPosition(rx, by);
+            slot.thumb.setPosition(rx + 22, by);
+            rx += 52;
         }
-        this.modeBtn.setPosition(w - 200, by).setOrigin(0, 0.5);
+
         this.gridBtn.setPosition(w - 90, by).setOrigin(0, 0.5);
+        this.modeBtn.setPosition(w - 200, by).setOrigin(0, 0.5);
+        this.eraserBtn.setPosition(w - 320, by).setOrigin(0, 0.5);
     };
 
-    // ── actions ────────────────────────────────────────────────────────────--
+    // ── selection / brush ────────────────────────────────────────────────────
     private selectBrush(id: TileId) {
         this.brush = id;
-        this.refreshBrushHighlight();
+        this.erasing = false;
+        this.recent = [id, ...this.recent.filter((x) => x !== id)].slice(0, 8);
+        this.refreshActive();
+        this.refreshEraserStyle();
+        this.refreshRecent();
     }
 
-    private refreshBrushHighlight() {
-        for (const chip of this.chips) {
-            const active = chip.id === this.brush;
-            chip.bg.setStrokeStyle(active ? 3 : 2, active ? 0xffffff : 0x000000, active ? 1 : 0.3);
-            chip.bg.setScale(active ? 1.0 : 0.92);
+    private refreshActive() {
+        this.activeThumb?.destroy();
+        this.activeThumb = null;
+        if (this.erasing) {
+            this.activeLabel.setText('Eraser');
+            const x = this.add.text(0, 0, '✕', { fontSize: '22px', color: '#ff9a9a' }).setOrigin(0.5).setDepth(1001);
+            this.uiLayer.add(x);
+            this.activeThumb = x as unknown as ThumbGO;
+        } else {
+            const def = getTile(this.brush);
+            this.activeLabel.setText(def?.label ?? this.brush);
+            if (def) {
+                const t = makeTileThumb(this, def, THUMB) as ThumbGO;
+                t.setDepth(1001);
+                this.uiLayer.add(t);
+                this.activeThumb = t;
+            }
         }
+        this.layoutUI();
+    }
+
+    private refreshRecent() {
+        for (const s of this.recentSlots) { s.bg.destroy(); s.thumb.destroy(); }
+        this.recentSlots = [];
+        const show = this.recent.filter((id) => id !== this.brush).slice(0, 4);
+        for (const id of show) {
+            const def = getTile(id);
+            if (!def) continue;
+            const bg = this.add.rectangle(0, 0, 44, 44, 0x16202c, 1).setOrigin(0.5).setDepth(1000).setStrokeStyle(1, 0x2a3543)
+                .setInteractive({ useHandCursor: true });
+            bg.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectBrush(id); });
+            const thumb = makeTileThumb(this, def, THUMB) as ThumbGO;
+            thumb.setDepth(1001);
+            this.uiLayer.add([bg, thumb]);
+            this.recentSlots.push({ bg, thumb, id });
+        }
+        this.layoutUI();
+    }
+
+    // ── toggles / actions ────────────────────────────────────────────────────
+    private toggleEraser() {
+        this.erasing = !this.erasing;
+        this.refreshEraserStyle();
+        this.refreshActive();
+    }
+
+    private refreshEraserStyle() {
+        this.eraserBtn.setText(this.erasing ? '🩹 Erasing' : '🩹 Erase');
+        this.eraserBtn.setBackgroundColor(this.erasing ? '#6a3a3a' : '#33455a');
     }
 
     private toggleMode() {
@@ -350,8 +424,7 @@ export class EditorScene extends Phaser.Scene {
     }
 
     private markDirty() {
-        this.statusText.setText('● unsaved');
-        this.statusText.setColor('#ffcf6a');
+        this.statusText.setText('● unsaved').setColor('#ffcf6a');
     }
 
     private rename() {
@@ -366,10 +439,7 @@ export class EditorScene extends Phaser.Scene {
     private async save() {
         this.statusText.setText('saving…').setColor('#8aa0b5');
         const res = await MapStore.save(this.map);
-        if (res.server) {
-            this.statusText.setText('✓ saved (server)').setColor('#8fe388');
-        } else {
-            this.statusText.setText('✓ saved (local only)').setColor('#ffcf6a');
-        }
+        this.statusText.setText(res.server ? '✓ saved (server)' : '✓ saved (local only)')
+            .setColor(res.server ? '#8fe388' : '#ffcf6a');
     }
 }
