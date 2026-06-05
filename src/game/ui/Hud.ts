@@ -39,7 +39,8 @@ export interface HudData {
     enemy: ResourceBag;
     playerHp: number;
     enemyHp: number;
-    maxHp: number;
+    playerMaxHp: number;     // your Castle's max (grows with the Fortify perk)
+    enemyMaxHp: number;
     playerLevel: number;     // current player level (1+)
     playerXp: number;        // XP banked toward the next level
     playerXpForLevel: number; // XP required to leave the current level
@@ -85,6 +86,7 @@ export class Hud {
     private xpBar!: Bar;
     private fitBtn!: Phaser.GameObjects.Text;
     private devBtn!: Phaser.GameObjects.Text;
+    private levelsBtn!: Phaser.GameObjects.Text;
     private debug!: Phaser.GameObjects.Text;
 
     private devOnState: boolean;
@@ -96,6 +98,7 @@ export class Hud {
         onDev: (on: boolean) => void,
         onFocus: (res: ResourceType) => void,
         onFocusClear: () => void,
+        onLevels: () => void,
     ) {
         this.scene = scene;
         this.layer = layer;
@@ -111,6 +114,7 @@ export class Hud {
 
         this.fitBtn = this.mkButton('⤢ Fit', onFit);
         this.devBtn = this.mkButton('🛠 Dev', () => this.setDev(!this.devOnState));
+        this.levelsBtn = this.mkButton('📜 Perks', onLevels);
 
         this.debug = scene.add.text(0, 0, '', {
             fontFamily: 'monospace', fontSize: '13px', color: '#9fb3c8',
@@ -213,8 +217,8 @@ export class Hud {
             this.queueText.setText('→ ' + shown + (q.length > 10 ? ` +${q.length - 10}` : ''));
         }
 
-        this.setBar(this.playerBar, d.playerHp, d.maxHp);
-        this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
+        this.setBar(this.playerBar, d.playerHp, d.playerMaxHp);
+        this.setBar(this.enemyBar, d.enemyHp, d.enemyMaxHp);
 
         // XP bar: level on the label, XP/next as the value, fill = progress through the level.
         this.xpBar.fill.scaleX = Phaser.Math.Clamp(d.playerXpForLevel > 0 ? d.playerXp / d.playerXpForLevel : 0, 0, 1);
@@ -259,9 +263,10 @@ export class Hud {
         const endX = bx + 4 + queueW + 4 + 14;
         this.resBg.setPosition(8, 8).setSize(endX - 8, 40);
 
-        // Top-right buttons: Fit, then Dev to its left.
+        // Top-right buttons: Fit, then Dev, then Perks to their left.
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);
         this.devBtn.setPosition(this.fitBtn.x - this.devBtn.width - 8, 8);
+        this.levelsBtn.setPosition(this.devBtn.x - this.levelsBtn.width - 8, 8);
 
         // Castle bars on row 2: yours left, enemy right. The XP/level bar sits in the gap
         // between them (top-centre) so it's always visible and clear of the dev panels,

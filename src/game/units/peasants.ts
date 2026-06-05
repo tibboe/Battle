@@ -5,6 +5,7 @@ import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
 import { Buildings, ConstructionSite } from '../structures/buildings';
 import { peasantCarryBonus, peasantFleeBurst, peasantSpeedBonus } from '../upgrades';
+import { luPeasantCarry, luPeasantSpeed } from '../progression/LevelUpgrades';
 
 // Peasants (Milestone 4) — the repurposed Pawn, now a pure WORKER, kept deliberately apart
 // from the optimized combat UnitManager. There are only a handful per side, so each is a
@@ -372,7 +373,7 @@ export class PeasantManager {
                 p.timer += delta;
                 if (p.timer >= CONFIG.peasant.gatherTime) {
                     const want = CONFIG.peasant.carryAmount
-                        + (p.faction === FACTION.player ? peasantCarryBonus() : 0);
+                        + (p.faction === FACTION.player ? peasantCarryBonus() + luPeasantCarry() : 0);
                     const got = this.nodes.harvest(p.node, want);
                     if (got <= 0) { p.state = State.Seek; p.node = undefined; break; }
                     p.carrying = got;
@@ -467,7 +468,7 @@ export class PeasantManager {
     // Effective walk speed: base + the player's worker-speed upgrade, ×burst while fleeing.
     private speedOf(p: Peasant): number {
         let s = CONFIG.peasant.moveSpeed;
-        if (p.faction === FACTION.player) s += peasantSpeedBonus();
+        if (p.faction === FACTION.player) s += peasantSpeedBonus() + luPeasantSpeed();
         if (p.burst > 0) s *= CONFIG.abilities.peasantFlee.mult;
         return s;
     }

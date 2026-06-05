@@ -1,6 +1,9 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
+import {
+    luArmourMult, luMonkAoe, luMonkHeal, luUnitCrit, luUnitDamage, luUnitHp, luUnitRange, luUnitSpeed,
+} from '../progression/LevelUpgrades';
 import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
 import { matchStats } from '../stats/MatchStats';
@@ -339,15 +342,16 @@ export class UnitManager {
     recomputeUpgrades() {
         for (let t = 0; t < this.nTypes; t++) {
             const key = this.typeKey[t];
-            const r = CONFIG.unitTypes[t].range + rangeBonusFor(key);
-            this.pHpBonus[t] = hpBonusFor(key);
+            // Building-purchased upgrades + stacking level-up perks add together.
+            const r = CONFIG.unitTypes[t].range + rangeBonusFor(key) + luUnitRange(key);
+            this.pHpBonus[t] = hpBonusFor(key) + luUnitHp(key);
             this.pRange2[t] = r * r;
             this.pReach2[t] = (r + 8) * (r + 8);
-            this.pDamageBonus[t] = damageBonusFor(key);
-            this.pCritChance[t] = critChanceFor(key);
-            this.pHealAoe[t] = healAoeFor(key);
+            this.pDamageBonus[t] = damageBonusFor(key) + luUnitDamage(key);
+            this.pCritChance[t] = Math.min(CONFIG.levelUp.critCap, critChanceFor(key) + luUnitCrit(key));
+            this.pHealAoe[t] = healAoeFor(key) || (key === 'monk' && luMonkAoe()) ? 1 : 0;
         }
-        this.pArmourMult = armourMult();
+        this.pArmourMult = armourMult() * luArmourMult();
     }
 
     // Archer special: begin a long shot — pick a far enemy (beyond normal reach), then STOP and
@@ -471,7 +475,7 @@ export class UnitManager {
     private areaHeal(healer: number, acting: number) {
         const f = this.faction[healer];
         const r2 = this.typeRange2[acting];
-        const amt = this.typeHealAmount[acting];
+        const amt = this.typeHealAmount[acting] + (f === FACTION.player ? luMonkHeal() : 0);
         const xi = this.x[healer];
         const yi = this.y[healer];
         for (let j = 0; j < this.count; j++) {
@@ -682,7 +686,8 @@ export class UnitManager {
 
         this.x[i] = x;
         this.y[i] = yClamped;
-        this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
+        const baseSpeed = this.typeMoveSpeed[t] + (faction === FACTION.player ? luUnitSpeed() : 0);
+        this.speed[i] = baseSpeed * Phaser.Math.FloatBetween(0.9, 1.1);
         const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
         this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
         this.faction[i] = faction;
@@ -1075,7 +1080,8 @@ export class UnitManager {
                         const dy = this.y[t] - this.y[i];
                         if (dx * dx + dy * dy <= this.typeRange2[acting]) {
                             this.attackCd[i] += this.typeHealInterval[acting];
-                            const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
+                            const healAmt = this.typeHealAmount[acting] + (f === FACTION.player ? luMonkHeal() : 0);
+                            const healed = Math.min(healAmt, maxHp - this.hp[t]);
                             this.hp[t] += healed;
                             if (healed > 0) {
                                 this.healFlash(t);

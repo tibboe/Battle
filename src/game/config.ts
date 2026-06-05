@@ -152,6 +152,30 @@ export const CONFIG = {
         growth: 1.5, // each level needs this × the previous level's requirement
     },
 
+    // Level-up perk magnitudes (the "choose 1 of 3 on level-up" draft). Each perk STACKS:
+    // its effect = (perk's chosen level) × the per-level value below. Player-only and per-match
+    // (reset each battle). The perk catalog (names/descriptions/caps) lives in
+    // progression/LevelUpgrades.ts; only the numbers live here so they stay tunable.
+    levelUp: {
+        meleeAtk: 2,       // +damage per level, melee units (warrior, lancer)
+        rangedAtk: 2,      // +damage per level, archers
+        warriorHp: 8,      // +max HP per level, warriors
+        archerRange: 40,   // +engage range (px) per level, archers
+        lancerCrit: 0.08,  // +crit chance per level, lancers (also enables crit)
+        critCap: 0.85,     // hard ceiling on total crit chance
+        monkHeal: 3,       // +heal per level, monks (level 1 also makes the heal hit an area)
+        armourMult: 0.92,  // incoming damage ×this per level (multiplicative, all your units)
+        moveSpeed: 6,      // +move speed (px/s) per level, all combat units (applied at spawn)
+        peasantCarry: 4,   // +resources carried per trip per level
+        peasantSpeed: 18,  // +peasant move speed (px/s) per level
+        volleyArrows: 12,  // +Arrow Volley arrows per level
+        volleyCdCut: 1000, // −Arrow Volley cooldown (ms) per level
+        mercCount: 1,      // +Mercenaries hired per level
+        mercCdCut: 2000,   // −Mercenaries cooldown (ms) per level
+        keepHp: 120,       // +Castle max HP per level (repairs by the same on pick)
+        bulwark: 4,        // −Castle damage per breaching enemy per level
+    },
+
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in
     // terrain/tileset.ts; swap the loaded variant there (Tilemap_color1..5) to recolour.
     terrain: {

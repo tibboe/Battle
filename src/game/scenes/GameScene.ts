@@ -12,6 +12,10 @@ import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { PeasantManager, loadPeasants, registerPeasantAnimations } from '../units/peasants';
 import { ResourceStore } from '../economy/ResourceStore';
 import { PlayerLevel } from '../progression/PlayerLevel';
+import {
+    choosePerk, draftPerks, luBulwark, luKeepHpBonus, perkLevel, resetPerks,
+} from '../progression/LevelUpgrades';
+import { LevelUpModal, UpgradesPanel } from '../ui/LevelUp';
 import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
@@ -45,6 +49,9 @@ export class GameScene extends Phaser.Scene {
     private hud!: Hud;
     private resources!: ResourceStore;
     private playerLevel!: PlayerLevel; // per-match XP/leveling (fresh each match)
+    private levelUpModal!: LevelUpModal;   // the "choose 1 of 3" draft (pauses the battle)
+    private upgradesPanel!: UpgradesPanel; // the review screen (list of chosen perks)
+    private levelUpQueue = 0;              // pending level-up choices (≥1 means the battle is paused)
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
@@ -64,6 +71,7 @@ export class GameScene extends Phaser.Scene {
 
     private playerKeepHp: number = CONFIG.keep.hp;
     private enemyKeepHp: number = CONFIG.keep.hp;
+    private playerKeepMaxHp: number = CONFIG.keep.hp; // grows with the Fortify perk
     private gameOver = false;
     private lastResRev = -1; // last resource revision the HUD/menus rendered
 
@@ -114,6 +122,7 @@ export class GameScene extends Phaser.Scene {
             (on) => this.setDevTools(on),
             (res) => this.peasants.enqueueFocus(FACTION.player, res),
             () => this.peasants.clearFocus(FACTION.player),
+            () => this.upgradesPanel.toggle(this.playerLevel.level),
         );
 
         // Dev tuning panel (test tool) — edits CONFIG live; structural changes restart.
@@ -125,6 +134,9 @@ export class GameScene extends Phaser.Scene {
 
         // Per-match player progression (XP from kills → levels). Fresh each match.
         this.playerLevel = new PlayerLevel();
+        // Level-up perk overlays: the draft modal (pauses on pick) and the review panel.
+        this.levelUpModal = new LevelUpModal(this, this.uiLayer, (key) => this.onPickPerk(key));
+        this.upgradesPanel = new UpgradesPanel(this, this.uiLayer);
 
         // Both keeps spawn a horde; units that reach the far keep damage it.
         this.units = new UnitManager(
@@ -145,6 +157,7 @@ export class GameScene extends Phaser.Scene {
         // per-match, so clear any carried-over ownership at the start of each match.
         this.resources = new ResourceStore();
         resetUpgrades();
+        resetPerks(); // level-up perks are per-match, like the building upgrades
 
         // Buildings: the Castle keeps, each side's starting buildings, and the empty build slots.
         // Tapping a player building/slot selects it; the SelectionHud (below) shows its options.
@@ -249,18 +262,54 @@ export class GameScene extends Phaser.Scene {
             this.enemyKeepHp = Math.max(0, this.enemyKeepHp - CONFIG.keep.damagePerUnit);
             if (this.enemyKeepHp === 0) this.endGame(true);
         } else {
-            this.playerKeepHp = Math.max(0, this.playerKeepHp - CONFIG.keep.damagePerUnit);
+            // The Iron Gate perk softens each breach against your Castle (min 1 damage).
+            const dmg = Math.max(1, CONFIG.keep.damagePerUnit - luBulwark());
+            this.playerKeepHp = Math.max(0, this.playerKeepHp - dmg);
             if (this.playerKeepHp === 0) this.endGame(false);
         }
     }
 
-    // A unit died: if it was an enemy, the player earns its experience. Crossing a level
-    // threshold pops a "LEVEL UP!" at the kill. (Future level-up rewards attach here.)
+    // A unit died: if it was an enemy, the player earns its experience. Each level gained
+    // queues a perk-draft choice; the queue pauses the battle until it's emptied.
     private onUnitKilled(faction: Faction, type: number, x: number, y: number) {
         if (this.gameOver || faction !== FACTION.enemy) return;
         const xp = CONFIG.unitTypes[type].xp ?? 0;
         const levels = this.playerLevel.gain(xp);
-        if (levels > 0) this.floatingText.pop(x, y, 'LEVEL UP!', '#ffe08a');
+        if (levels > 0) {
+            this.floatingText.pop(x, y, 'LEVEL UP!', '#ffe08a');
+            this.levelUpQueue += levels;
+            if (!this.levelUpModal.isOpen) this.openNextLevelUp();
+        }
+    }
+
+    // True while a level-up choice is pending — the battle is frozen behind the modal.
+    private get isLevelUpPaused(): boolean {
+        return this.levelUpQueue > 0;
+    }
+
+    // Present the next pending level-up draft (3 random non-maxed perks).
+    private openNextLevelUp() {
+        if (this.levelUpQueue <= 0) return;
+        // The level this particular choice corresponds to (handles multi-level kills in order).
+        const forLevel = this.playerLevel.level - this.levelUpQueue + 1;
+        const perks = draftPerks(3).map((def) => ({ def, level: perkLevel(def.key) }));
+        if (perks.length === 0) { this.levelUpQueue = 0; return; } // everything maxed — resume
+        this.levelUpModal.open(forLevel, perks);
+    }
+
+    // The player picked a perk: apply it, recompute dependent stats, then advance/close the queue.
+    private onPickPerk(key: string) {
+        choosePerk(key);
+        this.units.recomputeUpgrades(); // fold the new perk level into unit stat bonuses
+
+        // Fortify raises the Castle's max HP and repairs it by the same amount on each pick.
+        const newMax = CONFIG.keep.hp + luKeepHpBonus();
+        this.playerKeepHp += Math.max(0, newMax - this.playerKeepMaxHp);
+        this.playerKeepMaxHp = newMax;
+
+        this.levelUpModal.close();
+        this.levelUpQueue = Math.max(0, this.levelUpQueue - 1);
+        if (this.levelUpQueue > 0) this.openNextLevelUp(); // more levels banked — keep drafting
     }
 
     private endGame(playerWon: boolean) {
@@ -396,7 +445,9 @@ export class GameScene extends Phaser.Scene {
     }
 
     update(_time: number, delta: number) {
-        if (!this.gameOver) {
+        // The battle freezes while a level-up choice is pending (the modal is up).
+        const frozen = this.gameOver || this.isLevelUpPaused;
+        if (!frozen) {
             this.enemyAI.update(delta);
             this.units.update(delta);
             matchStats.tickPeak(this.units.livingCount(FACTION.player), this.units.livingCount(FACTION.enemy));
@@ -404,7 +455,7 @@ export class GameScene extends Phaser.Scene {
             this.peasants.update(delta);
             this.buildings.update(delta);
         }
-        if (!this.gameOver) this.abilities.update(delta);
+        if (!frozen) this.abilities.update(delta);
         this.floatingText.update(delta);
         this.projectiles.update(delta);
         this.unitPanel.update();
@@ -429,7 +480,8 @@ export class GameScene extends Phaser.Scene {
             enemy: this.resources.bag(FACTION.enemy),
             playerHp: this.playerKeepHp,
             enemyHp: this.enemyKeepHp,
-            maxHp: CONFIG.keep.hp,
+            playerMaxHp: this.playerKeepMaxHp,
+            enemyMaxHp: CONFIG.keep.hp,
             playerLevel: this.playerLevel.level,
             playerXp: this.playerLevel.xpIntoLevel,
             playerXpForLevel: this.playerLevel.xpForLevel(this.playerLevel.level),
