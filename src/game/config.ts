@@ -64,6 +64,10 @@ export interface UnitType {
     // Food paid to TRAIN one of this unit (deducted when its production countdown starts;
     // refunded if the building is disabled mid-train). 0/undefined = free.
     foodCost?: number;
+    // "Combat weight" used by the enemy muster system: a gathered enemy force launches its
+    // attack once the points of the units waiting at its rally cross the threshold. Pricier
+    // units (lancer/monk) are worth more. Player units ignore this. Undefined = 1.
+    points?: number;
     // Innate special ability: 'knockback' | 'longshot' | 'block' (upgrades may extend it).
     ability?: string;
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
@@ -125,16 +129,16 @@ export const CONFIG = {
     // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
     // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4,
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4, points: 2,
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5,
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5, points: 3,
           hp: 46, damage: 14, range: 140, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
-        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4,
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4, points: 2,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
-        { key: 'monk', art: 'monk', role: 'support', foodCost: 6,
+        { key: 'monk', art: 'monk', role: 'support', foodCost: 6, points: 3,
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
           weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
@@ -264,6 +268,19 @@ export const CONFIG = {
     enemyAI: {
         decideEvery: 800,
         buildOrder: ['barracks', 'archery', 'tower', 'monastery', 'barracks'],
+
+        // Muster (gather-then-charge): instead of trickling units forward as they spawn, the
+        // enemy holds each new unit at a rally point just ahead of its keep and only LAUNCHES
+        // the gathered force once their combined `points` (see unitTypes.points) cross the
+        // threshold. The bar rises by `growth` after every wave released, so as the enemy adds
+        // producers its attacks stay big instead of dribbling. `enabled: false` restores the
+        // old steady stream. `startThreshold` / `growth` are live Dev knobs (Enemy section).
+        muster: {
+            enabled: true,
+            startThreshold: 12,  // points needed to launch the first wave
+            growth: 6,           // added to the threshold after each wave released
+            rallyClearance: 90,  // px of gap between the front of the building grid and the rally
+        },
     },
 
     // ── Economy (Milestone 4) ───────────────────────────────────────────────────────────
