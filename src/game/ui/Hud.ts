@@ -268,15 +268,26 @@ export class Hud {
         this.devBtn.setPosition(this.fitBtn.x - this.devBtn.width - 8, 8);
         this.levelsBtn.setPosition(this.devBtn.x - this.levelsBtn.width - 8, 8);
 
-        // Castle bars on row 2: yours left, enemy right. The XP/level bar sits in the gap
-        // between them (top-centre) so it's always visible and clear of the dev panels,
-        // which occupy the left/right columns from ~y92 down.
+        // Castle bars on row 2: yours left, enemy right.
         this.placeBar(this.playerBar, 10, 50);
         this.placeBar(this.enemyBar, w - 10 - BAR_W, 50);
-        this.placeBar(this.xpBar, Math.round((w - BAR_W) / 2), 50);
 
-        // Debug line bottom-left (dev only).
-        this.debug.setPosition(10, h - this.debug.height - 10).setVisible(this.devOnState);
+        // XP/level bar: a full-width strip flush against the very bottom of the screen. The
+        // command/selection bars (also bottom-pinned) cover it only while you're commanding.
+        this.placeXpBar(w, h);
+
+        // Debug line bottom-left (dev only). Sits just above the XP strip.
+        this.debug.setPosition(10, h - BAR_H - this.debug.height - 8).setVisible(this.devOnState);
+    }
+
+    // Stretch the XP bar across the full width at the bottom edge: level on the left, xp/next
+    // centred. The fill keeps its scaleX (set in update) so it still grows from the left.
+    private placeXpBar(w: number, h: number) {
+        const top = h - BAR_H;
+        this.xpBar.bg.setPosition(0, top).setSize(w, BAR_H);
+        this.xpBar.fill.setPosition(2, top + 2).setSize(w - 4, BAR_H - 4);
+        this.xpBar.label.setOrigin(0, 0.5).setPosition(10, top + BAR_H / 2);
+        this.xpBar.value.setPosition(w / 2, top + BAR_H / 2);
     }
 
     private placeBar(bar: Bar, x: number, topY: number) {
