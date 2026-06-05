@@ -47,6 +47,17 @@ try {
         (created_at, started_at, ended_at, duration_ms, winner, player_keep_hp, enemy_keep_hp,
          player_produced, enemy_produced, player_kills, enemy_kills, summary)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`);
+
+    // Editor maps: the full MapData JSON keyed by its client-generated id, plus a few columns
+    // pulled out for the browser list. Upsert on save so editing an existing map overwrites it.
+    db.exec(`CREATE TABLE IF NOT EXISTS maps (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        cols INTEGER, rows INTEGER,
+        data TEXT NOT NULL
+    )`);
     console.log(`[stats] SQLite ready at ${DB_PATH}`);
 } catch (err) {
     console.error('[stats] SQLite unavailable — stats will not persist:', err?.message ?? err);
@@ -62,6 +73,35 @@ function saveMatch(s) {
         pf.unitsProduced ?? null, ef.unitsProduced ?? null, pf.kills ?? null, ef.kills ?? null,
         JSON.stringify(s),
     );
+    return true;
+}
+
+// ---- editor maps (best-effort, mirror of the client store) ------------------
+function saveMap(m) {
+    if (!db || !m || typeof m.id !== 'string') return false;
+    db.prepare(`INSERT INTO maps (id, name, created_at, updated_at, cols, rows, data)
+        VALUES (?,?,?,?,?,?,?)
+        ON CONFLICT(id) DO UPDATE SET
+            name=excluded.name, updated_at=excluded.updated_at,
+            cols=excluded.cols, rows=excluded.rows, data=excluded.data`).run(
+        m.id, m.name ?? 'Untitled Map', m.createdAt ?? new Date().toISOString(),
+        m.updatedAt ?? new Date().toISOString(), m.cols ?? 0, m.rows ?? 0, JSON.stringify(m),
+    );
+    return true;
+}
+function listMaps() {
+    if (!db) return [];
+    return db.prepare('SELECT id, name, cols, rows, updated_at FROM maps ORDER BY updated_at DESC').all()
+        .map((r) => ({ id: r.id, name: r.name, cols: r.cols, rows: r.rows, updatedAt: r.updated_at }));
+}
+function getMap(id) {
+    if (!db) return null;
+    const row = db.prepare('SELECT data FROM maps WHERE id = ?').get(id);
+    return row ? JSON.parse(row.data) : null;
+}
+function deleteMap(id) {
+    if (!db) return false;
+    db.prepare('DELETE FROM maps WHERE id = ?').run(id);
     return true;
 }
 
@@ -147,6 +187,33 @@ const server = createServer(async (req, res) => {
             AVG(enemy_produced) AS avg_enemy_produced
         FROM matches`).get();
         return json(res, 200, agg);
+    }
+
+    // ---- editor maps API ----
+    if (url.pathname === '/api/maps' && req.method === 'GET') {
+        return json(res, 200, { maps: listMaps() });
+    }
+    if (url.pathname === '/api/maps' && req.method === 'POST') {
+        try {
+            const map = JSON.parse(await readBody(req));
+            const stored = saveMap(map);
+            json(res, stored ? 200 : 200, { ok: true, stored });
+        } catch (err) {
+            json(res, 400, { ok: false, error: String(err?.message ?? err) });
+        }
+        return;
+    }
+    if (url.pathname.startsWith('/api/maps/')) {
+        const id = decodeURIComponent(url.pathname.slice('/api/maps/'.length));
+        if (req.method === 'GET') {
+            const map = getMap(id);
+            if (!map) { res.writeHead(404); res.end('Not found'); return; }
+            return json(res, 200, map);
+        }
+        if (req.method === 'DELETE') {
+            deleteMap(id);
+            return json(res, 200, { ok: true });
+        }
     }
 
     if (req.method === 'GET' || req.method === 'HEAD') return serveStatic(req, res);

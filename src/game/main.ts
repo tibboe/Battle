@@ -1,6 +1,9 @@
 import { AUTO, Game, Scale, Types } from 'phaser';
+import { MenuScene } from './scenes/MenuScene';
 import { SetupScene } from './scenes/SetupScene';
 import { GameScene } from './scenes/GameScene';
+import { MapBrowserScene } from './scenes/MapBrowserScene';
+import { EditorScene } from './scenes/EditorScene';
 import { applySavedSettings } from './settings';
 
 // Single-scene game that fills the browser window (landscape on the phone). The
@@ -17,8 +20,8 @@ const config: Types.Core.GameConfig = {
     },
     // Pixel-art friendly: no smoothing when we zoom into sprites later.
     pixelArt: true,
-    // The pre-game Setup screen runs first; it launches the battle on "Start".
-    scene: [SetupScene, GameScene],
+    // The launch Menu runs first: Play → Setup → Game, or Map Editor → MapBrowser → Editor.
+    scene: [MenuScene, SetupScene, GameScene, MapBrowserScene, EditorScene],
 };
 
 const StartGame = (parent: string) => {

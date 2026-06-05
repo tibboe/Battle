@@ -22,6 +22,21 @@ health bars). The next milestone, **`MILESTONE_5.md` (Siege & Base Assault — d
 repair, sackable production buildings)**, is specced but **not started** — don't build it until
 told.
 
+**Map editor (IN PROGRESS, branch `claude/map-editor-mode-EIxtX` — foundation slice only):**
+A separate authoring mode for hand-building reusable miniature maps (eventual seeds for a world
+generator). What exists so far: a **launch `MenuScene`** (Play → Setup → Game, or Map Editor →
+MapBrowser → Editor); a **`MapData`** per-cell grid model (`editor/MapData.ts`) — the thing the
+procedural battlefield never had; a **tile catalog** (`editor/tileCatalog.ts`) whose `category`
+paths are the backbone of the future hierarchical browser; a **`MapBrowserScene`** (new / open /
+delete saved maps); and an **`EditorScene`** that paints **grass/water** cell-by-cell (manual
+stamp), with a **toggleable grid overlay**, ✏️ Paint / ✋ Pan modes, pinch-zoom, and Save. Maps
+persist to the **Node/SQLite server** (`/api/maps` CRUD in `server/index.mjs`) and mirror to
+**localStorage** (`lanebreaker.maps.v1`) so the editor also works under plain `npm run dev`.
+**Not yet built (next slices):** the recent-4 + hierarchical tile *browser* with thumbnails/
+descriptions, **features** (trees/bushes/rocks/cliffs as free-placed decorations), eraser/fill/
+undo, gameplay anchors (lane/keeps/spawns), edge sockets, and the world generator that stitches
+saved chunks together.
+
 **Since M4 (built on the `claude/nice-cori-bfiSA` branch — the current playable state):**
 - **Player skills** — a left-edge skill dock with cooldowns: **Arrow Volley** (rain arrows on a
   point) and **Mercenaries** (hire archers at a tapped point for gold). Generic targeting
