@@ -30,6 +30,14 @@ export class EditorScene extends Phaser.Scene {
     private mode: Mode = 'paint';
     private gridOn = true;
 
+    // The map canvas (water, cells, grid) lives on `worldLayer`, which the main camera
+    // pans/zooms. The toolbars live on `uiLayer`, drawn by a separate `uiCamera` fixed at
+    // zoom 1 so the camera zoom never shrinks the HUD toward screen-centre (the bug where
+    // the toolbars bunched up in the middle). Mirrors GameScene's main/uiCamera split.
+    private worldLayer!: Phaser.GameObjects.Layer;
+    private uiLayer!: Phaser.GameObjects.Layer;
+    private uiCamera!: Phaser.Cameras.Scene2D.Camera;
+
     // Fixed UI we reposition on resize.
     private ui: Phaser.GameObjects.GameObject[] = [];
     private statusText!: Phaser.GameObjects.Text;
@@ -58,18 +66,35 @@ export class EditorScene extends Phaser.Scene {
         this.cameras.main.setBackgroundColor('#0b1119');
         this.input.addPointer(2); // enable pinch on the phone
 
+        this.worldLayer = this.add.layer();
+        this.uiLayer = this.add.layer();
+
         this.drawWaterBackdrop();
         this.renderAllCells();
         this.drawGridAndBorder();
         this.setupCamera();
         this.buildToolbars();
+        this.setupUiCamera();
         this.layoutUI();
 
         this.bindInput();
 
-        this.scale.on('resize', this.layoutUI, this);
-        this.events.once('shutdown', () => this.scale.off('resize', this.layoutUI, this));
+        this.scale.on('resize', this.onResize, this);
+        this.events.once('shutdown', () => this.scale.off('resize', this.onResize, this));
     }
+
+    // The UI camera renders only the toolbars (zoom 1, screen-anchored); the main camera
+    // renders only the world. Each ignores the other's layer.
+    private setupUiCamera() {
+        this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
+        this.cameras.main.ignore(this.uiLayer);
+        this.uiCamera.ignore(this.worldLayer);
+    }
+
+    private onResize = () => {
+        this.uiCamera.setSize(this.scale.width, this.scale.height);
+        this.layoutUI();
+    };
 
     // ── rendering ────────────────────────────────────────────────────────────
     private get mapW() { return this.map.cols * this.ts; }
@@ -78,10 +103,11 @@ export class EditorScene extends Phaser.Scene {
     private drawWaterBackdrop() {
         // Sea under the whole canvas (plus a margin) — open water shows wherever no grass is.
         const pad = this.ts * 2;
-        this.add
+        const sea = this.add
             .tileSprite(-pad, -pad, this.mapW + pad * 2, this.mapH + pad * 2, WATER_KEY)
             .setOrigin(0, 0)
             .setDepth(-100);
+        this.worldLayer.add(sea);
     }
 
     private renderAllCells() {
@@ -104,6 +130,7 @@ export class EditorScene extends Phaser.Scene {
                 .image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame)
                 .setOrigin(0, 0)
                 .setDepth(0);
+            this.worldLayer.add(img);
             this.cells[i] = img;
         }
         if (commit) this.markDirty();
@@ -122,6 +149,8 @@ export class EditorScene extends Phaser.Scene {
 
         this.border = this.add.graphics().setDepth(101);
         this.border.lineStyle(2, 0x7fd0ff, 0.9).strokeRect(0, 0, this.mapW, this.mapH);
+
+        this.worldLayer.add([this.grid, this.border]);
     }
 
     // ── camera ───────────────────────────────────────────────────────────────
@@ -259,6 +288,9 @@ export class EditorScene extends Phaser.Scene {
 
         this.modeBtn = mk(0, 0, '✏️ Paint', '#4a5a33', () => this.toggleMode());
         this.gridBtn = mk(0, 0, '# Grid', '#33455a', () => this.toggleGrid());
+
+        // Hand the whole toolbar to the UI layer so only the uiCamera draws it.
+        this.uiLayer.add(this.ui);
 
         this.refreshBrushHighlight();
     }
