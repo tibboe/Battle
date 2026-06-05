@@ -11,6 +11,7 @@ import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environmen
 import { FACTION, Faction, UnitManager } from '../units/UnitManager';
 import { PeasantManager, loadPeasants, registerPeasantAnimations } from '../units/peasants';
 import { ResourceStore } from '../economy/ResourceStore';
+import { PlayerLevel } from '../progression/PlayerLevel';
 import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
 import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
@@ -43,6 +44,7 @@ export class GameScene extends Phaser.Scene {
     private devPanel!: DevPanel;
     private hud!: Hud;
     private resources!: ResourceStore;
+    private playerLevel!: PlayerLevel; // per-match XP/leveling (fresh each match)
     private resourceNodes!: ResourceNodes;
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
@@ -121,6 +123,9 @@ export class GameScene extends Phaser.Scene {
         this.floatingText = new FloatingText(this, this.worldLayer);
         this.projectiles = new Projectiles(this, this.worldLayer);
 
+        // Per-match player progression (XP from kills → levels). Fresh each match.
+        this.playerLevel = new PlayerLevel();
+
         // Both keeps spawn a horde; units that reach the far keep damage it.
         this.units = new UnitManager(
             this,
@@ -133,6 +138,7 @@ export class GameScene extends Phaser.Scene {
             (x0, y0, x1, y1, faction) =>
                 this.projectiles.lob(x0, y0, x1, y1, faction, CONFIG.abilities.longshot.speed,
                     (lx, ly, f) => this.units.resolveLongShotHit(lx, ly, f as Faction)),
+            (faction, type, x, y) => this.onUnitKilled(faction, type, x, y),
         );
 
         // Per-side stockpiles (created before the UI/buildings that read them). Upgrades are
@@ -246,6 +252,15 @@ export class GameScene extends Phaser.Scene {
             this.playerKeepHp = Math.max(0, this.playerKeepHp - CONFIG.keep.damagePerUnit);
             if (this.playerKeepHp === 0) this.endGame(false);
         }
+    }
+
+    // A unit died: if it was an enemy, the player earns its experience. Crossing a level
+    // threshold pops a "LEVEL UP!" at the kill. (Future level-up rewards attach here.)
+    private onUnitKilled(faction: Faction, type: number, x: number, y: number) {
+        if (this.gameOver || faction !== FACTION.enemy) return;
+        const xp = CONFIG.unitTypes[type].xp ?? 0;
+        const levels = this.playerLevel.gain(xp);
+        if (levels > 0) this.floatingText.pop(x, y, 'LEVEL UP!', '#ffe08a');
     }
 
     private endGame(playerWon: boolean) {
@@ -415,6 +430,9 @@ export class GameScene extends Phaser.Scene {
             playerHp: this.playerKeepHp,
             enemyHp: this.enemyKeepHp,
             maxHp: CONFIG.keep.hp,
+            playerLevel: this.playerLevel.level,
+            playerXp: this.playerLevel.xpIntoLevel,
+            playerXpForLevel: this.playerLevel.xpForLevel(this.playerLevel.level),
             workers: {
                 gold: this.peasants.workerCount(FACTION.player, 'gold'),
                 wood: this.peasants.workerCount(FACTION.player, 'wood'),

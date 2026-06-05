@@ -64,6 +64,9 @@ export interface UnitType {
     // Food paid to TRAIN one of this unit (deducted when its production countdown starts;
     // refunded if the building is disabled mid-train). 0/undefined = free.
     foodCost?: number;
+    // Player experience awarded for killing one of this unit (Milestone: leveling). Tougher
+    // units are worth more. Only enemy deaths credit the player. 0/undefined = no XP.
+    xp?: number;
     // Innate special ability: 'knockback' | 'longshot' | 'block' (upgrades may extend it).
     ability?: string;
     // Support healers only: top up the lowest-HP ally within `range` by `amount` every
@@ -125,20 +128,29 @@ export const CONFIG = {
     // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
     // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4,
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4, xp: 10,
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5,
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5, xp: 14,
           hp: 46, damage: 14, range: 140, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
-        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4,
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4, xp: 8,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
-        { key: 'monk', art: 'monk', role: 'support', foodCost: 6,
+        { key: 'monk', art: 'monk', role: 'support', foodCost: 6, xp: 12,
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
           weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
     ] as UnitType[],
+
+    // Player experience / leveling (per-match, resets each battle). Killing an enemy unit
+    // awards its `xp` (above); accumulated XP fills a bar that advances the player up a
+    // RISING grading scale: the XP needed for level n is baseXp × growth^(n-1), so each
+    // level costs more than the last. Purely a progress display for now (rewards land later).
+    experience: {
+        baseXp: 100, // XP to go from level 1 → 2
+        growth: 1.5, // each level needs this × the previous level's requirement
+    },
 
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in
     // terrain/tileset.ts; swap the loaded variant there (Tilemap_color1..5) to recolour.

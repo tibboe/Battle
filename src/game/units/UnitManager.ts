@@ -162,6 +162,8 @@ export class UnitManager {
     // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
     // landing calls back into resolveLongShotHit.
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    // Emitted when a unit dies, so the scene can award player experience (enemy deaths only).
+    private readonly onKill?: (faction: Faction, type: number, x: number, y: number) => void;
     private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
     constructor(
@@ -173,6 +175,7 @@ export class UnitManager {
         onHeal?: (x: number, y: number, amount: number) => void,
         onBlock?: (x: number, y: number) => void,
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
+        onKill?: (faction: Faction, type: number, x: number, y: number) => void,
     ) {
         this.layer = layer;
         this.onReachKeep = onReachKeep;
@@ -181,6 +184,7 @@ export class UnitManager {
         this.onHeal = onHeal;
         this.onBlock = onBlock;
         this.onLongShot = onLongShot;
+        this.onKill = onKill;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -1236,6 +1240,7 @@ export class UnitManager {
     private kill(i: number) {
         if (this.state[i] === STATE.dying) return;
         matchStats.death(this.faction[i], this.type[i]);
+        this.onKill?.(this.faction[i] as Faction, this.type[i], this.x[i], this.y[i]);
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
         this.releaseProducer(i);

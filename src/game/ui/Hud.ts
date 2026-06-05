@@ -40,9 +40,14 @@ export interface HudData {
     playerHp: number;
     enemyHp: number;
     maxHp: number;
+    playerLevel: number;     // current player level (1+)
+    playerXp: number;        // XP banked toward the next level
+    playerXpForLevel: number; // XP required to leave the current level
     workers: Record<ResourceType, number>; // player's live worker count per resource
     focus: ResourceType[];                 // the FIFO focus queue (next assignments)
 }
+
+const xpCol = '#ffd24a'; // experience bar — gold
 
 const RES_ORDER = RESOURCE_TYPES;
 const RES_LETTER: Record<ResourceType, string> = { gold: 'G', stone: 'S', wood: 'W', food: 'F' };
@@ -77,6 +82,7 @@ export class Hud {
     private clearBtn!: Phaser.GameObjects.Text;
     private playerBar!: Bar;
     private enemyBar!: Bar;
+    private xpBar!: Bar;
     private fitBtn!: Phaser.GameObjects.Text;
     private devBtn!: Phaser.GameObjects.Text;
     private debug!: Phaser.GameObjects.Text;
@@ -101,6 +107,7 @@ export class Hud {
         this.buildStrip();
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
+        this.xpBar = this.buildBar('LEVEL 1', xpCol);
 
         this.fitBtn = this.mkButton('⤢ Fit', onFit);
         this.devBtn = this.mkButton('🛠 Dev', () => this.setDev(!this.devOnState));
@@ -209,6 +216,11 @@ export class Hud {
         this.setBar(this.playerBar, d.playerHp, d.maxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
 
+        // XP bar: level on the label, XP/next as the value, fill = progress through the level.
+        this.xpBar.fill.scaleX = Phaser.Math.Clamp(d.playerXpForLevel > 0 ? d.playerXp / d.playerXpForLevel : 0, 0, 1);
+        this.xpBar.label.setText('LEVEL ' + d.playerLevel);
+        this.xpBar.value.setText(`${Math.floor(d.playerXp)} / ${d.playerXpForLevel}`);
+
         if (this.devOnState) {
             const e = d.enemy;
             this.debug.setText(`FPS ${d.fps}  Units ${d.units}    Enemy  G ${e.gold} S ${e.stone} W ${e.wood} F ${e.food}`);
@@ -251,19 +263,22 @@ export class Hud {
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);
         this.devBtn.setPosition(this.fitBtn.x - this.devBtn.width - 8, 8);
 
-        // Castle bars on row 2: yours left, enemy right.
-        this.placeBar(this.playerBar, 10);
-        this.placeBar(this.enemyBar, w - 10 - BAR_W);
+        // Castle bars on row 2: yours left, enemy right. The XP/level bar sits in the gap
+        // between them (top-centre) so it's always visible and clear of the dev panels,
+        // which occupy the left/right columns from ~y92 down.
+        this.placeBar(this.playerBar, 10, 50);
+        this.placeBar(this.enemyBar, w - 10 - BAR_W, 50);
+        this.placeBar(this.xpBar, Math.round((w - BAR_W) / 2), 50);
 
         // Debug line bottom-left (dev only).
         this.debug.setPosition(10, h - this.debug.height - 10).setVisible(this.devOnState);
     }
 
-    private placeBar(bar: Bar, x: number) {
-        bar.label.setPosition(x, 50);
-        bar.bg.setPosition(x, 64);
-        bar.fill.setPosition(x + 2, 66);
-        bar.value.setPosition(x + BAR_W / 2, 64 + BAR_H / 2);
+    private placeBar(bar: Bar, x: number, topY: number) {
+        bar.label.setPosition(x, topY);
+        bar.bg.setPosition(x, topY + 14);
+        bar.fill.setPosition(x + 2, topY + 16);
+        bar.value.setPosition(x + BAR_W / 2, topY + 14 + BAR_H / 2);
     }
 }
 
