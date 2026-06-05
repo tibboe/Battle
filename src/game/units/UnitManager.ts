@@ -144,12 +144,6 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
-    // Enemy muster: while active, freshly-spawned enemy units hold at the rally point (just
-    // ahead of the enemy keep) instead of marching, until the EnemyMuster system releases them.
-    private enemyMustering = false;
-    private enemyRallyX = 0;
-    private enemyRallyY = 0;
-
     // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
     // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
     private readonly healthBars: Phaser.GameObjects.Graphics;
@@ -565,36 +559,30 @@ export class UnitManager {
     }
 
     // ── Enemy muster (gather-then-charge), driven by the EnemyMuster system ──────────────────
-    // Arm/disarm mustering. While active, enemy units spawn holding at the rally point —
-    // `rallyOffset` px in front of the enemy keep, on the lane centre.
-    setEnemyMuster(active: boolean, rallyOffset: number) {
-        this.enemyMustering = active;
-        this.enemyRallyX = this.enemyKeepX - rallyOffset;
-        this.enemyRallyY = this.laneY[0];
+    // World x/y of the enemy rally point (just ahead of the enemy keep, on the lane centre).
+    // Read by spawnAt to park new enemy units there while mustering.
+    enemyRallyX(): number { return this.enemyKeepX - CONFIG.enemyAI.muster.rallyOffset; }
+
+    // A unit currently waiting at the rally: a live, non-garrison enemy that is holding. Released
+    // units (now ORDER.auto) and roof defenders (garrison) don't count.
+    private isWaitingMusterer(i: number): boolean {
+        return this.faction[i] === FACTION.enemy && this.order[i] === ORDER.hold
+            && !this.garrison[i] && this.state[i] !== STATE.dying;
     }
 
-    // Combined point value of the enemy units currently waiting at the rally (held, non-garrison).
-    // Released units (now ORDER.auto) and roof defenders (garrison) are excluded.
+    // Combined point value of the enemy units currently waiting at the rally.
     enemyMusterPoints(): number {
         let sum = 0;
         for (let i = 0; i < this.count; i++) {
-            if (this.faction[i] !== FACTION.enemy || this.order[i] !== ORDER.hold
-                || this.garrison[i] || this.state[i] === STATE.dying) continue;
-            sum += CONFIG.unitTypes[this.type[i]].points ?? 1;
+            if (this.isWaitingMusterer(i)) sum += CONFIG.unitTypes[this.type[i]].points ?? 1;
         }
         return sum;
     }
 
-    // Launch the gathered force: every held, non-garrison enemy unit flips to auto-march.
+    // Launch the gathered force: every waiting enemy unit flips to auto-march.
     releaseEnemyMuster() {
         for (let i = 0; i < this.count; i++) {
-            if (this.faction[i] !== FACTION.enemy || this.order[i] !== ORDER.hold
-                || this.garrison[i] || this.state[i] === STATE.dying) continue;
-            this.order[i] = ORDER.auto;
-            this.destX[i] = 0;
-            this.destY[i] = 0;
-            this.target[i] = -1;
-            this.setState(i, STATE.walk);
+            if (this.isWaitingMusterer(i)) this.setOrder(i, ORDER.auto, 0, 0);
         }
     }
 
@@ -744,10 +732,10 @@ export class UnitManager {
             this.order[i] = standing;
             this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
             this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
-        } else if (this.enemyMustering) {
+        } else if (CONFIG.enemyAI.muster.enabled) {
             this.order[i] = ORDER.hold;
-            this.destX[i] = this.enemyRallyX;
-            this.destY[i] = this.clampLaneY(this.enemyRallyY);
+            this.destX[i] = this.enemyRallyX();
+            this.destY[i] = this.clampLaneY(this.laneY[0]);
         } else {
             this.order[i] = ORDER.auto;
             this.destX[i] = 0;

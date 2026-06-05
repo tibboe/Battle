@@ -24,12 +24,8 @@ export class EnemyMuster {
 
     update(delta: number) {
         const m = CONFIG.enemyAI.muster;
-        if (!m.enabled) {
-            // Feature off → spawn enemies straight into auto-march (the old steady stream).
-            this.units.setEnemyMuster(false, 0);
-            return;
-        }
-        this.units.setEnemyMuster(true, m.rallyOffset);
+        // Off → enemy units spawn straight into auto-march (spawnAt reads the flag), nothing to do.
+        if (!m.enabled) return;
 
         this.acc += delta;
         if (this.acc < CHECK_EVERY) return;
