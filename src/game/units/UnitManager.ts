@@ -1,6 +1,9 @@
 import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rangeBonusFor } from '../upgrades';
+import {
+    luArmourMult, luMonkAoe, luMonkHeal, luUnitCrit, luUnitDamage, luUnitHp, luUnitRange, luUnitSpeed,
+} from '../progression/LevelUpgrades';
 import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
 import { matchStats } from '../stats/MatchStats';
@@ -154,6 +157,10 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
+    // Next free slot index in the enemy muster formation (reset each time a wave launches), so
+    // gathered units spread into distinct anchors instead of piling onto one jittering point.
+    private enemyMusterSlot = 0;
+
     // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
     // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
     private readonly healthBars: Phaser.GameObjects.Graphics;
@@ -172,6 +179,8 @@ export class UnitManager {
     // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
     // landing calls back into resolveLongShotHit.
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    // Emitted when a unit dies, so the scene can award player experience (enemy deaths only).
+    private readonly onKill?: (faction: Faction, type: number, x: number, y: number) => void;
     private readonly scene: Phaser.Scene; // kept for the live camera angle (health bars / garrison)
     private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
@@ -184,6 +193,7 @@ export class UnitManager {
         onHeal?: (x: number, y: number, amount: number) => void,
         onBlock?: (x: number, y: number) => void,
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
+        onKill?: (faction: Faction, type: number, x: number, y: number) => void,
     ) {
         this.scene = scene;
         this.layer = layer;
@@ -193,6 +203,7 @@ export class UnitManager {
         this.onHeal = onHeal;
         this.onBlock = onBlock;
         this.onLongShot = onLongShot;
+        this.onKill = onKill;
         this.capacity = CONFIG.spawn.unitsTarget.player + CONFIG.spawn.unitsTarget.enemy + 40;
 
         this.x = new Float32Array(this.capacity);
@@ -353,15 +364,16 @@ export class UnitManager {
     recomputeUpgrades() {
         for (let t = 0; t < this.nTypes; t++) {
             const key = this.typeKey[t];
-            const r = CONFIG.unitTypes[t].range + rangeBonusFor(key);
-            this.pHpBonus[t] = hpBonusFor(key);
+            // Building-purchased upgrades + stacking level-up perks add together.
+            const r = CONFIG.unitTypes[t].range + rangeBonusFor(key) + luUnitRange(key);
+            this.pHpBonus[t] = hpBonusFor(key) + luUnitHp(key);
             this.pRange2[t] = r * r;
             this.pReach2[t] = (r + 8) * (r + 8);
-            this.pDamageBonus[t] = damageBonusFor(key);
-            this.pCritChance[t] = critChanceFor(key);
-            this.pHealAoe[t] = healAoeFor(key);
+            this.pDamageBonus[t] = damageBonusFor(key) + luUnitDamage(key);
+            this.pCritChance[t] = Math.min(CONFIG.levelUp.critCap, critChanceFor(key) + luUnitCrit(key));
+            this.pHealAoe[t] = healAoeFor(key) || (key === 'monk' && luMonkAoe()) ? 1 : 0;
         }
-        this.pArmourMult = armourMult();
+        this.pArmourMult = armourMult() * luArmourMult();
     }
 
     // Archer special: begin a long shot — pick a far enemy (beyond normal reach), then STOP and
@@ -485,7 +497,7 @@ export class UnitManager {
     private areaHeal(healer: number, acting: number) {
         const f = this.faction[healer];
         const r2 = this.typeRange2[acting];
-        const amt = this.typeHealAmount[acting];
+        const amt = this.typeHealAmount[acting] + (f === FACTION.player ? luMonkHeal() : 0);
         const xi = this.x[healer];
         const yi = this.y[healer];
         for (let j = 0; j < this.count; j++) {
@@ -574,6 +586,56 @@ export class UnitManager {
     // Clamp a world y into the lane band (so commanded destinations stay on the battlefield).
     clampLaneY(y: number): number {
         return Phaser.Math.Clamp(y, this.laneY[0] - this.laneHalf[0], this.laneY[0] + this.laneHalf[0]);
+    }
+
+    // ── Enemy muster (gather-then-charge), driven by the EnemyMuster system ──────────────────
+    // World x of the enemy rally point: just BEYOND the building grid (toward the lane), so the
+    // gathered force forms up in the open instead of on top of a building. The grid fans toward
+    // the lane from the keep; its outermost column reaches `gridReach` px out, and we leave a
+    // configurable clearance gap past that. (Mirrors the slot maths in structures/buildings.ts.)
+    enemyRallyX(): number {
+        const g = CONFIG.grid;
+        const keepCol = (g.keepSpot - 1) % g.cols;
+        const gridReach = (g.cols - 1 - keepCol) * (g.cellW + g.gap) + g.cellW / 2;
+        return this.enemyKeepX - gridReach - CONFIG.enemyAI.muster.rallyClearance;
+    }
+
+    // Anchor for the `slot`-th unit in the muster formation: fill the lane width (columns), then
+    // stack rows back toward midfield — away from the keep, so deeper ranks don't sit on a
+    // building. Loose spacing (> the separation radius) lets the blob settle without jittering.
+    private musterSlotPos(slot: number): { x: number; y: number } {
+        const spacing = CONFIG.command.spacingLoose;
+        const cols = Math.max(1, Math.floor((this.laneHalf[0] * 2) / spacing));
+        const colMid = (cols - 1) / 2;
+        return {
+            x: this.enemyRallyX() - Math.floor(slot / cols) * spacing,
+            y: this.clampLaneY(this.laneY[0] + ((slot % cols) - colMid) * spacing),
+        };
+    }
+
+    // A unit currently waiting at the rally: a live, non-garrison enemy that is holding. Released
+    // units (now ORDER.auto) and roof defenders (garrison) don't count.
+    private isWaitingMusterer(i: number): boolean {
+        return this.faction[i] === FACTION.enemy && this.order[i] === ORDER.hold
+            && !this.garrison[i] && this.state[i] !== STATE.dying;
+    }
+
+    // Combined point value of the enemy units currently waiting at the rally.
+    enemyMusterPoints(): number {
+        let sum = 0;
+        for (let i = 0; i < this.count; i++) {
+            if (this.isWaitingMusterer(i)) sum += CONFIG.unitTypes[this.type[i]].points ?? 1;
+        }
+        return sum;
+    }
+
+    // Launch the gathered force: every waiting enemy unit flips to auto-march. The next wave
+    // forms up from the front slot again.
+    releaseEnemyMuster() {
+        for (let i = 0; i < this.count; i++) {
+            if (this.isWaitingMusterer(i)) this.setOrder(i, ORDER.auto, 0, 0);
+        }
+        this.enemyMusterSlot = 0;
     }
 
     // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
@@ -698,7 +760,8 @@ export class UnitManager {
 
         this.x[i] = x;
         this.y[i] = yClamped;
-        this.speed[i] = this.typeMoveSpeed[t] * Phaser.Math.FloatBetween(0.9, 1.1);
+        const baseSpeed = this.typeMoveSpeed[t] + (faction === FACTION.player ? luUnitSpeed() : 0);
+        this.speed[i] = baseSpeed * Phaser.Math.FloatBetween(0.9, 1.1);
         const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
         this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
         this.faction[i] = faction;
@@ -716,12 +779,25 @@ export class UnitManager {
         this.lane[i] = 0;
         this.type[i] = t;
         this.producer[i] = producerId;
-        // Inherit the type's standing order so reinforcements join the last command given to
-        // that type; otherwise march on the keep (auto). Enemy units never have a standing order.
-        const standing = faction === FACTION.player ? this.standingOrder[t] : ORDER.auto;
-        this.order[i] = standing;
-        this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
-        this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        // Player: inherit the type's standing order so reinforcements join the last command
+        // given to that type. Enemy: hold at the rally point while mustering (gather-then-charge),
+        // otherwise march on the keep (auto).
+        if (faction === FACTION.player) {
+            const standing = this.standingOrder[t];
+            this.order[i] = standing;
+            this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
+            this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
+        } else if (CONFIG.enemyAI.muster.enabled) {
+            // Park at its own distinct slot in the muster formation so the gathered blob settles.
+            const anchor = this.musterSlotPos(this.enemyMusterSlot++);
+            this.order[i] = ORDER.hold;
+            this.destX[i] = anchor.x;
+            this.destY[i] = anchor.y;
+        } else {
+            this.order[i] = ORDER.auto;
+            this.destX[i] = 0;
+            this.destY[i] = 0;
+        }
         this.moving[i] = 1; // spawns marching (walk anim)
         this.faceX[i] = faction === FACTION.enemy ? -1 : 1; // enemy faces world-left; player world-right
         this.rangeMul[i] = 1;
@@ -1098,7 +1174,8 @@ export class UnitManager {
                         const dy = this.y[t] - this.y[i];
                         if (dx * dx + dy * dy <= this.typeRange2[acting]) {
                             this.attackCd[i] += this.typeHealInterval[acting];
-                            const healed = Math.min(this.typeHealAmount[acting], maxHp - this.hp[t]);
+                            const healAmt = this.typeHealAmount[acting] + (f === FACTION.player ? luMonkHeal() : 0);
+                            const healed = Math.min(healAmt, maxHp - this.hp[t]);
                             this.hp[t] += healed;
                             if (healed > 0) {
                                 this.healFlash(t);
@@ -1263,6 +1340,7 @@ export class UnitManager {
     private kill(i: number) {
         if (this.state[i] === STATE.dying) return;
         matchStats.death(this.faction[i], this.type[i]);
+        this.onKill?.(this.faction[i] as Faction, this.type[i], this.x[i], this.y[i]);
         this.livingByFaction[this.faction[i]]--;
         this.livingByType[this.type[i] * 2 + this.faction[i]]--;
         this.releaseProducer(i);

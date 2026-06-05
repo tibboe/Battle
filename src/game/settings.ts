@@ -32,6 +32,7 @@ export function serializeSettings() {
         debug: { damageNumbers: CONFIG.debug.damageNumbers },
         production: { spawnSeconds: CONFIG.production.spawnSeconds },
         combat: { attackIntervalScale: CONFIG.combat.attackIntervalScale, hpScale: CONFIG.combat.hpScale },
+        enemyMuster: { ...CONFIG.enemyAI.muster },
         resources: { gold: r.gold, stone: r.stone, wood: r.wood, food: r.food },
         abilities: { arrowVolley: { ...CONFIG.abilities.arrowVolley }, mercenaries: { ...CONFIG.abilities.mercenaries } },
         units,
@@ -99,6 +100,12 @@ export function applySavedSettings() {
     if (s.combat) {
         if (isNum(s.combat.attackIntervalScale)) CONFIG.combat.attackIntervalScale = s.combat.attackIntervalScale;
         if (isNum(s.combat.hpScale)) CONFIG.combat.hpScale = s.combat.hpScale;
+    }
+    if (s.enemyMuster) {
+        const mm = CONFIG.enemyAI.muster;
+        if (typeof s.enemyMuster.enabled === 'boolean') mm.enabled = s.enemyMuster.enabled;
+        if (isNum(s.enemyMuster.startThreshold)) mm.startThreshold = s.enemyMuster.startThreshold;
+        if (isNum(s.enemyMuster.growth)) mm.growth = s.enemyMuster.growth;
     }
     if (s.resources) {
         const r = CONFIG.resources.start;

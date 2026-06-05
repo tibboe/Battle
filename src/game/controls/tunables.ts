@@ -34,12 +34,26 @@ export function buildTunables(): Setting[] {
         { section: 'Armies', label: 'Your army', get: () => CONFIG.spawn.unitsTarget.player, set: (v) => (CONFIG.spawn.unitsTarget.player = v), step: 5, min: 5, max: 300, live: false },
         { section: 'Armies', label: 'Enemy army', get: () => CONFIG.spawn.unitsTarget.enemy, set: (v) => (CONFIG.spawn.unitsTarget.enemy = v), step: 5, min: 5, max: 300, live: false },
 
+        // Enemy muster: gather a force at the rally then charge once its points cross the bar.
+        { section: 'Enemy', label: 'Muster', get: () => (CONFIG.enemyAI.muster.enabled ? 1 : 0), set: (v) => (CONFIG.enemyAI.muster.enabled = v > 0), step: 1, min: 0, max: 1, live: true, bool: true, fmt: (v) => (v ? 'ON' : 'OFF') },
+        { section: 'Enemy', label: 'Attack pts', get: () => CONFIG.enemyAI.muster.startThreshold, set: (v) => (CONFIG.enemyAI.muster.startThreshold = v), step: 2, min: 0, max: 200, live: true },
+        { section: 'Enemy', label: 'Pts/wave', get: () => CONFIG.enemyAI.muster.growth, set: (v) => (CONFIG.enemyAI.muster.growth = v), step: 2, min: 0, max: 100, live: true },
+
         { section: 'Economy', label: 'Start food', get: () => CONFIG.resources.start.food, set: (v) => (CONFIG.resources.start.food = v), step: 10, min: 0, max: 400, live: false },
     ];
 
     // Per-unit food-to-train (closes over the unit object, so config order is irrelevant).
     for (const u of CONFIG.unitTypes) {
         settings.push({ section: 'Economy', label: `${cap(u.key)} food`, get: () => u.foodCost ?? 0, set: (v) => (u.foodCost = v), step: 1, min: 0, max: 50, live: true });
+    }
+
+    // Experience / leveling: the rising XP curve, then per-unit XP for killing one.
+    settings.push(
+        { section: 'Experience', label: 'Base XP', get: () => CONFIG.experience.baseXp, set: (v) => (CONFIG.experience.baseXp = v), step: 25, min: 25, max: 500, live: true },
+        { section: 'Experience', label: 'Curve', get: () => CONFIG.experience.growth, set: (v) => (CONFIG.experience.growth = v), step: 0.1, min: 1.1, max: 3, live: true, fmt: (v) => `${v}×` },
+    );
+    for (const u of CONFIG.unitTypes) {
+        settings.push({ section: 'Experience', label: `${cap(u.key)} XP`, get: () => u.xp ?? 0, set: (v) => (u.xp = v), step: 1, min: 0, max: 100, live: true });
     }
 
     settings.push(
