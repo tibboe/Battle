@@ -144,6 +144,10 @@ export class UnitManager {
     private readonly enemyKeepX: number;
     private readonly deathDuration: number;
 
+    // Next free slot index in the enemy muster formation (reset each time a wave launches), so
+    // gathered units spread into distinct anchors instead of piling onto one jittering point.
+    private enemyMusterSlot = 0;
+
     // One Graphics object redraws every damaged unit's health bar each frame (cheaper than a
     // pool of per-unit bar objects). Lives on the world layer so it pans/zooms with the units.
     private readonly healthBars: Phaser.GameObjects.Graphics;
@@ -586,11 +590,13 @@ export class UnitManager {
         return sum;
     }
 
-    // Launch the gathered force: every waiting enemy unit flips to auto-march.
+    // Launch the gathered force: every waiting enemy unit flips to auto-march. The next wave
+    // forms up from the front slot again.
     releaseEnemyMuster() {
         for (let i = 0; i < this.count; i++) {
             if (this.isWaitingMusterer(i)) this.setOrder(i, ORDER.auto, 0, 0);
         }
+        this.enemyMusterSlot = 0;
     }
 
     // Damage the opposing keep with unit `i`, then recycle it (shared by the auto-march and the
@@ -740,9 +746,16 @@ export class UnitManager {
             this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
             this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
         } else if (CONFIG.enemyAI.muster.enabled) {
+            // Park at its own slot in a formation that fills the lane width then stacks rows back
+            // toward midfield (never toward the keep, so deeper ranks don't sit on a building).
+            // Distinct anchors spaced at the separation gap keep the gathered blob from jittering.
+            const slot = this.enemyMusterSlot++;
+            const spacing = CONFIG.command.spacingLoose;
+            const cols = Math.max(1, Math.floor((this.laneHalf[0] * 2) / spacing));
+            const colMid = (cols - 1) / 2;
             this.order[i] = ORDER.hold;
-            this.destX[i] = this.enemyRallyX();
-            this.destY[i] = this.clampLaneY(this.laneY[0]);
+            this.destX[i] = this.enemyRallyX() - Math.floor(slot / cols) * spacing;
+            this.destY[i] = this.clampLaneY(this.laneY[0] + ((slot % cols) - colMid) * spacing);
         } else {
             this.order[i] = ORDER.auto;
             this.destX[i] = 0;
