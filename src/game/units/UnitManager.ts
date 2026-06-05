@@ -4,6 +4,7 @@ import { armourMult, critChanceFor, damageBonusFor, healAoeFor, hpBonusFor, rang
 import { animDurationMs, animKey, FactionName, healEffectKey, POOL_TEXTURE } from './animations';
 import { ORDER, Order } from './commands';
 import { matchStats } from '../stats/MatchStats';
+import { cameraAngle, rotatesWithCamera, screenOffset } from '../controls/billboard';
 
 // Data-oriented horde with sprite pooling + neighbour-based combat.
 //
@@ -64,6 +65,11 @@ export class UnitManager {
     private readonly moving: Uint8Array; // 1 = locomoting this frame (walk anim); 0 = standing (idle anim)
     private readonly rangeMul: Float32Array; // per-unit normal-range multiplier (garrison archers = 2)
     private readonly garrison: Uint8Array;   // 1 = pinned building defender (no separation/obstacle push)
+    // Garrison defenders sit above their building's base by a SCREEN-space offset (so they stay on
+    // the roof when the battlefield is turned). destX/destY hold the building-base anchor; these
+    // hold the offset (px right / px up on screen) re-applied each frame in repositionGarrison.
+    private readonly gOffRight: Float32Array;
+    private readonly gOffUp: Float32Array;
     private readonly level: Uint8Array;      // elevation tier (0 = ground; roofs/high terrain > 0). Melee
                                              // can only strike same-level targets; ranged can hit any level.
     private obstacleProvider?: () => { x: number; y: number; r: number }[]; // building footprints
@@ -162,6 +168,7 @@ export class UnitManager {
     // Emitted when an Archer lobs a long shot — the scene flies an arcing arrow whose
     // landing calls back into resolveLongShotHit.
     private readonly onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void;
+    private readonly scene: Phaser.Scene; // kept for the live camera angle (health bars / garrison)
     private readonly layer: Phaser.GameObjects.Layer; // world layer, for spawning effect sprites
 
     constructor(
@@ -174,6 +181,7 @@ export class UnitManager {
         onBlock?: (x: number, y: number) => void,
         onLongShot?: (x0: number, y0: number, x1: number, y1: number, faction: Faction) => void,
     ) {
+        this.scene = scene;
         this.layer = layer;
         this.onReachKeep = onReachKeep;
         this.onDamage = onDamage;
@@ -206,6 +214,8 @@ export class UnitManager {
         this.moving = new Uint8Array(this.capacity);
         this.rangeMul = new Float32Array(this.capacity);
         this.garrison = new Uint8Array(this.capacity);
+        this.gOffRight = new Float32Array(this.capacity);
+        this.gOffUp = new Float32Array(this.capacity);
         this.level = new Uint8Array(this.capacity);
         this.sprites = new Array(this.capacity);
 
@@ -323,7 +333,10 @@ export class UnitManager {
         this.deathDuration = CONFIG.combat.deathFadeMs;
 
         // Health bars draw above every unit sprite (unit depth == world-y, max ~world.height).
+        // Tagged rotatesWithCamera because drawHealthBars already draws each bar at the right
+        // screen-up offset and angle — the scene's billboard pass must not re-rotate it.
         this.healthBars = scene.add.graphics().setDepth(CONFIG.world.height + 1000);
+        rotatesWithCamera(this.healthBars);
         layer.add(this.healthBars);
 
         this.recomputeUpgrades();
@@ -593,6 +606,7 @@ export class UnitManager {
         this.step(delta);
         this.applySeparation(delta);
         this.applyObstacles(delta);
+        this.repositionGarrison();
         this.drawHealthBars();
     }
 
@@ -729,7 +743,10 @@ export class UnitManager {
     // Post a pinned building defender (an archer) at (x, y): same combat behaviour as a normal
     // archer but with its normal range multiplied (CONFIG.garrison.rangeMul), holding its post.
     // Bypasses the faction cap + lane clamp; rendered above buildings so it reads as "on top".
-    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number): boolean {
+    // (x, y) is the defender's fixed combat point (its θ=0 roof spot). offRight/offUp are the
+    // SCREEN-space offset from the building base to that spot, so repositionGarrison can keep the
+    // sprite on the roof as the battlefield turns.
+    spawnDefender(faction: Faction, typeIndex: number, x: number, y: number, offRight: number, offUp: number): boolean {
         const sprite = this.freeSprites.pop();
         if (!sprite) return false;
         const t = typeIndex;
@@ -737,6 +754,8 @@ export class UnitManager {
 
         this.x[i] = x;
         this.y[i] = y;
+        this.gOffRight[i] = offRight;
+        this.gOffUp[i] = offUp;
         this.speed[i] = this.typeMoveSpeed[t];
         const baseHp = this.typeHp[t] + (faction === FACTION.player ? this.pHpBonus[t] : 0);
         this.hp[i] = Math.max(1, Math.round(baseHp * CONFIG.combat.hpScale));
@@ -1341,22 +1360,60 @@ export class UnitManager {
         g.clear();
         const W = 30;
         const H = 5;
+        // Draw each bar upright (φ = −θ) at a screen-up offset, so bars stay horizontal and
+        // above their unit even when the battlefield is turned.
+        const phi = -cameraAngle(this.scene);
+        const cos = Math.cos(phi);
+        const sin = Math.sin(phi);
+        const off = new Phaser.Math.Vector2();
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             const max = this.maxHpOf(i);
             if (this.hp[i] >= max) continue; // full health — no bar
             const frac = Math.max(0, this.hp[i] / max);
             const sprite = this.sprites[i]!;
-            const top = this.y[i] - sprite.displayHeight * this.typeFootAnchor[this.type[i]] - 2;
-            const x = this.x[i] - W / 2;
-            g.fillStyle(0x000000, 0.55);
-            g.fillRect(x - 1, top - 1, W + 2, H + 2);
-            // Lerp green (full) → red (empty).
+            // Centre of the bar: `up` px above the unit's anchor on screen.
+            const up = sprite.displayHeight * this.typeFootAnchor[this.type[i]] + 2 - H / 2;
+            screenOffset(this.scene, 0, up, off);
+            const cx = this.x[i] + off.x;
+            const cy = this.y[i] + off.y;
+            // Backing box (W+2 × H+2), centred.
+            this.fillRotRect(g, cx, cy, -(W + 2) / 2, -(H + 2) / 2, (W + 2) / 2, (H + 2) / 2, 0x000000, 0.55, cos, sin);
+            // Fill bar grows from the left edge. Lerp green (full) → red (empty).
             const r = Math.round(0xd9 + (0x4a - 0xd9) * frac);
             const gg = Math.round(0x3a + (0xd6 - 0x3a) * frac);
             const b = Math.round(0x3a + (0x4a - 0x3a) * frac);
-            g.fillStyle((r << 16) | (gg << 8) | b, 1);
-            g.fillRect(x, top, W * frac, H);
+            this.fillRotRect(g, cx, cy, -W / 2, -H / 2, -W / 2 + W * frac, H / 2, (r << 16) | (gg << 8) | b, 1, cos, sin);
+        }
+    }
+
+    // Fill an axis-aligned rectangle (given as local corners around cx,cy) rotated by the angle
+    // whose cos/sin are passed in. Used to paint the health bars upright over a turned map.
+    private fillRotRect(
+        g: Phaser.GameObjects.Graphics,
+        cx: number, cy: number,
+        lx0: number, ly0: number, lx1: number, ly1: number,
+        color: number, alpha: number, cos: number, sin: number,
+    ) {
+        const p = (x: number, y: number) => new Phaser.Math.Vector2(cx + x * cos - y * sin, cy + x * sin + y * cos);
+        g.fillStyle(color, alpha);
+        g.fillPoints([p(lx0, ly0), p(lx1, ly0), p(lx1, ly1), p(lx0, ly1)], true);
+    }
+
+    // Re-place a pinned garrison defender's SPRITE on its building's roof for the current screen
+    // angle. The combat position (x/y) is the fixed θ=0 roof point; the building base is that
+    // minus the θ=0 offset, and the sprite renders at base + the rotated screen offset, so the
+    // defender appears on the roof at every orientation while its line-of-fire stays put.
+    private repositionGarrison() {
+        const off = new Phaser.Math.Vector2();
+        for (let i = 0; i < this.count; i++) {
+            if (!this.garrison[i] || this.state[i] === STATE.dying) continue;
+            const baseX = this.x[i] - this.gOffRight[i];
+            const baseY = this.y[i] + this.gOffUp[i];
+            screenOffset(this.scene, this.gOffRight[i], this.gOffUp[i], off);
+            const s = this.sprites[i]!;
+            s.x = baseX + off.x;
+            s.y = baseY + off.y;
         }
     }
 

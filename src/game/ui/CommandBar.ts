@@ -5,6 +5,7 @@ import {
     ORDER, Order, Shape, SHAPE, SHAPE_LABEL, TargetingMode,
     formationRank, formationSlots, spacingFor,
 } from '../units/commands';
+import { rotatesWithCamera } from '../controls/billboard';
 
 // The player's unit command system: selection (which unit TYPES are selected — driven by the
 // right-side roster) + the bottom command bar (stance + formation buttons) + the world-space
@@ -79,8 +80,10 @@ export class CommandBar {
         this.endTargeting = endTargeting;
         this.clearBuildings = clearBuildings;
 
-        this.rings = scene.add.graphics().setDepth(CONFIG.world.height + 1500);
-        this.preview = scene.add.graphics().setDepth(CONFIG.world.height + 2600);
+        // Ground decals drawn in absolute world coords (rings under units, formation preview).
+        // They turn with the map, so the scene's billboard pass must leave them alone.
+        this.rings = rotatesWithCamera(scene.add.graphics().setDepth(CONFIG.world.height + 1500));
+        this.preview = rotatesWithCamera(scene.add.graphics().setDepth(CONFIG.world.height + 2600));
         worldLayer.add([this.rings, this.preview]);
 
         this.bg = scene.add.rectangle(0, 0, 100, BAR_H, 0x0b1016, 0.96)

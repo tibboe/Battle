@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { arrowKey } from './animations';
+import { rotatesWithCamera } from '../controls/billboard';
 
 // Pooled arrow projectiles. Two kinds share the pool:
 //   • fire()  — a straight cosmetic arrow (the Archer's normal shot; damage was already
@@ -38,6 +39,7 @@ export class Projectiles {
         for (let i = 0; i < POOL; i++) {
             const s = scene.add.sprite(0, 0, this.keys[0])
                 .setScale(SCALE).setDepth(DEPTH).setActive(false).setVisible(false);
+            rotatesWithCamera(s); // arrows aim along their flight; let them turn with the map
             layer.add(s);
             this.sprites.push(s);
         }

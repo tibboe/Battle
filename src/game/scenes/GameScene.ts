@@ -17,6 +17,7 @@ import { UnitPanel } from '../ui/UnitPanel';
 import { SelectionHud } from '../ui/SelectionHud';
 import { SkillBar } from '../ui/SkillBar';
 import { RotationHud } from '../ui/RotationHud';
+import { isRotatesWithCamera, rotatesWithCamera, uprightAngle } from '../controls/billboard';
 import { CommandBar } from '../ui/CommandBar';
 import { TargetingMode } from '../units/commands';
 import { Hud, loadHud } from '../ui/Hud';
@@ -56,7 +57,11 @@ export class GameScene extends Phaser.Scene {
     private targetCatcher!: Phaser.GameObjects.Rectangle;
     private targetRing!: Phaser.GameObjects.Arc;
 
-    // World objects (backdrop + units) live here and are shown by the main camera.
+    // The ground (water + grass island) lives here and ROTATES with the main camera when the
+    // screen is turned. Everything in worldLayer is counter-rotated to stay upright (see
+    // billboardWorld), so the terrain is the only thing that visibly turns.
+    private terrainLayer!: Phaser.GameObjects.Layer;
+    // World objects (decorations + units) live here and are shown by the main camera.
     private worldLayer!: Phaser.GameObjects.Layer;
     // HUD lives here and is shown by a dedicated UI camera that never zooms/pans.
     private uiLayer!: Phaser.GameObjects.Layer;
@@ -96,6 +101,7 @@ export class GameScene extends Phaser.Scene {
 
         // Two layers: the world (zoomed/panned by the main camera) and the HUD (drawn
         // by a separate UI camera so it never zooms or drifts with the world).
+        this.terrainLayer = this.add.layer(); // ground, under everything; rotates with the camera
         this.worldLayer = this.add.layer();
         this.uiLayer = this.add.layer();
 
@@ -178,6 +184,7 @@ export class GameScene extends Phaser.Scene {
         // Tap blank ground to clear any selection (a tap, not a camera-drag).
         const catcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
             .setOrigin(0, 0).setDepth(-100).setInteractive();
+        rotatesWithCamera(catcher); // invisible full-field tap catcher — no need to keep upright
         this.worldLayer.add(catcher);
         catcher.on('pointerup', (p: Phaser.Input.Pointer) => {
             if (p.getDistance() >= 14) return;
@@ -191,9 +198,11 @@ export class GameScene extends Phaser.Scene {
         this.targetRing = this.add.circle(0, 0, CONFIG.abilities.arrowVolley.radius)
             .setStrokeStyle(3, 0xffe08a, 0.9).setFillStyle(0xffe08a, 0.08)
             .setDepth(CONFIG.world.height + 2500).setVisible(false);
+        rotatesWithCamera(this.targetRing); // a ground-area circle; symmetric, turns with the map
         this.worldLayer.add(this.targetRing);
         this.targetCatcher = this.add.rectangle(0, 0, CONFIG.world.width, CONFIG.world.height, 0x000000, 0.001)
             .setOrigin(0, 0).setDepth(CONFIG.world.height + 2400).setVisible(false);
+        rotatesWithCamera(this.targetCatcher);
         this.worldLayer.add(this.targetCatcher);
         this.targetCatcher.disableInteractive();
         this.targetCatcher.on('pointerup', (p: Phaser.Input.Pointer) => {
@@ -231,10 +240,10 @@ export class GameScene extends Phaser.Scene {
         // Apply the remembered Dev-tools visibility now that the panels exist.
         this.setDevTools(this.hud.devOn);
 
-        // UI camera renders only the HUD; the main camera renders only the world.
+        // UI camera renders only the HUD; the main camera renders the terrain + world.
         this.uiCamera = this.cameras.add(0, 0, this.scale.width, this.scale.height);
         this.cameras.main.ignore(this.uiLayer);
-        this.uiCamera.ignore(this.worldLayer);
+        this.uiCamera.ignore([this.worldLayer, this.terrainLayer]);
 
         // One resize handler, cleaned up on shutdown so restarts don't leak listeners.
         this.scale.on('resize', this.onResize, this);
@@ -303,12 +312,15 @@ export class GameScene extends Phaser.Scene {
     private drawBackdrop() {
         const { world } = CONFIG;
 
-        this.terrain = new TerrainRenderer(this, this.worldLayer);
+        // Ground (water + grass island) goes on the terrainLayer so it turns with the camera;
+        // decorations (trees, rocks, clouds) go on the worldLayer so they stay upright.
+        this.terrain = new TerrainRenderer(this, this.terrainLayer, this.worldLayer);
         this.terrain.draw();
 
-        // Subtle vignette so the world edge is felt, not a hard line.
+        // Subtle vignette so the world edge is felt, not a hard line. On the terrainLayer so it
+        // frames the ground as it turns.
         const g = this.add.graphics();
-        this.worldLayer.add(g);
+        this.terrainLayer.add(g);
         g.lineStyle(10, 0x000000, 0.22);
         g.strokeRect(0, 0, world.width, world.height);
     }
@@ -386,6 +398,20 @@ export class GameScene extends Phaser.Scene {
         this.cameraController.handleResize();
     }
 
+    // Keep every standing asset upright while the terrain turns: set each world object's
+    // rotation to −θ so the camera's +θ cancels out. Objects tagged `rotatesWithCamera`
+    // (the terrain decals, and overlays whose owners compensate themselves — health bars,
+    // floating text, building bars, projectiles) are left alone.
+    private billboardWorld() {
+        const a = uprightAngle(this);
+        const kids = this.worldLayer.getChildren();
+        for (let k = 0; k < kids.length; k++) {
+            const o = kids[k] as Phaser.GameObjects.GameObject & { active: boolean; rotation: number };
+            if (!o.active || isRotatesWithCamera(o)) continue;
+            o.rotation = a;
+        }
+    }
+
     update(_time: number, delta: number) {
         if (!this.gameOver) {
             this.enemyAI.update(delta);
@@ -398,6 +424,7 @@ export class GameScene extends Phaser.Scene {
         if (!this.gameOver) this.abilities.update(delta);
         this.floatingText.update(delta);
         this.projectiles.update(delta);
+        this.billboardWorld();
         this.unitPanel.update();
         this.commandBar.update();
         this.skillBar.update({
