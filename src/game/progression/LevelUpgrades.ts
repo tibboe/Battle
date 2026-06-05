@@ -89,7 +89,8 @@ export function chosenPerks(): { def: PerkDef; level: number }[] {
 }
 
 // Draft up to `n` distinct perks for a level-up choice — random among those not yet maxed.
-export function draftPerks(n = 3): PerkDef[] {
+// Internal helper for draftOptions (the public draft API).
+function draftPerks(n = 3): PerkDef[] {
     const pool = PERKS.filter((p) => perkLevel(p.key) < p.max);
     // Fisher–Yates shuffle, then take the first n.
     for (let i = pool.length - 1; i > 0; i--) {

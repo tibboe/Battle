@@ -53,12 +53,12 @@ export class LevelUpModal {
             .setOrigin(0, 0).setScrollFactor(0).setDepth(MODAL_DEPTH).setInteractive(); // swallow clicks
         this.add(dim);
 
-        this.add(this.scene.add.text(cx, cy - 150, `LEVEL ${level}!`, {
+        this.txt(cx, cy - 150, `LEVEL ${level}!`, {
             fontFamily: 'monospace', fontSize: '44px', color: '#ffe08a', fontStyle: 'bold',
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(MODAL_DEPTH + 1));
-        this.add(this.scene.add.text(cx, cy - 108, lucky ? '✨ Lucky draw! Choose an upgrade' : 'Choose an upgrade', {
+        }, MODAL_DEPTH + 1).setOrigin(0.5);
+        this.txt(cx, cy - 108, lucky ? '✨ Lucky draw! Choose an upgrade' : 'Choose an upgrade', {
             fontFamily: 'monospace', fontSize: '18px', color: lucky ? '#ffd24a' : '#cfe6ff',
-        }).setOrigin(0.5).setScrollFactor(0).setDepth(MODAL_DEPTH + 1));
+        }, MODAL_DEPTH + 1).setOrigin(0.5);
 
         // Lay the cards out in a centred row, scaling the card width down if the screen is narrow.
         const n = options.length;
@@ -91,41 +91,48 @@ export class LevelUpModal {
 
         const cxc = x + w / 2;
         // Category tag (top-left), big icon, name, level badge, then the resulting-level description.
-        this.add(this.scene.add.text(x + 8, y + 12, def.category.toUpperCase(), {
+        this.txt(x + 8, y + 12, def.category.toUpperCase(), {
             fontFamily: 'monospace', fontSize: '11px', color: hex(CAT_COLOR[def.category]), fontStyle: 'bold',
-        }).setOrigin(0, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        }).setOrigin(0, 0);
         // Luck ribbon (top-right) — the jackpot multiplier.
         if (lucky) {
-            this.add(this.scene.add.text(x + w - 8, y + 10, `✨ ×${mult}`, {
+            this.txt(x + w - 8, y + 10, `✨ ×${mult}`, {
                 fontFamily: 'monospace', fontSize: '15px', color: hex(accent), fontStyle: 'bold',
-            }).setOrigin(1, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+            }).setOrigin(1, 0);
         }
-        this.add(this.scene.add.text(cxc, y + 50, def.icon, {
+        this.txt(cxc, y + 50, def.icon, {
             fontFamily: 'monospace', fontSize: '40px', color: '#ffffff',
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
-        this.add(this.scene.add.text(cxc, y + 104, def.name, {
+        }).setOrigin(0.5, 0);
+        this.txt(cxc, y + 104, def.name, {
             fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', fontStyle: 'bold',
             align: 'center', wordWrap: { width: w - 16 },
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        }).setOrigin(0.5, 0);
 
         const target = curLevel + mult;
         const badge = curLevel === 0
             ? (lucky ? `NEW → Lv ${target}` : 'NEW')
             : `Lv ${curLevel} → ${target}`;
         const badgeCol = lucky ? hex(accent) : (curLevel === 0 ? '#7be08a' : '#ffd24a');
-        this.add(this.scene.add.text(cxc, y + 138, badge, {
+        this.txt(cxc, y + 138, badge, {
             fontFamily: 'monospace', fontSize: '13px', color: badgeCol, fontStyle: 'bold',
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        }).setOrigin(0.5, 0);
 
-        this.add(this.scene.add.text(cxc, y + 162, def.desc(target), {
+        this.txt(cxc, y + 162, def.desc(target), {
             fontFamily: 'monospace', fontSize: '12px', color: '#aebfcf',
             align: 'center', wordWrap: { width: w - 16 },
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        }).setOrigin(0.5, 0);
     }
 
     close() {
         for (const o of this.objs) o.destroy();
         this.objs = [];
+    }
+
+    // Add a screen-fixed text to the modal layer (default depth above the cards) and track it.
+    private txt(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle, depth = MODAL_DEPTH + 2): Phaser.GameObjects.Text {
+        const t = this.scene.add.text(x, y, text, style).setScrollFactor(0).setDepth(depth);
+        this.add(t);
+        return t;
     }
 
     private add(o: Phaser.GameObjects.GameObject) {
@@ -179,41 +186,40 @@ export class UpgradesPanel {
             .setStrokeStyle(2, 0x3a4350).setInteractive(); // swallow clicks on the panel itself
         this.add(panel);
 
-        this.add(this.scene.add.text(left + 16, top + 14, '📜 YOUR UPGRADES', {
+        this.txt(left + 16, top + 14, '📜 YOUR UPGRADES', {
             fontFamily: 'monospace', fontSize: '20px', color: '#ffe08a', fontStyle: 'bold',
-        }).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
-        this.add(this.scene.add.text(left + 16, top + 44, `Level ${level}  ·  ${chosen.length} perk${chosen.length === 1 ? '' : 's'} chosen`, {
+        });
+        this.txt(left + 16, top + 44, `Level ${level}  ·  ${chosen.length} perk${chosen.length === 1 ? '' : 's'} chosen`, {
             fontFamily: 'monospace', fontSize: '13px', color: '#9fb3c8',
-        }).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
+        });
 
-        const close = this.scene.add.text(left + panelW - 14, top + 14, '✕', {
+        const close = this.txt(left + panelW - 14, top + 14, '✕', {
             fontFamily: 'monospace', fontSize: '18px', color: '#ffffff', backgroundColor: '#5a3a3a', padding: { x: 8, y: 4 },
-        }).setOrigin(1, 0).setScrollFactor(0).setDepth(PANEL_DEPTH + 2).setInteractive({ useHandCursor: true });
+        }).setOrigin(1, 0).setInteractive({ useHandCursor: true });
         close.on('pointerup', () => this.close());
-        this.add(close);
 
         if (chosen.length === 0) {
-            this.add(this.scene.add.text(cx, top + headH + 10, 'No upgrades yet — level up to choose one.', {
+            this.txt(cx, top + headH + 10, 'No upgrades yet — level up to choose one.', {
                 fontFamily: 'monospace', fontSize: '13px', color: '#7f93a8',
-            }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
+            }).setOrigin(0.5, 0);
             return;
         }
 
         let y = top + headH;
         for (const { def, level: lv } of chosen) {
             const accent = CAT_COLOR[def.category];
-            this.add(this.scene.add.text(left + 16, y + rowH / 2, `${def.icon}`, {
+            this.txt(left + 16, y + rowH / 2, `${def.icon}`, {
                 fontFamily: 'monospace', fontSize: '20px', color: '#ffffff',
-            }).setOrigin(0, 0.5).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
-            this.add(this.scene.add.text(left + 52, y + 6, def.name, {
+            }).setOrigin(0, 0.5);
+            this.txt(left + 52, y + 6, def.name, {
                 fontFamily: 'monospace', fontSize: '14px', color: '#ffffff', fontStyle: 'bold',
-            }).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
-            this.add(this.scene.add.text(left + 52, y + 23, def.desc(lv), {
+            });
+            this.txt(left + 52, y + 23, def.desc(lv), {
                 fontFamily: 'monospace', fontSize: '11px', color: '#aebfcf',
-            }).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
-            this.add(this.scene.add.text(left + panelW - 14, y + rowH / 2, `Lv ${lv}/${def.max}`, {
+            });
+            this.txt(left + panelW - 14, y + rowH / 2, `Lv ${lv}/${def.max}`, {
                 fontFamily: 'monospace', fontSize: '13px', color: hex(accent), fontStyle: 'bold',
-            }).setOrigin(1, 0.5).setScrollFactor(0).setDepth(PANEL_DEPTH + 2));
+            }).setOrigin(1, 0.5);
             y += rowH;
         }
     }
@@ -221,6 +227,13 @@ export class UpgradesPanel {
     close() {
         for (const o of this.objs) o.destroy();
         this.objs = [];
+    }
+
+    // Add a screen-fixed text to the panel layer and track it for teardown.
+    private txt(x: number, y: number, text: string, style: Phaser.Types.GameObjects.Text.TextStyle, depth = PANEL_DEPTH + 2): Phaser.GameObjects.Text {
+        const t = this.scene.add.text(x, y, text, style).setScrollFactor(0).setDepth(depth);
+        this.add(t);
+        return t;
     }
 
     private add(o: Phaser.GameObjects.GameObject) {
