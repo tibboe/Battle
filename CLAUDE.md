@@ -44,6 +44,19 @@ told.
 - **Match stats → SQLite** — every match POSTs a detailed summary to a small **Node server**
   (`server/index.mjs`, built-in `node:sqlite`) that also serves the build and a **`/stats`
   dashboard**. See DEPLOY.md.
+- **Screen rotation** — a left-edge **↺/↻ dock** (`ui/RotationHud.ts`) turns the whole battlefield
+  90° per tap with a smooth tween (`CameraController.rotateBy`). Only the **terrain** turns (it lives
+  on its own `terrainLayer`); every standing asset — units, buildings, trees, plus health bars,
+  floating damage text and building bars — is **billboarded upright** each frame and its
+  above-the-head offsets kept screen-relative (`controls/billboard.ts`: `uprightAngle` /
+  `screenOffset` / `rotatesWithCamera`, applied by `GameScene.billboardWorld`). Unit & peasant
+  **facing** (flipX from world-facing × cos θ), arrow **lob arcs**, and the **Arrow Volley**'s
+  "from the sky" launch are all computed in **screen space** so they read correctly at any angle.
+  The world is now **square (4000×4000, lane recentred to y=2000)** so you can zoom out the same
+  amount turned or not — the "Map size" dev tunable keeps width == height. Panning has **inertia**
+  (a released drag glides to a stop). Tunables live in `CONFIG.camera` (`rotateMs`/`rotateEase`,
+  `panGlideDecay`/`panGlideMinPx`). Known limits: at exactly 90°/270° side-view sprites can't point
+  up/down (flipX is horizontal-only), and buildings keep their fixed left/right art orientation.
 
 > Heads-up for a fresh session: the current work lives on the **`claude/nice-cori-bfiSA`** branch
 > (PR open against `main`). Deployment changed from a static file server to the **Node server in
