@@ -4,6 +4,7 @@ import { Projectiles } from '../units/Projectiles';
 import { Faction, UnitManager } from '../units/UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { matchStats } from '../stats/MatchStats';
+import { luMercCdCut, luMercCount, luVolleyArrows, luVolleyCdCut } from '../progression/LevelUpgrades';
 
 // Player-cast battlefield skills. Right now there is exactly one — the Arrow Volley — but this
 // manager owns the generic plumbing (per-skill cooldown + the staggered raining of arrows) so
@@ -48,13 +49,24 @@ export class Abilities {
 
     // ---- Arrow Volley ----
 
+    // Effective cooldowns fold in the player's stacking level-up perks (Arrow Storm / Hired
+    // Blades cut these). Used both when arming the cooldown and when drawing its sweep, so the
+    // button fills over the real, reduced duration.
+    private effVolleyCooldown(): number {
+        return Math.max(500, CONFIG.abilities.arrowVolley.cooldown - luVolleyCdCut());
+    }
+
+    private effMercCooldown(): number {
+        return Math.max(500, CONFIG.abilities.mercenaries.cooldown - luMercCdCut());
+    }
+
     get volleyReady(): boolean {
         return this.volleyCd <= 0;
     }
 
     // 0 (just cast) … 1 (ready) — drives the skill button's cooldown sweep.
     get volleyCooldownFrac(): number {
-        const cd = CONFIG.abilities.arrowVolley.cooldown;
+        const cd = this.effVolleyCooldown();
         return cd > 0 ? 1 - this.volleyCd / cd : 1;
     }
 
@@ -67,10 +79,11 @@ export class Abilities {
     castArrowVolley(faction: Faction, cx: number, cy: number): boolean {
         if (this.volleyCd > 0) return false;
         const av = CONFIG.abilities.arrowVolley;
-        this.volleyCd = av.cooldown;
+        this.volleyCd = this.effVolleyCooldown();
         matchStats.skillCast(faction);
 
-        for (let k = 0; k < av.arrows; k++) {
+        const arrows = av.arrows + luVolleyArrows();
+        for (let k = 0; k < arrows; k++) {
             // Uniform random point inside the target circle (sqrt keeps it even, not centre-heavy).
             const a = Math.random() * Math.PI * 2;
             const r = Math.sqrt(Math.random()) * av.radius;
@@ -93,7 +106,7 @@ export class Abilities {
     }
 
     get mercCooldownFrac(): number {
-        const cd = CONFIG.abilities.mercenaries.cooldown;
+        const cd = this.effMercCooldown();
         return cd > 0 ? 1 - this.mercCd / cd : 1;
     }
 
@@ -107,12 +120,13 @@ export class Abilities {
         if (this.mercCd > 0) return false;
         const m = CONFIG.abilities.mercenaries;
         if (m.cost > 0 && !this.store.spend(faction, { gold: m.cost })) return false;
-        this.mercCd = m.cooldown;
+        this.mercCd = this.effMercCooldown();
         matchStats.skillCast(faction);
 
+        const count = m.count + luMercCount();
         const archer = CONFIG.unitTypes.findIndex((u) => u.key === 'archer');
         if (archer >= 0) {
-            for (let k = 0; k < m.count; k++) {
+            for (let k = 0; k < count; k++) {
                 const a = Math.random() * Math.PI * 2;
                 const r = Math.sqrt(Math.random()) * m.spread;
                 this.units.spawnAt(faction, archer, x + Math.cos(a) * r, y + Math.sin(a) * r);

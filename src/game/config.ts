@@ -64,6 +64,9 @@ export interface UnitType {
     // Food paid to TRAIN one of this unit (deducted when its production countdown starts;
     // refunded if the building is disabled mid-train). 0/undefined = free.
     foodCost?: number;
+    // Player experience awarded for killing one of this unit (Milestone: leveling). Tougher
+    // units are worth more. Only enemy deaths credit the player. 0/undefined = no XP.
+    xp?: number;
     // "Combat weight" used by the enemy muster system: a gathered enemy force launches its
     // attack once the points of the units waiting at its rally cross the threshold. Pricier
     // units (lancer/monk) are worth more. Player units ignore this. Undefined = 1.
@@ -129,20 +132,59 @@ export const CONFIG = {
     // starting points to tune by playing. Weapon×armour counters, the Archer's arrow, and
     // the Monk's heal are all live (see combat.matrix and the Archer/Monk rows).
     unitTypes: [
-        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4, points: 2,
+        { key: 'warrior', art: 'warrior', role: 'melee', ability: 'block', foodCost: 4, xp: 10, points: 2,
           hp: 30, damage: 10, range: 64, attackInterval: 600, moveSpeed: 70,
           weapon: 'Blade', armour: 'Heavy', scale: 0.8, footAnchor: 0.8 },
-        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5, points: 3,
+        { key: 'lancer', art: 'lancer', role: 'melee', ability: 'knockback', foodCost: 5, xp: 14, points: 3,
           hp: 46, damage: 14, range: 140, attackInterval: 750, moveSpeed: 66,
           weapon: 'Pierce', armour: 'Medium', scale: 0.92, footAnchor: 0.66 },
-        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4, points: 2,
+        { key: 'archer', art: 'archer', role: 'ranged', ability: 'longshot', foodCost: 4, xp: 8, points: 2,
           hp: 18, damage: 8, range: 360, attackInterval: 750, moveSpeed: 76,
           weapon: 'Pierce', armour: 'Light', scale: 0.8, footAnchor: 0.8 },
-        { key: 'monk', art: 'monk', role: 'support', foodCost: 6, points: 3,
+        { key: 'monk', art: 'monk', role: 'support', foodCost: 6, xp: 12, points: 3,
           hp: 24, damage: 0, range: 200, attackInterval: 0, moveSpeed: 72,
           weapon: 'None', armour: 'Light', scale: 1.05, footAnchor: 0.8,
           heal: { amount: 6, interval: 1200 } },
     ] as UnitType[],
+
+    // Player experience / leveling (per-match, resets each battle). Killing an enemy unit
+    // awards its `xp` (above); accumulated XP fills a bar that advances the player up a
+    // RISING grading scale: the XP needed for level n is baseXp × growth^(n-1), so each
+    // level costs more than the last. Purely a progress display for now (rewards land later).
+    experience: {
+        baseXp: 100, // XP to go from level 1 → 2
+        growth: 1.5, // each level needs this × the previous level's requirement
+    },
+
+    // Level-up perk magnitudes (the "choose 1 of 3 on level-up" draft). Each perk STACKS:
+    // its effect = (perk's chosen level) × the per-level value below. Player-only and per-match
+    // (reset each battle). The perk catalog (names/descriptions/caps) lives in
+    // progression/LevelUpgrades.ts; only the numbers live here so they stay tunable.
+    levelUp: {
+        meleeAtk: 2,       // +damage per level, melee units (warrior, lancer)
+        rangedAtk: 2,      // +damage per level, archers
+        warriorHp: 8,      // +max HP per level, warriors
+        archerRange: 40,   // +engage range (px) per level, archers
+        lancerCrit: 0.08,  // +crit chance per level, lancers (also enables crit)
+        critCap: 0.85,     // hard ceiling on total crit chance
+        monkHeal: 3,       // +heal per level, monks (level 1 also makes the heal hit an area)
+        armourMult: 0.92,  // incoming damage ×this per level (multiplicative, all your units)
+        moveSpeed: 6,      // +move speed (px/s) per level, all combat units (applied at spawn)
+        peasantCarry: 4,   // +resources carried per trip per level
+        peasantSpeed: 18,  // +peasant move speed (px/s) per level
+        volleyArrows: 12,  // +Arrow Volley arrows per level
+        volleyCdCut: 1000, // −Arrow Volley cooldown (ms) per level
+        mercCount: 1,      // +Mercenaries hired per level
+        mercCdCut: 2000,   // −Mercenaries cooldown (ms) per level
+        keepHp: 120,       // +Castle max HP per level (repairs by the same on pick)
+        bulwark: 4,        // −Castle damage per breaching enemy per level
+        // "Luck": each drafted choice independently rolls a multiplier — a lucky card grants
+        // several perk levels at once. x3 is checked first, then x2, else x1 (normal).
+        luck: {
+            x2Chance: 0.20, // 20% chance a card is ×2 (grants 2 levels)
+            x3Chance: 0.05, // 5% chance a card is ×3 (grants 3 levels)
+        },
+    },
 
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in
     // terrain/tileset.ts; swap the loaded variant there (Tilemap_color1..5) to recolour.

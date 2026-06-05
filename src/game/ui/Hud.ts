@@ -39,10 +39,16 @@ export interface HudData {
     enemy: ResourceBag;
     playerHp: number;
     enemyHp: number;
-    maxHp: number;
+    playerMaxHp: number;     // your Castle's max (grows with the Fortify perk)
+    enemyMaxHp: number;
+    playerLevel: number;     // current player level (1+)
+    playerXp: number;        // XP banked toward the next level
+    playerXpForLevel: number; // XP required to leave the current level
     workers: Record<ResourceType, number>; // player's live worker count per resource
     focus: ResourceType[];                 // the FIFO focus queue (next assignments)
 }
+
+const xpCol = '#ffd24a'; // experience bar — gold
 
 const RES_ORDER = RESOURCE_TYPES;
 const RES_LETTER: Record<ResourceType, string> = { gold: 'G', stone: 'S', wood: 'W', food: 'F' };
@@ -77,8 +83,10 @@ export class Hud {
     private clearBtn!: Phaser.GameObjects.Text;
     private playerBar!: Bar;
     private enemyBar!: Bar;
+    private xpBar!: Bar;
     private fitBtn!: Phaser.GameObjects.Text;
     private devBtn!: Phaser.GameObjects.Text;
+    private levelsBtn!: Phaser.GameObjects.Text;
     private debug!: Phaser.GameObjects.Text;
 
     private devOnState: boolean;
@@ -90,6 +98,7 @@ export class Hud {
         onDev: (on: boolean) => void,
         onFocus: (res: ResourceType) => void,
         onFocusClear: () => void,
+        onLevels: () => void,
     ) {
         this.scene = scene;
         this.layer = layer;
@@ -101,9 +110,11 @@ export class Hud {
         this.buildStrip();
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
+        this.xpBar = this.buildBar('LEVEL 1', xpCol);
 
         this.fitBtn = this.mkButton('⤢ Fit', onFit);
         this.devBtn = this.mkButton('🛠 Dev', () => this.setDev(!this.devOnState));
+        this.levelsBtn = this.mkButton('📜 Perks', onLevels);
 
         this.debug = scene.add.text(0, 0, '', {
             fontFamily: 'monospace', fontSize: '13px', color: '#9fb3c8',
@@ -206,8 +217,13 @@ export class Hud {
             this.queueText.setText('→ ' + shown + (q.length > 10 ? ` +${q.length - 10}` : ''));
         }
 
-        this.setBar(this.playerBar, d.playerHp, d.maxHp);
-        this.setBar(this.enemyBar, d.enemyHp, d.maxHp);
+        this.setBar(this.playerBar, d.playerHp, d.playerMaxHp);
+        this.setBar(this.enemyBar, d.enemyHp, d.enemyMaxHp);
+
+        // XP bar: level on the label, XP/next as the value, fill = progress through the level.
+        this.xpBar.fill.scaleX = Phaser.Math.Clamp(d.playerXpForLevel > 0 ? d.playerXp / d.playerXpForLevel : 0, 0, 1);
+        this.xpBar.label.setText('LEVEL ' + d.playerLevel);
+        this.xpBar.value.setText(`${Math.floor(d.playerXp)} / ${d.playerXpForLevel}`);
 
         if (this.devOnState) {
             const e = d.enemy;
@@ -247,23 +263,38 @@ export class Hud {
         const endX = bx + 4 + queueW + 4 + 14;
         this.resBg.setPosition(8, 8).setSize(endX - 8, 40);
 
-        // Top-right buttons: Fit, then Dev to its left.
+        // Top-right buttons: Fit, then Dev, then Perks to their left.
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);
         this.devBtn.setPosition(this.fitBtn.x - this.devBtn.width - 8, 8);
+        this.levelsBtn.setPosition(this.devBtn.x - this.levelsBtn.width - 8, 8);
 
         // Castle bars on row 2: yours left, enemy right.
-        this.placeBar(this.playerBar, 10);
-        this.placeBar(this.enemyBar, w - 10 - BAR_W);
+        this.placeBar(this.playerBar, 10, 50);
+        this.placeBar(this.enemyBar, w - 10 - BAR_W, 50);
 
-        // Debug line bottom-left (dev only).
-        this.debug.setPosition(10, h - this.debug.height - 10).setVisible(this.devOnState);
+        // XP/level bar: a full-width strip flush against the very bottom of the screen. The
+        // command/selection bars (also bottom-pinned) cover it only while you're commanding.
+        this.placeXpBar(w, h);
+
+        // Debug line bottom-left (dev only). Sits just above the XP strip.
+        this.debug.setPosition(10, h - BAR_H - this.debug.height - 8).setVisible(this.devOnState);
     }
 
-    private placeBar(bar: Bar, x: number) {
-        bar.label.setPosition(x, 50);
-        bar.bg.setPosition(x, 64);
-        bar.fill.setPosition(x + 2, 66);
-        bar.value.setPosition(x + BAR_W / 2, 64 + BAR_H / 2);
+    // Stretch the XP bar across the full width at the bottom edge: level on the left, xp/next
+    // centred. The fill keeps its scaleX (set in update) so it still grows from the left.
+    private placeXpBar(w: number, h: number) {
+        const top = h - BAR_H;
+        this.xpBar.bg.setPosition(0, top).setSize(w, BAR_H);
+        this.xpBar.fill.setPosition(2, top + 2).setSize(w - 4, BAR_H - 4);
+        this.xpBar.label.setOrigin(0, 0.5).setPosition(10, top + BAR_H / 2);
+        this.xpBar.value.setPosition(w / 2, top + BAR_H / 2);
+    }
+
+    private placeBar(bar: Bar, x: number, topY: number) {
+        bar.label.setPosition(x, topY);
+        bar.bg.setPosition(x, topY + 14);
+        bar.fill.setPosition(x + 2, topY + 16);
+        bar.value.setPosition(x + BAR_W / 2, topY + 14 + BAR_H / 2);
     }
 }
 
