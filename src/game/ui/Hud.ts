@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG, ResourceType } from '../config';
+import { CONFIG, ResourceType, RESOURCE_TYPES } from '../config';
 import { ResourceBag } from '../economy/ResourceStore';
 
 // The player-facing HUD (the M4 HUD pass): a clean resource readout with icons, both Castles'
@@ -44,7 +44,7 @@ export interface HudData {
     focus: ResourceType[];                 // the FIFO focus queue (next assignments)
 }
 
-const RES_ORDER: ResourceType[] = ['gold', 'stone', 'wood', 'food'];
+const RES_ORDER = RESOURCE_TYPES;
 const RES_LETTER: Record<ResourceType, string> = { gold: 'G', stone: 'S', wood: 'W', food: 'F' };
 
 export function loadHud(scene: Phaser.Scene) {

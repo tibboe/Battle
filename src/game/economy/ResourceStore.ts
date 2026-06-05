@@ -1,4 +1,4 @@
-import { CONFIG, ResourceType } from '../config';
+import { CONFIG, ResourceType, RESOURCE_TYPES } from '../config';
 import { Faction } from '../units/UnitManager';
 import { matchStats } from '../stats/MatchStats';
 
@@ -11,7 +11,7 @@ import { matchStats } from '../stats/MatchStats';
 
 export type ResourceBag = Record<ResourceType, number>;
 
-const TYPES: ResourceType[] = ['gold', 'stone', 'wood', 'food'];
+const TYPES = RESOURCE_TYPES;
 
 export class ResourceStore {
     // Indexed by faction (player = 0, enemy = 1).

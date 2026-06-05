@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { CONFIG, ResourceType } from '../config';
+import { CONFIG, ResourceType, RESOURCE_TYPES } from '../config';
 import { FACTION, Faction, UnitManager } from './UnitManager';
 import { ResourceStore } from '../economy/ResourceStore';
 import { ResourceNode, ResourceNodes } from '../economy/ResourceNodes';
@@ -77,7 +77,7 @@ export function registerPeasantAnimations(scene: Phaser.Scene) {
 const State = { Seek: 0, Harvest: 1, Return: 2, Bank: 3, Build: 4, Flee: 5 } as const;
 type State = (typeof State)[keyof typeof State];
 
-const RESOURCES: ResourceType[] = ['gold', 'wood', 'stone', 'food'];
+const RESOURCES = RESOURCE_TYPES;
 
 interface Peasant {
     faction: Faction;

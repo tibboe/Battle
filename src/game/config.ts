@@ -14,6 +14,9 @@ export type UnitRole = 'melee' | 'ranged' | 'support';
 // from renewable sheep pastures.
 export type ResourceType = 'gold' | 'stone' | 'wood' | 'food';
 
+// Canonical resource order — the single source of truth used by the store, peasants and HUD.
+export const RESOURCE_TYPES: ResourceType[] = ['gold', 'stone', 'wood', 'food'];
+
 // A resource price (Milestone 4). Spent from a side's stockpile to build or upgrade.
 export interface Cost {
     gold: number;
