@@ -16,6 +16,7 @@ import { FloatingText } from '../ui/FloatingText';
 import { UnitPanel } from '../ui/UnitPanel';
 import { SelectionHud } from '../ui/SelectionHud';
 import { SkillBar } from '../ui/SkillBar';
+import { RotationHud } from '../ui/RotationHud';
 import { CommandBar } from '../ui/CommandBar';
 import { TargetingMode } from '../units/commands';
 import { Hud, loadHud } from '../ui/Hud';
@@ -38,6 +39,7 @@ export class GameScene extends Phaser.Scene {
     private unitPanel!: UnitPanel;
     private selectionHud!: SelectionHud;
     private skillBar!: SkillBar;
+    private rotationHud!: RotationHud;
     private commandBar!: CommandBar;
     private abilities!: Abilities;
     private devPanel!: DevPanel;
@@ -160,6 +162,9 @@ export class GameScene extends Phaser.Scene {
         // Player-cast skills: the manager (cooldowns + the arrow rain) and the left-edge dock.
         this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units, this.resources);
         this.skillBar = new SkillBar(this, this.uiLayer, (key) => this.toggleSkillTargeting(key));
+
+        // Screen-rotation arrows (↺/↻), under the skill dock — turn the battlefield 90° per tap.
+        this.rotationHud = new RotationHud(this, this.uiLayer, (dir) => this.cameraController.rotateBy(dir));
 
         // Player unit command system (selection + the bottom command bar + selection rings).
         // Selecting units and selecting a building are mutually exclusive, so each clears the other.
@@ -376,6 +381,7 @@ export class GameScene extends Phaser.Scene {
         this.unitPanel.layout();
         this.selectionHud.layout();
         this.skillBar.layout();
+        this.rotationHud.layout();
         this.commandBar.layout();
         this.cameraController.handleResize();
     }

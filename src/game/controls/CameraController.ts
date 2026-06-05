@@ -12,6 +12,11 @@ export class CameraController {
     private pinchDist = 0;
     // Once the player drags/zooms, stop auto-reframing on resize (respect their view).
     private userInteracted = false;
+    // Discrete battlefield orientation: 0,1,2,3 -> 0°,90°,180°,270° clockwise. Drives the
+    // rotation-aware zoom floor and drag-pan; the camera's raw `rotation` accumulates freely.
+    private orientation = 0;
+    // True while a 90° rotation tween is mid-flight — blocks new rotations (debounce).
+    private isRotating = false;
 
     constructor(scene: Phaser.Scene) {
         this.scene = scene;
@@ -30,12 +35,62 @@ export class CameraController {
         this.defaultView();
     }
 
-    // Smallest zoom we allow: the world always fills the screen on BOTH axes, so there
-    // are never black bars (the bigger ratio wins; the other axis overflows and pans).
-    private minZoom(): number {
-        const fillX = this.scene.scale.width / CONFIG.world.width;
-        const fillY = this.scene.scale.height / CONFIG.world.height;
+    // Smallest zoom we allow at a given orientation: the world always fills the screen on
+    // BOTH axes, so there are never black bars (the bigger ratio wins; the other axis
+    // overflows and pans). At 90°/270° the world is turned a quarter, so its width/height
+    // map to the OPPOSITE screen axes — swap them.
+    private minZoomFor(orientation: number): number {
+        const rotated = orientation % 2 === 1;
+        const worldW = rotated ? CONFIG.world.height : CONFIG.world.width;
+        const worldH = rotated ? CONFIG.world.width : CONFIG.world.height;
+        const fillX = this.scene.scale.width / worldW;
+        const fillY = this.scene.scale.height / worldH;
         return Math.max(CONFIG.camera.zoomMin, fillX, fillY);
+    }
+
+    private minZoom(): number {
+        return this.minZoomFor(this.orientation);
+    }
+
+    // Phaser 4's Camera type omits the `rotation` accessor, but it exists at runtime (it
+    // backs setRotation and is what the rotate tween animates). Read it through a narrow cast.
+    private get camRotation(): number {
+        return (this.cam as unknown as { rotation: number }).rotation;
+    }
+
+    // Spin the whole battlefield one 90° step: dir = +1 (clockwise) or -1 (anticlockwise).
+    // Ignored while a previous spin is still running (so rapid taps don't stack up). We
+    // tween the camera's raw rotation by a ±90° DELTA (never to a wrapped angle) so it
+    // always takes the short path, and re-centre on the pre-spin focal point in onComplete
+    // so the world turns around what the player is looking at rather than flying off-screen.
+    rotateBy(dir: 1 | -1) {
+        if (this.isRotating) return;
+        const next = (this.orientation + dir + 4) % 4;
+        const pivot = this.cam.getWorldPoint(this.scene.scale.width / 2, this.scene.scale.height / 2);
+
+        // Raise the zoom to the destination's floor up front, so we never flash black bars
+        // mid-spin (a no-op on a near-square screen; matters when the aspect favours the
+        // other world dimension).
+        const floor = this.minZoomFor(next);
+        if (this.cam.zoom < floor) this.cam.setZoom(floor);
+
+        this.isRotating = true;
+        this.userInteracted = true; // a deliberate view change — resize should re-clamp, not re-frame
+        this.cam.useBounds = false; // let the spin run unclamped; restored for orientation 0 below
+
+        this.scene.tweens.add({
+            targets: this.cam,
+            rotation: this.camRotation + dir * Math.PI / 2,
+            duration: CONFIG.camera.rotateMs,
+            ease: CONFIG.camera.rotateEase,
+            onComplete: () => {
+                this.orientation = next;
+                this.cam.useBounds = (next === 0); // bounds clamp is only correct unrotated
+                this.cam.centerOn(pivot.x, pivot.y);
+                this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
+                this.isRotating = false;
+            },
+        });
     }
 
     // Default playing view: frame the lane so it fills the screen, with map above/below
@@ -88,13 +143,17 @@ export class CameraController {
         this.pinchDist = 0;
 
         // One pointer down -> drag pan. Divide by zoom so a finger drag moves the
-        // same world distance regardless of zoom level.
+        // same world distance regardless of zoom level. When the camera is rotated, a
+        // screen-space delta no longer lines up with the world scroll axes, so rotate it
+        // by -rotation first (this collapses to the plain delta at orientation 0).
         if (pointer.isDown) {
             const dx = pointer.position.x - pointer.prevPosition.x;
             const dy = pointer.position.y - pointer.prevPosition.y;
             if (dx !== 0 || dy !== 0) this.userInteracted = true;
-            this.cam.scrollX -= dx / this.cam.zoom;
-            this.cam.scrollY -= dy / this.cam.zoom;
+            const cos = Math.cos(-this.camRotation);
+            const sin = Math.sin(-this.camRotation);
+            this.cam.scrollX -= (dx * cos - dy * sin) / this.cam.zoom;
+            this.cam.scrollY -= (dx * sin + dy * cos) / this.cam.zoom;
         }
     }
 

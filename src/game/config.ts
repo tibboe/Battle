@@ -452,6 +452,10 @@ export const CONFIG = {
         // in. Less than world.height so the world is taller than the screen and dragging
         // up/down pans; there is also map to either side for left/right panning.
         defaultViewHeight: 1100,
+        // Screen rotation (the ↺/↻ HUD): each tap spins the whole battlefield 90° over
+        // `rotateMs` with `rotateEase`. Gentle defaults — tune the feel here, not in code.
+        rotateMs: 600,
+        rotateEase: 'Sine.easeInOut',
     },
 
     // The two armies use the pack's blue (player) and red (enemy) art sets directly.
