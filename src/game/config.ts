@@ -174,6 +174,12 @@ export const CONFIG = {
         mercCdCut: 2000,   // −Mercenaries cooldown (ms) per level
         keepHp: 120,       // +Castle max HP per level (repairs by the same on pick)
         bulwark: 4,        // −Castle damage per breaching enemy per level
+        // "Luck": each drafted choice independently rolls a multiplier — a lucky card grants
+        // several perk levels at once. x3 is checked first, then x2, else x1 (normal).
+        luck: {
+            x2Chance: 0.20, // 20% chance a card is ×2 (grants 2 levels)
+            x3Chance: 0.05, // 5% chance a card is ×3 (grants 3 levels)
+        },
     },
 
     // Terrain drawn from the real Tiny Swords tileset. The index→piece map lives in

@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { PerkCategory, PerkDef, chosenPerks } from '../progression/LevelUpgrades';
+import { DraftOption, PerkCategory, chosenPerks } from '../progression/LevelUpgrades';
 
 // Two screen-fixed overlays for the level-up perk system, both on the UI layer (uiCamera):
 //   • LevelUpModal  — the "choose 1 of 3" draft shown (paused) on every level-up.
@@ -19,15 +19,18 @@ const CAT_COLOR: Record<PerkCategory, number> = {
 };
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
+// Lucky cards (×2 / ×3) get a gold/orange accent so they read as a jackpot.
+const LUCK_COLOR: Record<number, number> = { 2: 0xffd24a, 3: 0xff9b3d };
+
 // ---- The level-up draft modal: dim the field, present 3 perk cards, resume on pick. ----
 
 export class LevelUpModal {
     private readonly scene: Phaser.Scene;
     private readonly layer: Phaser.GameObjects.Layer;
-    private readonly onPick: (key: string) => void;
+    private readonly onPick: (key: string, mult: number) => void;
     private objs: Phaser.GameObjects.GameObject[] = [];
 
-    constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, onPick: (key: string) => void) {
+    constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, onPick: (key: string, mult: number) => void) {
         this.scene = scene;
         this.layer = layer;
         this.onPick = onPick;
@@ -37,13 +40,14 @@ export class LevelUpModal {
         return this.objs.length > 0;
     }
 
-    // Show the draft. `level` is the level just reached; `perks` are the 3 (or fewer) choices,
-    // each with its CURRENT chosen level (0 = new) so the card can show "Lv n → n+1".
-    open(level: number, perks: { def: PerkDef; level: number }[]) {
+    // Show the draft. `level` is the level just reached; `options` are the 3 (or fewer) choices,
+    // each carrying its current level (0 = new) and a luck multiplier (1/2/3 levels granted).
+    open(level: number, options: DraftOption[]) {
         this.close();
         const s = this.scene.scale;
         const cx = s.width / 2;
         const cy = s.height / 2;
+        const lucky = options.some((o) => o.mult > 1);
 
         const dim = this.scene.add.rectangle(0, 0, s.width, s.height, 0x000000, 0.7)
             .setOrigin(0, 0).setScrollFactor(0).setDepth(MODAL_DEPTH).setInteractive(); // swallow clicks
@@ -52,12 +56,12 @@ export class LevelUpModal {
         this.add(this.scene.add.text(cx, cy - 150, `LEVEL ${level}!`, {
             fontFamily: 'monospace', fontSize: '44px', color: '#ffe08a', fontStyle: 'bold',
         }).setOrigin(0.5).setScrollFactor(0).setDepth(MODAL_DEPTH + 1));
-        this.add(this.scene.add.text(cx, cy - 108, 'Choose an upgrade', {
-            fontFamily: 'monospace', fontSize: '18px', color: '#cfe6ff',
+        this.add(this.scene.add.text(cx, cy - 108, lucky ? '✨ Lucky draw! Choose an upgrade' : 'Choose an upgrade', {
+            fontFamily: 'monospace', fontSize: '18px', color: lucky ? '#ffd24a' : '#cfe6ff',
         }).setOrigin(0.5).setScrollFactor(0).setDepth(MODAL_DEPTH + 1));
 
         // Lay the cards out in a centred row, scaling the card width down if the screen is narrow.
-        const n = perks.length;
+        const n = options.length;
         const gap = 18;
         const maxRow = Math.min(s.width - 40, 660);
         const cardW = Math.min(200, Math.floor((maxRow - gap * (n - 1)) / Math.max(1, n)));
@@ -66,27 +70,36 @@ export class LevelUpModal {
         let x = cx - totalW / 2;
         const top = cy - 70;
 
-        for (const p of perks) {
-            this.buildCard(p.def, p.level, x, top, cardW, cardH);
+        for (const o of options) {
+            this.buildCard(o, x, top, cardW, cardH);
             x += cardW + gap;
         }
     }
 
-    private buildCard(def: PerkDef, curLevel: number, x: number, y: number, w: number, h: number) {
-        const accent = CAT_COLOR[def.category];
+    private buildCard(o: DraftOption, x: number, y: number, w: number, h: number) {
+        const { def, level: curLevel, mult } = o;
+        const lucky = mult > 1;
+        // Lucky cards take a gold/orange border (and a thicker one for ×3) to stand out.
+        const accent = lucky ? LUCK_COLOR[mult] : CAT_COLOR[def.category];
         const card = this.scene.add.rectangle(x, y, w, h, 0x121a24, 0.98)
             .setOrigin(0, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 1)
-            .setStrokeStyle(2, accent).setInteractive({ useHandCursor: true });
+            .setStrokeStyle(lucky ? 3 : 2, accent).setInteractive({ useHandCursor: true });
         card.on('pointerover', () => card.setFillStyle(0x1b2738, 1));
         card.on('pointerout', () => card.setFillStyle(0x121a24, 0.98));
-        card.on('pointerup', () => this.onPick(def.key));
+        card.on('pointerup', () => this.onPick(def.key, mult));
         this.add(card);
 
         const cxc = x + w / 2;
-        // Category tag, big icon, name, level badge, then the next-level description.
-        this.add(this.scene.add.text(cxc, y + 14, def.category.toUpperCase(), {
-            fontFamily: 'monospace', fontSize: '11px', color: hex(accent), fontStyle: 'bold',
-        }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        // Category tag (top-left), big icon, name, level badge, then the resulting-level description.
+        this.add(this.scene.add.text(x + 8, y + 12, def.category.toUpperCase(), {
+            fontFamily: 'monospace', fontSize: '11px', color: hex(CAT_COLOR[def.category]), fontStyle: 'bold',
+        }).setOrigin(0, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        // Luck ribbon (top-right) — the jackpot multiplier.
+        if (lucky) {
+            this.add(this.scene.add.text(x + w - 8, y + 10, `✨ ×${mult}`, {
+                fontFamily: 'monospace', fontSize: '15px', color: hex(accent), fontStyle: 'bold',
+            }).setOrigin(1, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
+        }
         this.add(this.scene.add.text(cxc, y + 50, def.icon, {
             fontFamily: 'monospace', fontSize: '40px', color: '#ffffff',
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
@@ -95,13 +108,16 @@ export class LevelUpModal {
             align: 'center', wordWrap: { width: w - 16 },
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
 
-        const badge = curLevel === 0 ? 'NEW' : `Lv ${curLevel} → ${curLevel + 1}`;
-        const badgeCol = curLevel === 0 ? '#7be08a' : '#ffd24a';
+        const target = curLevel + mult;
+        const badge = curLevel === 0
+            ? (lucky ? `NEW → Lv ${target}` : 'NEW')
+            : `Lv ${curLevel} → ${target}`;
+        const badgeCol = lucky ? hex(accent) : (curLevel === 0 ? '#7be08a' : '#ffd24a');
         this.add(this.scene.add.text(cxc, y + 138, badge, {
             fontFamily: 'monospace', fontSize: '13px', color: badgeCol, fontStyle: 'bold',
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));
 
-        this.add(this.scene.add.text(cxc, y + 162, def.desc(curLevel + 1), {
+        this.add(this.scene.add.text(cxc, y + 162, def.desc(target), {
             fontFamily: 'monospace', fontSize: '12px', color: '#aebfcf',
             align: 'center', wordWrap: { width: w - 16 },
         }).setOrigin(0.5, 0).setScrollFactor(0).setDepth(MODAL_DEPTH + 2));

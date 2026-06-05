@@ -100,6 +100,33 @@ export function draftPerks(n = 3): PerkDef[] {
     return pool.slice(0, n);
 }
 
+// One drafted choice: a perk, the player's current level in it, and the luck multiplier rolled
+// for THIS card (how many levels picking it grants at once).
+export interface DraftOption {
+    def: PerkDef;
+    level: number; // current chosen level (0 = new)
+    mult: number;  // 1 (normal), 2, or 3 — already clamped so level+mult never exceeds max
+}
+
+// Roll a card's luck multiplier: x3 first, then x2, else x1 (probabilities from CONFIG).
+function rollLuck(): number {
+    const { x2Chance, x3Chance } = CONFIG.levelUp.luck;
+    const r = Math.random();
+    if (r < x3Chance) return 3;
+    if (r < x3Chance + x2Chance) return 2;
+    return 1;
+}
+
+// Draft `n` choices, each with its own rolled luck multiplier (clamped to the perk's headroom
+// so a lucky card never overshoots the cap).
+export function draftOptions(n = 3): DraftOption[] {
+    return draftPerks(n).map((def) => {
+        const level = perkLevel(def.key);
+        const mult = Math.min(rollLuck(), def.max - level); // headroom ≥ 1 (pool excludes maxed)
+        return { def, level, mult };
+    });
+}
+
 // ---- Effect getters (player-only). Read by the combat / economy / ability / castle systems. ----
 
 const roleOf = (unitKey: string) => CONFIG.unitTypes.find((u) => u.key === unitKey)?.role;
