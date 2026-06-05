@@ -1,5 +1,6 @@
 import * as Phaser from 'phaser';
 import { battlefieldCenterY, CONFIG } from '../config';
+import { cameraAngle } from './billboard';
 
 // Handles camera navigation on both phone and desktop:
 //   - drag (one finger / mouse button held) to pan
@@ -59,12 +60,6 @@ export class CameraController {
         return this.minZoomFor(this.orientation);
     }
 
-    // Phaser 4's Camera type omits the `rotation` accessor, but it exists at runtime (it
-    // backs setRotation and is what the rotate tween animates). Read it through a narrow cast.
-    private get camRotation(): number {
-        return (this.cam as unknown as { rotation: number }).rotation;
-    }
-
     // Spin the whole battlefield one 90° step: dir = +1 (clockwise) or -1 (anticlockwise).
     // Ignored while a previous spin is still running (so rapid taps don't stack up). We
     // tween the camera's raw rotation by a ±90° DELTA (never to a wrapped angle) so it
@@ -88,14 +83,14 @@ export class CameraController {
 
         this.scene.tweens.add({
             targets: this.cam,
-            rotation: this.camRotation + dir * Math.PI / 2,
+            rotation: cameraAngle(this.scene) + dir * Math.PI / 2,
             duration: CONFIG.camera.rotateMs,
             ease: CONFIG.camera.rotateEase,
             onComplete: () => {
                 this.orientation = next;
                 this.cam.useBounds = (next === 0); // bounds clamp is only correct unrotated
                 this.cam.centerOn(pivot.x, pivot.y);
-                this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, this.minZoom(), CONFIG.camera.zoomMax));
+                this.cam.setZoom(Phaser.Math.Clamp(this.cam.zoom, floor, CONFIG.camera.zoomMax));
                 this.isRotating = false;
             },
         });
@@ -158,8 +153,8 @@ export class CameraController {
             const dx = pointer.position.x - pointer.prevPosition.x;
             const dy = pointer.position.y - pointer.prevPosition.y;
             if (dx !== 0 || dy !== 0) this.userInteracted = true;
-            const cos = Math.cos(-this.camRotation);
-            const sin = Math.sin(-this.camRotation);
+            const cos = Math.cos(-cameraAngle(this.scene));
+            const sin = Math.sin(-cameraAngle(this.scene));
             const sdx = -(dx * cos - dy * sin) / this.cam.zoom; // change applied to scrollX
             const sdy = -(dx * sin + dy * cos) / this.cam.zoom;
             this.cam.scrollX += sdx;

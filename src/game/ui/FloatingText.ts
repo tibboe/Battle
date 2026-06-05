@@ -18,6 +18,7 @@ export class FloatingText {
     private readonly life = new Float32Array(POOL);
     private readonly startX = new Float32Array(POOL);
     private readonly startY = new Float32Array(POOL);
+    private readonly up = new Phaser.Math.Vector2(); // scratch: "up on screen" reused each frame
     private next = 0;
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer) {
@@ -60,7 +61,7 @@ export class FloatingText {
     update(delta: number) {
         // Drift UP on screen and stay upright even when the battlefield is rotated.
         const angle = uprightAngle(this.scene);
-        const up = screenOffset(this.scene, 0, 1); // unit "up on screen" in world space
+        const up = screenOffset(this.scene, 0, 1, this.up); // unit "up on screen" in world space
         for (let i = 0; i < POOL; i++) {
             const t = this.texts[i];
             if (!t.active) continue;

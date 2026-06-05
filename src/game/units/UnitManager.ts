@@ -1384,18 +1384,17 @@ export class UnitManager {
         const phi = -cameraAngle(this.scene);
         const cos = Math.cos(phi);
         const sin = Math.sin(phi);
-        const off = new Phaser.Math.Vector2();
         for (let i = 0; i < this.count; i++) {
             if (this.state[i] === STATE.dying) continue;
             const max = this.maxHpOf(i);
             if (this.hp[i] >= max) continue; // full health — no bar
             const frac = Math.max(0, this.hp[i] / max);
             const sprite = this.sprites[i]!;
-            // Centre of the bar: `up` px above the unit's anchor on screen.
+            // Centre of the bar: `up` px above the unit's anchor on screen (screen-up offset
+            // expressed via the same φ=−θ cos/sin already computed for the bar geometry).
             const up = sprite.displayHeight * this.typeFootAnchor[this.type[i]] + 2 - H / 2;
-            screenOffset(this.scene, 0, up, off);
-            const cx = this.x[i] + off.x;
-            const cy = this.y[i] + off.y;
+            const cx = this.x[i] + up * sin;
+            const cy = this.y[i] - up * cos;
             // Backing box (W+2 × H+2), centred.
             this.fillRotRect(g, cx, cy, -(W + 2) / 2, -(H + 2) / 2, (W + 2) / 2, (H + 2) / 2, 0x000000, 0.55, cos, sin);
             // Fill bar grows from the left edge. Lerp green (full) → red (empty).
