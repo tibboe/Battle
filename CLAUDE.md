@@ -58,8 +58,9 @@ told.
   `panGlideDecay`/`panGlideMinPx`). Known limits: at exactly 90°/270° side-view sprites can't point
   up/down (flipX is horizontal-only), and buildings keep their fixed left/right art orientation.
 - **Experience & level-up perks** — killing enemy units earns **XP** (a per-unit-type value;
-  `progression/PlayerLevel.ts`) on a rising curve, shown on a full-width **XP bar pinned to the
-  bottom** of the HUD. Each level-up **pauses the battle** and offers a **draft of 3 perks** to
+  `progression/PlayerLevel.ts`) on a rising curve, shown as a compact **level chip in the top
+  resource strip** ("Lv n" over an xp / needed-xp counter). Each level-up **pauses the battle**
+  and offers a **draft of 3 perks** to
   choose from; perks **stack** (picking one again raises its level). Each card independently rolls
   a **luck multiplier** (20% ×2, 5% ×3 — grants several levels at once, gold/orange highlighted).
   A **📜 Perks** HUD button opens a review panel of everything taken. The perk catalog +

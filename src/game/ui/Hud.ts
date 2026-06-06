@@ -28,6 +28,7 @@ const BAR_W = 188;
 const BAR_H = 18;
 const ICON_PX = 20;
 const CHIP_W = 64;  // per-resource chip: icon + stockpile count over a worker badge (tap to focus)
+const LV_CHIP_W = 104; // level chip: wide enough for "Lv 12" over a five-digit "xp / need"
 
 const youCol = '#' + CONFIG.faction.player.tint.toString(16).padStart(6, '0');
 const foeCol = '#' + CONFIG.faction.enemy.tint.toString(16).padStart(6, '0');
@@ -83,7 +84,10 @@ export class Hud {
     private clearBtn!: Phaser.GameObjects.Text;
     private playerBar!: Bar;
     private enemyBar!: Bar;
-    private xpBar!: Bar;
+    // Compact level readout in the top strip (next to the resources): "Lv n" over "xp / need".
+    private levelChip!: Phaser.GameObjects.Rectangle;
+    private levelText!: Phaser.GameObjects.Text;
+    private xpText!: Phaser.GameObjects.Text;
     private fitBtn!: Phaser.GameObjects.Text;
     private devBtn!: Phaser.GameObjects.Text;
     private levelsBtn!: Phaser.GameObjects.Text;
@@ -110,7 +114,6 @@ export class Hud {
         this.buildStrip();
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
-        this.xpBar = this.buildBar('LEVEL 1', xpCol);
 
         this.fitBtn = this.mkButton('⤢ Fit', onFit);
         this.devBtn = this.mkButton('🛠 Dev', () => this.setDev(!this.devOnState));
@@ -159,6 +162,15 @@ export class Hud {
         }).setOrigin(0.5, 0.5).setScrollFactor(0).setDepth(DEPTH + 1).setInteractive({ useHandCursor: true });
         this.clearBtn.on('pointerup', () => this.onFocusClear());
         this.layer.add([this.queueText, this.clearBtn]);
+
+        // Player level chip at the end of the strip: gold-bordered, "Lv n" over "xp / need".
+        this.levelChip = this.scene.add.rectangle(0, 0, LV_CHIP_W, 34, 0x2a230f, 0.9)
+            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH).setStrokeStyle(1, 0xffd24a, 0.6);
+        this.levelText = this.scene.add.text(0, 0, 'Lv 1', { fontFamily: 'monospace', fontSize: '15px', color: xpCol, fontStyle: 'bold' })
+            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+        this.xpText = this.scene.add.text(0, 0, '0 / 0', { fontFamily: 'monospace', fontSize: '10px', color: '#e8d9a8' })
+            .setOrigin(0, 0.5).setScrollFactor(0).setDepth(DEPTH + 1);
+        this.layer.add([this.levelChip, this.levelText, this.xpText]);
     }
 
     private buildBar(label: string, color: string): Bar {
@@ -220,10 +232,9 @@ export class Hud {
         this.setBar(this.playerBar, d.playerHp, d.playerMaxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.enemyMaxHp);
 
-        // XP bar: level on the label, XP/next as the value, fill = progress through the level.
-        this.xpBar.fill.scaleX = Phaser.Math.Clamp(d.playerXpForLevel > 0 ? d.playerXp / d.playerXpForLevel : 0, 0, 1);
-        this.xpBar.label.setText('LEVEL ' + d.playerLevel);
-        this.xpBar.value.setText(`${Math.floor(d.playerXp)} / ${d.playerXpForLevel}`);
+        // Level chip: current level over the xp / needed-xp counter.
+        this.levelText.setText('Lv ' + d.playerLevel);
+        this.xpText.setText(`${Math.floor(d.playerXp)} / ${d.playerXpForLevel}`);
 
         if (this.devOnState) {
             const e = d.enemy;
@@ -260,8 +271,13 @@ export class Hud {
         });
         this.queueText.setPosition(bx + 4, cy);
         this.clearBtn.setPosition(bx + 4 + queueW + 4, cy);
-        const endX = bx + 4 + queueW + 4 + 14;
-        this.resBg.setPosition(8, 8).setSize(endX - 8, 40);
+        // Level chip just after the focus controls — "next to the resources".
+        const lvX = bx + 4 + queueW + 4 + 16;
+        this.levelChip.setPosition(lvX, cy);
+        this.levelText.setPosition(lvX + 8, cy - 7);
+        this.xpText.setPosition(lvX + 8, cy + 9);
+        const endX = lvX + LV_CHIP_W;
+        this.resBg.setPosition(8, 8).setSize(endX - 8 + 4, 40);
 
         // Top-right buttons: Fit, then Dev, then Perks to their left.
         this.fitBtn.setPosition(w - this.fitBtn.width - 10, 8);
@@ -272,22 +288,8 @@ export class Hud {
         this.placeBar(this.playerBar, 10, 50);
         this.placeBar(this.enemyBar, w - 10 - BAR_W, 50);
 
-        // XP/level bar: a full-width strip flush against the very bottom of the screen. The
-        // command/selection bars (also bottom-pinned) cover it only while you're commanding.
-        this.placeXpBar(w, h);
-
-        // Debug line bottom-left (dev only). Sits just above the XP strip.
-        this.debug.setPosition(10, h - BAR_H - this.debug.height - 8).setVisible(this.devOnState);
-    }
-
-    // Stretch the XP bar across the full width at the bottom edge: level on the left, xp/next
-    // centred. The fill keeps its scaleX (set in update) so it still grows from the left.
-    private placeXpBar(w: number, h: number) {
-        const top = h - BAR_H;
-        this.xpBar.bg.setPosition(0, top).setSize(w, BAR_H);
-        this.xpBar.fill.setPosition(2, top + 2).setSize(w - 4, BAR_H - 4);
-        this.xpBar.label.setOrigin(0, 0.5).setPosition(10, top + BAR_H / 2);
-        this.xpBar.value.setPosition(w / 2, top + BAR_H / 2);
+        // Debug line bottom-left (dev only).
+        this.debug.setPosition(10, h - this.debug.height - 10).setVisible(this.devOnState);
     }
 
     private placeBar(bar: Bar, x: number, topY: number) {
