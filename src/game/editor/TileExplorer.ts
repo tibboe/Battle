@@ -1,29 +1,32 @@
 import * as Phaser from 'phaser';
-import { foldersAt, makeTileThumb, tilesAt, TileDef } from './tileCatalog';
+import { TERRAIN_VARIANTS } from '../terrain/tileset';
+import { foldersAt, getTile, makeTileThumb, siblingInColor, tilesAt, TileDef } from './tileCatalog';
 import type { TileId } from './MapData';
 
-// A persistent bottom-of-screen tile explorer: a single horizontal row showing the items at
-// the current folder level, scrollable left/right by dragging. A ‹ Back button steps up a
-// level; tapping a folder descends into it; tapping a tile selects the brush WITHOUT leaving
-// the level — so you keep working with the tiles you care about. Lives on the editor's
-// zoom-1 `uiLayer`; the editor routes drags in the strip region to `scrollBy`.
+// A persistent bottom-of-screen tile explorer: a single horizontal row showing the items at the
+// current folder level, scrollable left/right by dragging. A ‹ Back button steps up a level;
+// tapping a folder descends; tapping a tile selects the brush WITHOUT leaving the level. A column
+// of five grass-colour swatches on the far right filters the row to one hue (and recolours the
+// current brush). Lives on the editor's zoom-1 `uiLayer`; the editor routes strip drags here.
 
 export const EXPLORER_H = 92;
-const VPL = 104; // viewport left edge (after the Back / breadcrumb column)
-const RPAD = 8; // right padding
-const PITCH = 86; // horizontal spacing between chip centres
-const CW = 78; // chip width
+const VPL = 104;     // viewport left edge (after the Back / breadcrumb column)
+const SWATCH = 24;   // colour-filter swatch size
+const SWGAP = 6;
+const RSW = TERRAIN_VARIANTS.length * SWATCH + (TERRAIN_VARIANTS.length - 1) * SWGAP + 20; // right reserved width
+const PITCH = 86;
+const CW = 78;
 const DEPTH_BG = 2000;
 const DEPTH_CHIP = 2001;
-const DEPTH_FIXED = 2003; // Back / breadcrumb / left mask — above chips so they slide under
+const DEPTH_FIXED = 2003;
 
 type GO = Phaser.GameObjects.GameObject;
 const T = (o: GO) => o as GO & Phaser.GameObjects.Components.Transform
     & Phaser.GameObjects.Components.Visible & Phaser.GameObjects.Components.Depth;
 
 interface Chip {
-    folder?: string;       // set for a folder chip
-    def?: TileDef;         // set for a tile chip
+    folder?: string;
+    def?: TileDef;
     bg: Phaser.GameObjects.Rectangle;
     thumb: GO;
     label: Phaser.GameObjects.Text;
@@ -36,8 +39,10 @@ export class TileExplorer {
 
     private path: string[] = [];
     private scrollX = 0;
+    private activeColor = 0;
     private selectedId: TileId | null = null;
     private chips: Chip[] = [];
+    private swatches: Phaser.GameObjects.Rectangle[] = [];
     private w = 0;
     private h = 0;
 
@@ -54,18 +59,19 @@ export class TileExplorer {
         this.goTo([]);
     }
 
-    /** True if a screen-y falls inside the strip (so the editor routes drags here, not paint). */
     contains(y: number) { return y > this.h - EXPLORER_H; }
 
     setSelected(id: TileId) {
         this.selectedId = id;
+        // Keep the colour filter in step with the selected tile's hue.
+        const def = getTile(id);
+        if (def?.colorIndex !== undefined) this.activeColor = def.colorIndex;
         this.restyle();
     }
 
     private build() {
         this.bg = this.scene.add.rectangle(0, 0, 10, EXPLORER_H, 0x0e1620, 1).setOrigin(0, 0)
             .setDepth(DEPTH_BG).setStrokeStyle(1, 0x2a3543);
-        // Opaque left column so chips scrolled left vanish under the Back/breadcrumb.
         this.leftMask = this.scene.add.rectangle(0, 0, VPL - 6, EXPLORER_H, 0x0e1620, 1).setOrigin(0, 0)
             .setDepth(DEPTH_FIXED - 1);
         this.backBtn = this.scene.add.text(0, 0, '‹ Back', {
@@ -77,20 +83,47 @@ export class TileExplorer {
         this.crumb = this.scene.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '11px', color: '#7fd0ff' })
             .setOrigin(0, 0.5).setDepth(DEPTH_FIXED);
         this.layer.add([this.bg, this.leftMask, this.backBtn, this.crumb]);
-    }
 
-    /** Navigate to a folder level: rebuild the chip row and reset the scroll. */
+        // Right-edge colour filter (opaque backing so chips slide under it).
+        const rmask = this.scene.add.rectangle(0, 0, RSW + 6, EXPLORER_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(DEPTH_FIXED - 1);
+        this.layer.add(rmask);
+        this.rightMask = rmask;
+        TERRAIN_VARIANTS.forEach((v, i) => {
+            const sw = this.scene.add.rectangle(0, 0, SWATCH, SWATCH, v.hue, 1).setOrigin(0.5).setDepth(DEPTH_FIXED)
+                .setStrokeStyle(2, 0x000000, 0.4).setInteractive({ useHandCursor: true });
+            sw.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.setActiveColor(i); });
+            this.swatches.push(sw);
+            this.layer.add(sw);
+        });
+    }
+    private rightMask!: Phaser.GameObjects.Rectangle;
+
     goTo(path: string[]) {
         this.path = path;
         this.scrollX = 0;
+        this.rebuild();
+    }
+
+    private setActiveColor(c: number) {
+        if (c === this.activeColor) return;
+        this.activeColor = c;
+        // Recolour the current brush to the same piece in the new hue, if it has colours.
+        const def = this.selectedId ? getTile(this.selectedId) : undefined;
+        const sib = def && siblingInColor(def, c);
+        if (sib) { this.selectedId = sib.id; this.onPick(sib.id); }
+        this.rebuild();
+    }
+
+    /** Rebuild the chip row for the current path, filtered to the active colour. */
+    private rebuild() {
         for (const c of this.chips) { c.bg.destroy(); c.thumb.destroy(); c.label.destroy(); }
         this.chips = [];
-
-        for (const name of foldersAt(path)) this.chips.push(this.makeFolderChip(name));
-        for (const def of tilesAt(path)) this.chips.push(this.makeTileChip(def));
-
-        this.backBtn.setVisible(path.length > 0);
-        this.crumb.setText(path.length ? path.join(' › ') : 'Tiles');
+        for (const name of foldersAt(this.path)) this.chips.push(this.makeFolderChip(name));
+        for (const def of tilesAt(this.path)) {
+            if (def.colorIndex === undefined || def.colorIndex === this.activeColor) this.chips.push(this.makeTileChip(def));
+        }
+        this.backBtn.setVisible(this.path.length > 0);
+        this.crumb.setText(this.path.length ? this.path.join(' › ') : 'Tiles');
         this.layout(this.w, this.h);
     }
 
@@ -123,9 +156,8 @@ export class TileExplorer {
         return { def, bg, thumb, label };
     }
 
-    /** Horizontal scroll by a screen-x delta (clamped to content). */
     scrollBy(dx: number) {
-        const viewportW = this.w - VPL - RPAD;
+        const viewportW = (this.w - RSW) - VPL;
         const contentW = this.chips.length * PITCH;
         const maxScroll = Math.min(0, viewportW - contentW);
         this.scrollX = Phaser.Math.Clamp(this.scrollX + dx, maxScroll, 0);
@@ -141,11 +173,19 @@ export class TileExplorer {
         this.backBtn.setPosition(10, top + 22);
         this.crumb.setPosition(10, h - 14);
 
+        // Colour swatches on the far right.
+        this.rightMask.setPosition(w - RSW - 6, top).setSize(RSW + 6, EXPLORER_H);
+        const sx0 = w - RSW + 10;
+        this.swatches.forEach((sw, i) => {
+            sw.setPosition(sx0 + i * (SWATCH + SWGAP) + SWATCH / 2, top + EXPLORER_H / 2);
+            sw.setStrokeStyle(i === this.activeColor ? 3 : 2, i === this.activeColor ? 0xffffff : 0x000000, i === this.activeColor ? 1 : 0.4);
+        });
+
+        const vpr = w - RSW;
         const cy = top + (EXPLORER_H - 18) / 2 + 6;
-        const right = w - RPAD;
         this.chips.forEach((c, i) => {
             const cx = VPL + i * PITCH + this.scrollX + CW / 2;
-            const visible = cx + CW / 2 > VPL && cx - CW / 2 < right;
+            const visible = cx + CW / 2 > VPL && cx - CW / 2 < vpr;
             c.bg.setPosition(cx, cy).setVisible(visible);
             T(c.thumb).setPosition(cx, cy - 14).setVisible(visible);
             c.label.setPosition(cx, cy + 22).setVisible(visible);

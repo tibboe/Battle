@@ -22,7 +22,9 @@ export class EditorScene extends Phaser.Scene {
     private map!: MapData;
     private ts = 64;
     private cells: (Phaser.GameObjects.Image | null)[] = [];
-    private featureSprites = new Map<number, Phaser.GameObjects.GameObject>();
+    // A feature cell may hold several sprites (cliffs are a rock body + a grass cap).
+    private featureSprites = new Map<number, Phaser.GameObjects.GameObject[]>();
+    private undoStack: { ground: TileId[]; features: MapFeature[] }[] = [];
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
 
@@ -39,6 +41,7 @@ export class EditorScene extends Phaser.Scene {
     // Top toolbar.
     private topBar!: Phaser.GameObjects.Rectangle;
     private menuBtn!: Phaser.GameObjects.Text;
+    private undoBtn!: Phaser.GameObjects.Text;
     private nameText!: Phaser.GameObjects.Text;
     private saveBtn!: Phaser.GameObjects.Text;
     private statusText!: Phaser.GameObjects.Text;
@@ -49,6 +52,8 @@ export class EditorScene extends Phaser.Scene {
     private pinchDist = 0;
     private scrollingExplorer = false;
     private lastExplorerX = 0;
+    private painting = false;       // a paint stroke is in progress (an undo snapshot is staged)
+    private strokeChanged = false;  // did the current stroke actually change anything?
 
     constructor() {
         super('Editor');
@@ -136,28 +141,41 @@ export class EditorScene extends Phaser.Scene {
             this.worldLayer.add(img);
             this.cells[i] = img;
         }
-        if (commit) this.markDirty();
+        if (commit) { this.strokeChanged = true; this.markDirty(); }
     }
 
     private renderAllFeatures() {
         for (const f of this.map.features) this.spawnFeature(f);
     }
 
-    /** Create the sprite for a stored feature (no data change). */
+    /** Create the sprite(s) for a stored feature (no data change). Cliffs are two cells tall:
+     *  a rock body in the cell plus a grass cap one cell above. */
     private spawnFeature(f: MapFeature) {
         const def = getTile(f.tileId);
         if (!def || def.render.kind !== 'feature') return;
         const r = def.render;
         const { x, y } = this.cellCentre(f.col, f.row);
-        const go = r.anim
-            ? this.add.sprite(x, y, r.texture).play(r.anim)
-            : this.add.image(x, y, r.texture, r.frame);
-        if (go instanceof Phaser.GameObjects.Sprite) go.anims.setProgress(Math.random());
-        go.setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
-        this.worldLayer.add(go);
+        const parts: Phaser.GameObjects.GameObject[] = [];
+        if (r.anim) {
+            const s = this.add.sprite(x, y, r.texture).play(r.anim);
+            s.anims.setProgress(Math.random());
+            parts.push(s);
+        } else {
+            parts.push(this.add.image(x, y, r.texture, r.frame));
+            if (r.capFrame !== undefined) parts.push(this.add.image(x, y - this.ts, r.texture, r.capFrame));
+        }
+        for (const o of parts) {
+            (o as Phaser.GameObjects.Image).setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
+            this.worldLayer.add(o);
+        }
         const i = cellIndex(this.map.cols, f.col, f.row);
-        this.featureSprites.get(i)?.destroy();
-        this.featureSprites.set(i, go);
+        this.clearFeatureAt(i);
+        this.featureSprites.set(i, parts);
+    }
+
+    private clearFeatureAt(i: number) {
+        const arr = this.featureSprites.get(i);
+        if (arr) { for (const o of arr) o.destroy(); this.featureSprites.delete(i); }
     }
 
     private placeFeature(col: number, row: number, id: TileId) {
@@ -170,6 +188,7 @@ export class EditorScene extends Phaser.Scene {
         const f: MapFeature = { tileId: id, col, row, flipX: !directional && Math.random() < 0.5 };
         this.map.features.push(f);
         this.spawnFeature(f);
+        this.strokeChanged = true;
         this.markDirty();
     }
 
@@ -177,9 +196,41 @@ export class EditorScene extends Phaser.Scene {
         const i = cellIndex(this.map.cols, col, row);
         const before = this.map.features.length;
         this.map.features = this.map.features.filter((f) => !(f.col === col && f.row === row));
-        this.featureSprites.get(i)?.destroy();
-        this.featureSprites.delete(i);
-        if (this.map.features.length !== before) this.markDirty();
+        this.clearFeatureAt(i);
+        if (this.map.features.length !== before) { this.strokeChanged = true; this.markDirty(); }
+    }
+
+    /** Tear down every sprite and rebuild from the map (used by undo). */
+    private fullRerender() {
+        for (const c of this.cells) c?.destroy();
+        this.cells = new Array(this.map.cols * this.map.rows).fill(null);
+        for (const arr of this.featureSprites.values()) for (const o of arr) o.destroy();
+        this.featureSprites.clear();
+        this.renderAllCells();
+        this.renderAllFeatures();
+    }
+
+    // ── undo ───────────────────────────────────────────────────────────────--
+    /** Snapshot the map before a mutating stroke (one entry per stroke, capped). */
+    private pushUndo() {
+        this.undoStack.push({ ground: [...this.map.ground], features: this.map.features.map((f) => ({ ...f })) });
+        if (this.undoStack.length > 60) this.undoStack.shift();
+        this.refreshUndoStyle();
+    }
+
+    private undo() {
+        const snap = this.undoStack.pop();
+        if (!snap) return;
+        this.map.ground = snap.ground;
+        this.map.features = snap.features;
+        this.fullRerender();
+        this.markDirty();
+        this.refreshUndoStyle();
+    }
+
+    private refreshUndoStyle() {
+        const has = this.undoStack.length > 0;
+        this.undoBtn.setColor(has ? '#ffffff' : '#7a8a99').setAlpha(has ? 1 : 0.7);
     }
 
     private drawGridAndBorder() {
@@ -248,7 +299,12 @@ export class EditorScene extends Phaser.Scene {
         this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
             if (p.y < TOP_H) return; // top toolbar buttons handle themselves
             if (this.explorer.contains(p.y)) { this.scrollingExplorer = true; this.lastExplorerX = p.x; return; }
-            if (this.mode === 'paint' && !this.twoFingers()) this.paintAt(p.x, p.y);
+            if (this.mode === 'paint' && !this.twoFingers()) {
+                this.painting = true;
+                this.strokeChanged = false;
+                this.pushUndo();
+                this.paintAt(p.x, p.y);
+            }
         });
 
         this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
@@ -276,7 +332,15 @@ export class EditorScene extends Phaser.Scene {
             }
         });
 
-        this.input.on('pointerup', () => { this.pinchDist = 0; this.scrollingExplorer = false; });
+        this.input.on('pointerup', () => {
+            this.pinchDist = 0;
+            this.scrollingExplorer = false;
+            // Discard the staged undo snapshot if the stroke changed nothing (no-op tap/drag).
+            if (this.painting) {
+                this.painting = false;
+                if (!this.strokeChanged) { this.undoStack.pop(); this.refreshUndoStyle(); }
+            }
+        });
         this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
             if (this.explorer.contains(p.y)) this.explorer.scrollBy(dy > 0 ? -PITCH_WHEEL : PITCH_WHEEL);
             else this.zoomAt(dy > 0 ? 0.9 : 1.1, p.x, p.y);
@@ -298,6 +362,7 @@ export class EditorScene extends Phaser.Scene {
     private buildToolbars() {
         this.topBar = this.add.rectangle(0, 0, 10, TOP_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
         this.menuBtn = this.btn('← Menu', '#33455a', () => this.scene.start('Menu'));
+        this.undoBtn = this.btn('↶ Undo', '#33455a', () => this.undo());
         this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
         this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
         this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
@@ -307,6 +372,7 @@ export class EditorScene extends Phaser.Scene {
         this.saveBtn = this.btn('💾 Save', '#2a8c4a', () => this.save());
         this.statusText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#8aa0b5' }).setOrigin(1, 0.5).setDepth(1000);
         this.uiLayer.add([this.topBar, this.nameText, this.statusText]);
+        this.refreshUndoStyle();
     }
 
     private layoutUI = () => {
@@ -316,7 +382,7 @@ export class EditorScene extends Phaser.Scene {
         this.topBar.setPosition(0, 0).setSize(w, TOP_H);
 
         let x = 8;
-        for (const b of [this.menuBtn, this.eraserBtn, this.modeBtn, this.gridBtn]) {
+        for (const b of [this.menuBtn, this.undoBtn, this.eraserBtn, this.modeBtn, this.gridBtn]) {
             b.setPosition(x, cy);
             x += b.width + 6;
         }
