@@ -39,10 +39,29 @@ export const TILES = {
 
 export type TileName = keyof typeof TILES;
 
+// The pack ships five colour variants (same 9×6 layout, different grass hue). The game uses
+// color1 only, but the map editor loads all five so each can be painted as its own grass.
+// Hues sampled from the interior grass frame of each PNG.
+const TS_DIR = 'assets/environment/tiny-swords/Tileset';
+export const TERRAIN_VARIANTS = [
+    { key: TILESET.key, file: TILESET.file, label: 'Meadow', hue: 0x99b653 },
+    { key: 'terrain-2', file: `${TS_DIR}/Tilemap_color2.png`, label: 'Spring', hue: 0x84ae57 },
+    { key: 'terrain-3', file: `${TS_DIR}/Tilemap_color3.png`, label: 'Verdant', hue: 0x62aa63 },
+    { key: 'terrain-4', file: `${TS_DIR}/Tilemap_color4.png`, label: 'Olive', hue: 0x83995e },
+    { key: 'terrain-5', file: `${TS_DIR}/Tilemap_color5.png`, label: 'Teal', hue: 0x57998b },
+] as const;
+
 // Load the tileset as a spritesheet (any tile addressable by frame index).
 export function loadTerrainTileset(scene: Phaser.Scene) {
     scene.load.spritesheet(TILESET.key, TILESET.file, {
         frameWidth: TILESET.tileSize,
         frameHeight: TILESET.tileSize,
     });
+}
+
+/** Load all five colour variants (editor only). Includes color1 under the 'terrain' key. */
+export function loadTerrainVariants(scene: Phaser.Scene) {
+    for (const v of TERRAIN_VARIANTS) {
+        scene.load.spritesheet(v.key, v.file, { frameWidth: TILESET.tileSize, frameHeight: TILESET.tileSize });
+    }
 }

@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { loadTerrainTileset } from '../terrain/tileset';
+import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, TileId } from '../editor/MapData';
 import { getTile, makeTileThumb, WATER_KEY } from '../editor/tileCatalog';
@@ -63,7 +63,7 @@ export class EditorScene extends Phaser.Scene {
     }
 
     preload() {
-        loadTerrainTileset(this);
+        loadTerrainVariants(this); // all 5 grass hues (color1 under the 'terrain' key)
         loadEnvironment(this); // water backdrop + tree/bush/rock/… feature art
     }
 

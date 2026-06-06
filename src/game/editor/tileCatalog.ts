@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { TILES, TILESET } from '../terrain/tileset';
+import { TERRAIN_VARIANTS, TILES, TILESET } from '../terrain/tileset';
 import { BUSHES, DUCK, ROCKS, STUMPS, TREES, WATER, WATER_ROCKS } from '../terrain/environment';
 import type { TileId } from './MapData';
 
@@ -30,15 +30,18 @@ export interface TileDef {
     swatch: number;
 }
 
+// Grass comes in five hues (the tileset colour variants), each its own paintable brush so you
+// can lay patches of different greens. The first keeps id 'grass' (the default + back-compat).
+const GRASS_DEFS: TileDef[] = TERRAIN_VARIANTS.map((v, i) => ({
+    id: i === 0 ? 'grass' : `grass-${i + 1}`,
+    category: ['Ground', 'Grass'],
+    label: `Grass — ${v.label}`,
+    desc: `${v.label} grass (#${v.hue.toString(16).padStart(6, '0')}).`,
+    render: { kind: 'ground', atlas: v.key, frame: TILES.flatFill },
+    swatch: v.hue,
+}));
+
 const GROUND: TileDef[] = [
-    {
-        id: 'grass',
-        category: ['Ground'],
-        label: 'Grass',
-        desc: 'Plain grass field — the default ground armies fight on.',
-        render: { kind: 'ground', atlas: TILESET.key, frame: TILES.flatFill },
-        swatch: 0x5fa84e,
-    },
     {
         id: 'water',
         category: ['Ground'],
@@ -142,6 +145,7 @@ const CLIFF_DEFS: TileDef[] = CLIFF_FRAMES.map((c) => ({
 }));
 
 export const TILE_CATALOG: TileDef[] = [
+    ...GRASS_DEFS,
     ...GROUND,
     ...CLIFF_DEFS,
     ...TREE_DEFS,
