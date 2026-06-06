@@ -56,9 +56,9 @@ const WATER_DEF: TileDef = {
 // structure shows instead of being clipped to one cell. 1-tall pieces (plateau surface, base)
 // have no cap. Each piece is generated in all five colours below.
 const CLIFF_PIECES: { body: number; cap?: number; label: string; desc: string }[] = [
-    { body: 41, cap: 32, label: 'Cliff edge (left)', desc: 'Rock wall topped by a grassy lip, left end. Two cells tall.' },
-    { body: 42, cap: 33, label: 'Cliff edge (front)', desc: 'Rock wall topped by a grassy lip. Two cells tall.' },
-    { body: 43, cap: 34, label: 'Cliff edge (right)', desc: 'Rock wall topped by a grassy lip, right end. Two cells tall.' },
+    { body: 41, cap: 23, label: 'Cliff edge (left)', desc: 'Rock wall under grass (edge only at the rock), left end. Two cells tall.' },
+    { body: 42, cap: 24, label: 'Cliff edge (front)', desc: 'Rock wall under grass (edge only at the rock). Two cells tall.' },
+    { body: 43, cap: 25, label: 'Cliff edge (right)', desc: 'Rock wall under grass (edge only at the rock), right end. Two cells tall.' },
     { body: 45, cap: 36, label: 'Cliff column (left)', desc: 'Narrow cliff pillar, left side. Two cells tall.' },
     { body: 48, cap: 39, label: 'Cliff column (right)', desc: 'Narrow cliff pillar, right side. Two cells tall.' },
     { body: 50, label: 'Cliff base (left)', desc: 'Foot of the cliff wall, left — stack under an edge for a taller drop.' },
