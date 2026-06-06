@@ -44,6 +44,9 @@ export class SkillBar {
     private readonly onSelect: (key: string) => void;
     private readonly rows: Row[] = [];
     private armed?: string; // the skill currently in targeting mode (highlighted)
+    // Skills start LOCKED and only appear once unlocked via the level-up draft. The dock shows
+    // (and lays out) just the unlocked rows, so it's empty at the start of a match.
+    private readonly unlocked = new Set<string>();
 
     constructor(scene: Phaser.Scene, layer: Phaser.GameObjects.Layer, onSelect: (key: string) => void) {
         this.scene = scene;
@@ -75,9 +78,18 @@ export class SkillBar {
         this.armed = key;
     }
 
+    // Set which skills are unlocked (drafted via level-up). Locked skills are hidden entirely;
+    // unlocked ones are re-laid-out so the dock packs from the top with no gaps.
+    setUnlocked(keys: string[]) {
+        this.unlocked.clear();
+        for (const k of keys) this.unlocked.add(k);
+        this.layout();
+    }
+
     // Feed live cooldown state per skill key each frame.
     update(states: Record<string, SkillState>) {
         for (const r of this.rows) {
+            if (!this.unlocked.has(r.def.key)) { this.hideRow(r); continue; } // locked → not shown
             const s = states[r.def.key];
             if (!s) continue;
             const armed = this.armed === r.def.key;
@@ -98,29 +110,34 @@ export class SkillBar {
     }
 
     layout() {
+        // Only unlocked skills take up space — the dock packs them from the (vertically centred) top.
+        const shown = this.rows.filter((r) => this.unlocked.has(r.def.key));
         const H = this.scene.scale.height;
-        const total = this.rows.length * BTN + (this.rows.length - 1) * GAP;
+        const total = shown.length * BTN + Math.max(0, shown.length - 1) * GAP;
         let y = Math.max(MARGIN, (H - total) / 2);
         for (const r of this.rows) {
+            if (!this.unlocked.has(r.def.key)) { this.hideRow(r); continue; }
             const x = MARGIN;
-            r.box.setPosition(x, y);
-            r.icon.setPosition(x + BTN / 2, y + BTN / 2 - 7);
-            r.label.setPosition(x + BTN / 2, y + BTN - 11);
+            r.box.setPosition(x, y).setVisible(true);
+            r.icon.setPosition(x + BTN / 2, y + BTN / 2 - 7).setVisible(true);
+            r.label.setPosition(x + BTN / 2, y + BTN - 11).setVisible(true);
             r.cdOverlay.setPosition(x, y);
             r.cdText.setPosition(x + BTN / 2, y + BTN / 2);
             y += BTN + GAP;
         }
     }
 
+    // Hide every part of a row (a locked or dev-hidden skill).
+    private hideRow(r: Row) {
+        r.box.setVisible(false);
+        r.icon.setVisible(false);
+        r.label.setVisible(false);
+        r.cdOverlay.setVisible(false);
+        r.cdText.setVisible(false);
+    }
+
     setVisible(v: boolean) {
-        for (const r of this.rows) {
-            r.box.setVisible(v);
-            r.icon.setVisible(v);
-            r.label.setVisible(v);
-            if (!v) {
-                r.cdOverlay.setVisible(false);
-                r.cdText.setVisible(false);
-            }
-        }
+        if (v) { this.layout(); return; } // re-show only the unlocked rows
+        for (const r of this.rows) this.hideRow(r);
     }
 }

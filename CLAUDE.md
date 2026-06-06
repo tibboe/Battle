@@ -25,7 +25,11 @@ told.
 **Since M4 (built on the `claude/nice-cori-bfiSA` branch — the current playable state):**
 - **Player skills** — a left-edge skill dock with cooldowns: **Arrow Volley** (rain arrows on a
   point) and **Mercenaries** (hire archers at a tapped point for gold). Generic targeting
-  (arm a skill → tap the field). `abilities/Abilities.ts`, `ui/SkillBar.ts`.
+  (arm a skill → tap the field). `abilities/Abilities.ts`, `ui/SkillBar.ts`. Skills now start
+  **locked** — each must be **unlocked through the level-up draft** (a one-time `volleyUnlock` /
+  `mercsUnlock` perk). Unlocking reveals the skill's button in the dock and adds its upgrade perk
+  (Arrow Storm / Hired Blades) to the draft pool (the upgrade perks are gated by `PerkDef.requires`
+  in `progression/LevelUpgrades.ts`; the dock packs only unlocked rows via `SkillBar.setUnlocked`).
 - **Unit command & control** — select your units by type from the right roster (or All) and
   issue **Move / Attack-move / Hold / Free / Auto** orders with **formations** (square/rect/line,
   tight/loose, ordered knight→lancer→archer→monk, facing the enemy). Orders are a per-type
@@ -58,8 +62,9 @@ told.
   `panGlideDecay`/`panGlideMinPx`). Known limits: at exactly 90°/270° side-view sprites can't point
   up/down (flipX is horizontal-only), and buildings keep their fixed left/right art orientation.
 - **Experience & level-up perks** — killing enemy units earns **XP** (a per-unit-type value;
-  `progression/PlayerLevel.ts`) on a rising curve, shown on a full-width **XP bar pinned to the
-  bottom** of the HUD. Each level-up **pauses the battle** and offers a **draft of 3 perks** to
+  `progression/PlayerLevel.ts`) on a shallow **linear** curve — `baseXp + level × perLevel`
+  (`CONFIG.experience`, default `10 + lvl×20`), so levels come **frequently**. XP shows on a
+  full-width **XP bar pinned to the bottom** of the HUD. Each level-up **pauses the battle** and offers a **draft of 3 perks** to
   choose from; perks **stack** (picking one again raises its level). Each card independently rolls
   a **luck multiplier** (20% ×2, 5% ×3 — grants several levels at once, gold/orange highlighted).
   A **📜 Perks** HUD button opens a review panel of everything taken. The perk catalog +

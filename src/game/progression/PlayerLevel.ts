@@ -7,7 +7,8 @@ import { CONFIG } from '../config';
 // resets every battle, mirroring ResourceStore's per-match lifecycle.
 //
 // The curve is config-driven (CONFIG.experience, live-tunable): the XP required to leave
-// level n is baseXp × growth^(n-1), rounded — every level costs more than the last.
+// level n is baseXp + n × perLevel — a shallow linear ramp, so early levels come quickly
+// and each one costs a little more than the last.
 export class PlayerLevel {
     private _level = 1;
     private _xpIntoLevel = 0; // XP banked toward the NEXT level (always < xpForLevel(level))
@@ -24,8 +25,8 @@ export class PlayerLevel {
     // XP required to advance OUT of the given level (the bar's denominator). Reads CONFIG
     // each call so the Dev panel's live edits take effect immediately.
     xpForLevel(level: number): number {
-        const { baseXp, growth } = CONFIG.experience;
-        return Math.round(baseXp * Math.pow(growth, level - 1));
+        const { baseXp, perLevel } = CONFIG.experience;
+        return Math.round(baseXp + level * perLevel);
     }
 
     // Fraction of the current level filled (0–1), for the HUD bar.

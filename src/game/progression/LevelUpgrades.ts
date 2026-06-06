@@ -18,6 +18,9 @@ export interface PerkDef {
     icon: string;            // emoji shown on the choice card
     category: PerkCategory;
     max: number;             // highest level this perk can reach
+    // Optional gate: this perk only enters the draft pool once perk `requires` is owned (>0).
+    // Used so a skill's upgrade perk only appears after the skill itself has been unlocked.
+    requires?: string;
     // Human description of what the NEXT level grants (nextLevel = current + 1).
     desc: (nextLevel: number) => string;
 }
@@ -52,9 +55,15 @@ export const PERKS: PerkDef[] = [
       desc: (n) => `Peasants +${n * lu().peasantSpeed} move speed` },
 
     // --- Skills ---
-    { key: 'volley', name: 'Arrow Storm', icon: '☔', category: 'Skills', max: 5,
+    // Skills start LOCKED: you must draft the unlock perk before the skill appears in the dock,
+    // which in turn unlocks its upgrade perk (gated via `requires`) into the draft pool.
+    { key: 'volleyUnlock', name: 'Arrow Volley', icon: '🏹', category: 'Skills', max: 1,
+      desc: () => 'Unlock the Arrow Volley skill — rain arrows over a target area' },
+    { key: 'volley', name: 'Arrow Storm', icon: '☔', category: 'Skills', max: 5, requires: 'volleyUnlock',
       desc: (n) => `Arrow Volley +${n * lu().volleyArrows} arrows, −${(n * lu().volleyCdCut) / 1000}s cooldown` },
-    { key: 'mercs', name: 'Hired Blades', icon: '🪙', category: 'Skills', max: 5,
+    { key: 'mercsUnlock', name: 'Mercenaries', icon: '💰', category: 'Skills', max: 1,
+      desc: () => 'Unlock the Mercenaries skill — hire archers at a target point for gold' },
+    { key: 'mercs', name: 'Hired Blades', icon: '🪙', category: 'Skills', max: 5, requires: 'mercsUnlock',
       desc: (n) => `Mercenaries +${n * lu().mercCount} archer${n * lu().mercCount === 1 ? '' : 's'}, −${(n * lu().mercCdCut) / 1000}s cooldown` },
 
     // --- Castle ---
@@ -91,7 +100,9 @@ export function chosenPerks(): { def: PerkDef; level: number }[] {
 // Draft up to `n` distinct perks for a level-up choice — random among those not yet maxed.
 // Internal helper for draftOptions (the public draft API).
 function draftPerks(n = 3): PerkDef[] {
-    const pool = PERKS.filter((p) => perkLevel(p.key) < p.max);
+    // Eligible = not yet maxed AND (no gate, or the gating perk is already owned). The gate keeps
+    // a skill's upgrade perk out of the pool until that skill has been unlocked.
+    const pool = PERKS.filter((p) => perkLevel(p.key) < p.max && (!p.requires || perkLevel(p.requires) > 0));
     // Fisher–Yates shuffle, then take the first n.
     for (let i = pool.length - 1; i > 0; i--) {
         const j = Math.floor(Math.random() * (i + 1));
@@ -159,6 +170,10 @@ export const luUnitSpeed = () => perkLevel('moveSpeed') * lu().moveSpeed;
 
 export const luPeasantCarry = () => perkLevel('peasantCarry') * lu().peasantCarry;
 export const luPeasantSpeed = () => perkLevel('peasantSpeed') * lu().peasantSpeed;
+
+// Skills are gated behind a one-time unlock perk; the SkillBar and cast paths read these.
+export const luVolleyUnlocked = () => perkLevel('volleyUnlock') > 0;
+export const luMercsUnlocked = () => perkLevel('mercsUnlock') > 0;
 
 export const luVolleyArrows = () => perkLevel('volley') * lu().volleyArrows;
 export const luVolleyCdCut = () => perkLevel('volley') * lu().volleyCdCut;

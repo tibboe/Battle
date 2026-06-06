@@ -49,8 +49,8 @@ export function buildTunables(): Setting[] {
 
     // Experience / leveling: the rising XP curve, then per-unit XP for killing one.
     settings.push(
-        { section: 'Experience', label: 'Base XP', get: () => CONFIG.experience.baseXp, set: (v) => (CONFIG.experience.baseXp = v), step: 25, min: 25, max: 500, live: true },
-        { section: 'Experience', label: 'Curve', get: () => CONFIG.experience.growth, set: (v) => (CONFIG.experience.growth = v), step: 0.1, min: 1.1, max: 3, live: true, fmt: (v) => `${v}×` },
+        { section: 'Experience', label: 'Base XP', get: () => CONFIG.experience.baseXp, set: (v) => (CONFIG.experience.baseXp = v), step: 5, min: 0, max: 200, live: true },
+        { section: 'Experience', label: 'Per level', get: () => CONFIG.experience.perLevel, set: (v) => (CONFIG.experience.perLevel = v), step: 5, min: 5, max: 200, live: true },
     );
     for (const u of CONFIG.unitTypes) {
         settings.push({ section: 'Experience', label: `${cap(u.key)} XP`, get: () => u.xp ?? 0, set: (v) => (u.xp = v), step: 1, min: 0, max: 100, live: true });

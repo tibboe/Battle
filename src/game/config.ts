@@ -149,11 +149,11 @@ export const CONFIG = {
 
     // Player experience / leveling (per-match, resets each battle). Killing an enemy unit
     // awards its `xp` (above); accumulated XP fills a bar that advances the player up a
-    // RISING grading scale: the XP needed for level n is baseXp × growth^(n-1), so each
-    // level costs more than the last. Purely a progress display for now (rewards land later).
+    // gently RISING scale: the XP needed for level n is baseXp + n × perLevel (a shallow
+    // linear ramp, so early levels come fast and each one costs a little more than the last).
     experience: {
-        baseXp: 100, // XP to go from level 1 → 2
-        growth: 1.5, // each level needs this × the previous level's requirement
+        baseXp: 10,   // flat floor added to every level's requirement
+        perLevel: 20, // extra XP per level number → level n needs baseXp + n × perLevel
     },
 
     // Level-up perk magnitudes (the "choose 1 of 3 on level-up" draft). Each perk STACKS:

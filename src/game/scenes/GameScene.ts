@@ -13,7 +13,7 @@ import { PeasantManager, loadPeasants, registerPeasantAnimations } from '../unit
 import { ResourceStore } from '../economy/ResourceStore';
 import { PlayerLevel } from '../progression/PlayerLevel';
 import {
-    choosePerk, draftOptions, luBulwark, luKeepHpBonus, resetPerks,
+    choosePerk, draftOptions, luBulwark, luKeepHpBonus, luMercsUnlocked, luVolleyUnlocked, resetPerks,
 } from '../progression/LevelUpgrades';
 import { LevelUpModal, UpgradesPanel } from '../ui/LevelUp';
 import { ResourceNodes, loadResourceNodes } from '../economy/ResourceNodes';
@@ -191,6 +191,7 @@ export class GameScene extends Phaser.Scene {
         // Player-cast skills: the manager (cooldowns + the arrow rain) and the left-edge dock.
         this.abilities = new Abilities(this, this.worldLayer, this.projectiles, this.units, this.resources);
         this.skillBar = new SkillBar(this, this.uiLayer, (key) => this.toggleSkillTargeting(key));
+        this.refreshSkillUnlocks(); // skills start locked (perks were just reset) — empty dock
 
         // Screen-rotation arrows (↺/↻), under the skill dock — turn the battlefield 90° per tap.
         this.rotationHud = new RotationHud(this, this.uiLayer, (dir) => this.cameraController.rotateBy(dir));
@@ -322,6 +323,7 @@ export class GameScene extends Phaser.Scene {
     private onPickPerk(key: string, mult: number) {
         for (let k = 0; k < mult; k++) choosePerk(key);
         this.units.recomputeUpgrades(); // fold the new perk level into unit stat bonuses
+        this.refreshSkillUnlocks();     // a skill-unlock perk reveals its button in the dock
 
         // Fortify raises the Castle's max HP and repairs it by the same amount on each pick.
         const newMax = CONFIG.keep.hp + luKeepHpBonus();
@@ -437,9 +439,17 @@ export class GameScene extends Phaser.Scene {
         });
     }
 
+    // Show in the dock only the skills the player has unlocked via the level-up draft.
+    private refreshSkillUnlocks() {
+        const unlocked: string[] = [];
+        if (luVolleyUnlocked()) unlocked.push('arrowVolley');
+        if (luMercsUnlocked()) unlocked.push('mercenaries');
+        this.skillBar.setUnlocked(unlocked);
+    }
+
     private skillReady(key: string): boolean {
-        if (key === 'arrowVolley') return this.abilities.volleyReady;
-        if (key === 'mercenaries') return this.abilities.mercReady;
+        if (key === 'arrowVolley') return luVolleyUnlocked() && this.abilities.volleyReady;
+        if (key === 'mercenaries') return luMercsUnlocked() && this.abilities.mercReady;
         return false;
     }
 
