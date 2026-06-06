@@ -74,10 +74,11 @@ const CLIFF_PIECES: { key: string; body: number; cap?: number; shadow?: boolean;
     { key: 'front-l', body: 23, label: 'Plateau ◣ (front-left)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top, left corner.' },
     { key: 'front-m', body: 24, label: 'Plateau ▼ (front)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top.' },
     { key: 'front-r', body: 25, label: 'Plateau ◢ (front-right)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top, right corner.' },
-    // 1-tall bare rock — stack to make a wall of any height (no shadow; it's mid-wall).
-    { key: 'face-l', body: 41, label: 'Cliff face (left)', desc: 'Bare rock wall tile, left. Place below a plateau front edge.' },
-    { key: 'face-m', body: 42, label: 'Cliff face (mid)', desc: 'Bare rock wall tile. Place below a plateau front edge.' },
-    { key: 'face-r', body: 43, label: 'Cliff face (right)', desc: 'Bare rock wall tile, right. Place below a plateau front edge.' },
+    // 1-tall bare rock — stack to make a wall of any height. Shadow-candidates: a shadow shows
+    // only when this is the BOTTOM rock and the cell below is land (decided by the editor).
+    { key: 'face-l', body: 41, shadow: true, label: 'Cliff face (left)', desc: 'Bare rock wall tile, left. Place below a plateau front edge.' },
+    { key: 'face-m', body: 42, shadow: true, label: 'Cliff face (mid)', desc: 'Bare rock wall tile. Place below a plateau front edge.' },
+    { key: 'face-r', body: 43, shadow: true, label: 'Cliff face (right)', desc: 'Bare rock wall tile, right. Place below a plateau front edge.' },
     // 1-tall cliff foot — drops a shadow.
     { key: '50', body: 50, shadow: true, label: 'Cliff base (left)', desc: 'Foot of the cliff wall, left.' },
     { key: '51', body: 51, shadow: true, label: 'Cliff base (mid)', desc: 'Foot of the cliff wall.' },

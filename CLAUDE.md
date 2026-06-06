@@ -44,9 +44,10 @@ on top of ground so the grass shows through their transparent edges — for hand
 plateaus (visual authoring only; gameplay elevation / Milestone 2 stays parked). Cliff edge/column
 pieces are **two cells tall** (a rock body in the clicked cell + a grass cap one cell above) and
 come in all five hues, **plus 1-tall pieces** (plateau grass incl. a front-edge "1-tile-thick top",
-bare rock faces, bases) for hand-composing any cliff shape or overriding an edge. Cliff *bottom*
-pieces (composite edges, columns, bases) auto-drop a soft `Shadow.png` beneath them for depth.
-(The pack has **no stairs/ramp art** — that's why M2 was parked.) The canvas pans/zooms on the main camera while the toolbars are drawn by a
+bare rock faces, bases) for hand-composing any cliff shape or overriding an edge. A cliff rock
+piece auto-drops a soft full-width `Shadow.png` beneath it only where it's the **bottom** of a
+cliff **on land** (no cliff continuing below, foot not over water) — recomputed as neighbours
+change. (The pack has **no stairs/ramp art** — that's why M2 was parked.) The canvas pans/zooms on the main camera while the toolbars are drawn by a
 separate **zoom-1 `uiCamera`** (mirrors `GameScene`) so the HUD stays anchored to the screen edges.
 Maps persist to the **Node/SQLite server** (`/api/maps` CRUD in `server/index.mjs`) and mirror to
 **localStorage** (`lanebreaker.maps.v1`) so the editor also works under plain `npm run dev`.

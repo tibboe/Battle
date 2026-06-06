@@ -24,6 +24,8 @@ export class EditorScene extends Phaser.Scene {
     private cells: (Phaser.GameObjects.Image | null)[] = [];
     // A feature cell may hold several sprites (cliffs are a rock body + a grass cap).
     private featureSprites = new Map<number, Phaser.GameObjects.GameObject[]>();
+    // Cliff-foot shadows, tracked per cell so they can be re-evaluated when neighbours change.
+    private shadowSprites = new Map<number, Phaser.GameObjects.Image>();
     private undoStack: { ground: TileId[]; features: MapFeature[] }[] = [];
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
@@ -141,11 +143,16 @@ export class EditorScene extends Phaser.Scene {
             this.worldLayer.add(img);
             this.cells[i] = img;
         }
-        if (commit) { this.strokeChanged = true; this.markDirty(); }
+        if (commit) {
+            this.strokeChanged = true;
+            this.markDirty();
+            this.refreshShadow(col, row - 1); // changing this cell's ground may toggle the cliff-foot shadow above
+        }
     }
 
     private renderAllFeatures() {
         for (const f of this.map.features) this.spawnFeature(f);
+        for (const f of this.map.features) this.refreshShadow(f.col, f.row); // after all are known
     }
 
     /** Create the sprite(s) for a stored feature (no data change). Cliffs are two cells tall:
@@ -168,16 +175,44 @@ export class EditorScene extends Phaser.Scene {
             (o as Phaser.GameObjects.Image).setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
             this.worldLayer.add(o);
         }
-        // Cliff bottoms drop a soft shadow on the ground below to add depth (under the cliff).
-        if (r.shadow) {
-            const sh = this.add.image(x, y + this.ts * 0.42, SHADOW.key)
-                .setOrigin(0.5).setScale(0.5).setAlpha(0.4).setDepth(1000 + y - 2);
-            this.worldLayer.add(sh);
-            parts.push(sh);
-        }
         const i = cellIndex(this.map.cols, f.col, f.row);
         this.clearFeatureAt(i);
         this.featureSprites.set(i, parts);
+    }
+
+    private featureAt(col: number, row: number) {
+        return this.map.features.find((f) => f.col === col && f.row === row);
+    }
+
+    /** A cliff foot casts a shadow only when it's the BOTTOM rock (no cliff continuing below)
+     *  and the cell below is land (not open water). */
+    private shouldShadow(col: number, row: number): boolean {
+        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return false;
+        const f = this.featureAt(col, row);
+        if (!f) return false;
+        const def = getTile(f.tileId);
+        if (!def || def.render.kind !== 'feature' || !def.render.shadow) return false;
+        const br = row + 1;
+        if (br < this.map.rows) {
+            if (this.map.ground[cellIndex(this.map.cols, col, br)] === 'water') return false; // foot in water
+            const below = this.featureAt(col, br);
+            if (below && below.tileId.startsWith('cliff-')) return false; // wall continues — not the foot
+        }
+        return true;
+    }
+
+    /** Re-evaluate (add/remove) the shadow for one cell. */
+    private refreshShadow(col: number, row: number) {
+        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return;
+        const i = cellIndex(this.map.cols, col, row);
+        this.shadowSprites.get(i)?.destroy();
+        this.shadowSprites.delete(i);
+        if (!this.shouldShadow(col, row)) return;
+        const { x, y } = this.cellCentre(col, row);
+        const sh = this.add.image(x, y + this.ts * 0.5, SHADOW.key)
+            .setOrigin(0.5).setScale(0.95, 0.7).setDepth(1000 + y - 2);
+        this.worldLayer.add(sh);
+        this.shadowSprites.set(i, sh);
     }
 
     private clearFeatureAt(i: number) {
@@ -195,6 +230,8 @@ export class EditorScene extends Phaser.Scene {
         const f: MapFeature = { tileId: id, col, row, flipX: !directional && Math.random() < 0.5 };
         this.map.features.push(f);
         this.spawnFeature(f);
+        this.refreshShadow(col, row);
+        this.refreshShadow(col, row - 1); // the piece above is no longer the foot
         this.strokeChanged = true;
         this.markDirty();
     }
@@ -204,6 +241,8 @@ export class EditorScene extends Phaser.Scene {
         const before = this.map.features.length;
         this.map.features = this.map.features.filter((f) => !(f.col === col && f.row === row));
         this.clearFeatureAt(i);
+        this.refreshShadow(col, row);     // remove this cell's shadow (no feature now)
+        this.refreshShadow(col, row - 1); // the piece above may now be the foot
         if (this.map.features.length !== before) { this.strokeChanged = true; this.markDirty(); }
     }
 
@@ -213,6 +252,8 @@ export class EditorScene extends Phaser.Scene {
         this.cells = new Array(this.map.cols * this.map.rows).fill(null);
         for (const arr of this.featureSprites.values()) for (const o of arr) o.destroy();
         this.featureSprites.clear();
+        for (const s of this.shadowSprites.values()) s.destroy();
+        this.shadowSprites.clear();
         this.renderAllCells();
         this.renderAllFeatures();
     }
