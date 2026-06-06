@@ -745,7 +745,10 @@ export class UnitManager {
     // so the horde stays readable. `producerId` attributes the unit to the building that made
     // it (-1 = unattributed) so that building can cap its live count. Returns false if the side
     // is at its cap or the pool is exhausted. Called by the Buildings system on each beat.
-    spawnAt(faction: Faction, typeIndex: number, x: number, y: number, producerId = -1): boolean {
+    // `forceAuto` overrides the enemy gather-then-charge behaviour: the unit marches straight on
+    // the player keep even while the muster is enabled. Used by the reinforcement arrivals, which
+    // are meant to advance immediately rather than wait at the rally.
+    spawnAt(faction: Faction, typeIndex: number, x: number, y: number, producerId = -1, forceAuto = false): boolean {
         const cap = faction === FACTION.player
             ? CONFIG.spawn.unitsTarget.player
             : CONFIG.spawn.unitsTarget.enemy;
@@ -787,7 +790,7 @@ export class UnitManager {
             this.order[i] = standing;
             this.destX[i] = standing === ORDER.auto ? 0 : this.standingX[t];
             this.destY[i] = standing === ORDER.auto ? 0 : this.clampLaneY(this.standingY[t]);
-        } else if (CONFIG.enemyAI.muster.enabled) {
+        } else if (CONFIG.enemyAI.muster.enabled && !forceAuto) {
             // Park at its own distinct slot in the muster formation so the gathered blob settles.
             const anchor = this.musterSlotPos(this.enemyMusterSlot++);
             this.order[i] = ORDER.hold;

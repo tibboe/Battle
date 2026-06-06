@@ -323,6 +323,25 @@ export const CONFIG = {
             growth: 6,           // added to the threshold after each wave released
             rallyClearance: 90,  // px of gap between the front of the building grid and the rally
         },
+
+        // Reinforcement arrivals (a THIRD enemy spawn source, on top of its built producers and
+        // the muster). On a fixed countdown a fresh squad PUFFS into existence just below the enemy
+        // keep and marches straight at the player base — bypassing the muster so it always advances.
+        // Each wave escalates: more units (`baseCount` + `countGrowth` per wave, capped at
+        // `maxCount`) and more variety (every `diversifyEvery` waves unlocks the next unit type —
+        // warriors first, then archers, lancers, monks). `intervalSeconds` is a live Dev knob and
+        // drives the on-screen reinforcement countdown. `spawnOffsetY` is how far below the keep
+        // the squad appears; `spawnSpread` scatters them around that point.
+        reinforcements: {
+            enabled: true,
+            intervalSeconds: 40, // seconds between arrivals (Dev "Reinforce secs")
+            baseCount: 3,        // units in the first wave
+            countGrowth: 1,      // +units added to each subsequent wave
+            maxCount: 24,        // hard cap on a single wave's size
+            diversifyEvery: 2,   // every N waves unlock the next unit type in the roster
+            spawnOffsetY: 190,   // px below the enemy keep the squad puffs in
+            spawnSpread: 110,    // px scatter around the spawn point
+        },
     },
 
     // ── Economy (Milestone 4) ───────────────────────────────────────────────────────────

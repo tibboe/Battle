@@ -29,6 +29,7 @@ import { Hud, loadHud } from '../ui/Hud';
 import { Abilities } from '../abilities/Abilities';
 import { EnemyAI } from '../ai/EnemyAI';
 import { EnemyMuster } from '../ai/EnemyMuster';
+import { EnemyReinforcements } from '../ai/EnemyReinforcements';
 import { resetUpgrades } from '../upgrades';
 import { matchStats, submitMatch } from '../stats/MatchStats';
 
@@ -60,6 +61,7 @@ export class GameScene extends Phaser.Scene {
     private peasants!: PeasantManager;
     private enemyAI!: EnemyAI;
     private enemyMuster!: EnemyMuster;
+    private enemyReinforcements!: EnemyReinforcements;
 
     // Field targeting (shared by skills and unit commands): when a mode is active, the next field
     // tap commits it at that point; a full-field overlay captures the tap, a drag still pans.
@@ -252,6 +254,9 @@ export class GameScene extends Phaser.Scene {
         this.enemyAI = new EnemyAI(this.buildings, this.resources);
         // Gather-then-charge: holds new enemy units at a rally point until a point threshold.
         this.enemyMuster = new EnemyMuster(this.units);
+        // Timed reinforcement arrivals: a squad puffs in below the enemy keep on a countdown and
+        // marches straight at the player base, escalating in size + variety each wave.
+        this.enemyReinforcements = new EnemyReinforcements(this, this.worldLayer, this.units, this.buildings);
 
         // Right-edge unit roster: live counts, tap a type to select it for commands, "All" to
         // select everything. The ✎ stat-editing card stays behind the Dev toggle.
@@ -490,6 +495,7 @@ export class GameScene extends Phaser.Scene {
         if (!frozen) {
             this.enemyAI.update(delta);
             this.enemyMuster.update(delta);
+            this.enemyReinforcements.update(delta);
             this.units.update(delta);
             matchStats.tickPeak(this.units.livingCount(FACTION.player), this.units.livingCount(FACTION.enemy));
             // Peasants advance any build site before the buildings system checks completion.
@@ -534,6 +540,11 @@ export class GameScene extends Phaser.Scene {
                 food: this.peasants.workerCount(FACTION.player, 'food'),
             },
             focus: this.peasants.focusList(FACTION.player),
+            reinforcement: {
+                enabled: this.enemyReinforcements.enabled,
+                seconds: this.enemyReinforcements.secondsToNext,
+                wave: this.enemyReinforcements.wave,
+            },
         });
 
         // When the stockpile changes (a peasant banks, or you spend), refresh any open menu so

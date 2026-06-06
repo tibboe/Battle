@@ -33,6 +33,7 @@ export function serializeSettings() {
         production: { spawnSeconds: CONFIG.production.spawnSeconds },
         combat: { attackIntervalScale: CONFIG.combat.attackIntervalScale, hpScale: CONFIG.combat.hpScale },
         enemyMuster: { ...CONFIG.enemyAI.muster },
+        enemyReinforce: { ...CONFIG.enemyAI.reinforcements },
         resources: { gold: r.gold, stone: r.stone, wood: r.wood, food: r.food },
         abilities: { arrowVolley: { ...CONFIG.abilities.arrowVolley }, mercenaries: { ...CONFIG.abilities.mercenaries } },
         units,
@@ -106,6 +107,18 @@ export function applySavedSettings() {
         if (typeof s.enemyMuster.enabled === 'boolean') mm.enabled = s.enemyMuster.enabled;
         if (isNum(s.enemyMuster.startThreshold)) mm.startThreshold = s.enemyMuster.startThreshold;
         if (isNum(s.enemyMuster.growth)) mm.growth = s.enemyMuster.growth;
+    }
+    if (s.enemyReinforce) {
+        const rr = CONFIG.enemyAI.reinforcements;
+        const er = s.enemyReinforce;
+        if (typeof er.enabled === 'boolean') rr.enabled = er.enabled;
+        if (isNum(er.intervalSeconds)) rr.intervalSeconds = er.intervalSeconds;
+        if (isNum(er.baseCount)) rr.baseCount = er.baseCount;
+        if (isNum(er.countGrowth)) rr.countGrowth = er.countGrowth;
+        if (isNum(er.maxCount)) rr.maxCount = er.maxCount;
+        if (isNum(er.diversifyEvery)) rr.diversifyEvery = er.diversifyEvery;
+        if (isNum(er.spawnOffsetY)) rr.spawnOffsetY = er.spawnOffsetY;
+        if (isNum(er.spawnSpread)) rr.spawnSpread = er.spawnSpread;
     }
     if (s.resources) {
         const r = CONFIG.resources.start;

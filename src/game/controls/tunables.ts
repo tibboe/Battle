@@ -39,6 +39,12 @@ export function buildTunables(): Setting[] {
         { section: 'Enemy', label: 'Attack pts', get: () => CONFIG.enemyAI.muster.startThreshold, set: (v) => (CONFIG.enemyAI.muster.startThreshold = v), step: 2, min: 0, max: 200, live: true },
         { section: 'Enemy', label: 'Pts/wave', get: () => CONFIG.enemyAI.muster.growth, set: (v) => (CONFIG.enemyAI.muster.growth = v), step: 2, min: 0, max: 100, live: true },
 
+        // Reinforcement arrivals (timed enemy squads that puff in below the keep and march on).
+        { section: 'Enemy', label: 'Reinforce', get: () => (CONFIG.enemyAI.reinforcements.enabled ? 1 : 0), set: (v) => (CONFIG.enemyAI.reinforcements.enabled = v > 0), step: 1, min: 0, max: 1, live: true, bool: true, fmt: (v) => (v ? 'ON' : 'OFF') },
+        { section: 'Enemy', label: 'Reinforce secs', get: () => CONFIG.enemyAI.reinforcements.intervalSeconds, set: (v) => (CONFIG.enemyAI.reinforcements.intervalSeconds = v), step: 5, min: 5, max: 180, live: true, fmt: (v) => `${v}s` },
+        { section: 'Enemy', label: 'Reinforce count', get: () => CONFIG.enemyAI.reinforcements.baseCount, set: (v) => (CONFIG.enemyAI.reinforcements.baseCount = v), step: 1, min: 1, max: 40, live: true },
+        { section: 'Enemy', label: 'Reinforce +/wave', get: () => CONFIG.enemyAI.reinforcements.countGrowth, set: (v) => (CONFIG.enemyAI.reinforcements.countGrowth = v), step: 1, min: 0, max: 10, live: true },
+
         { section: 'Economy', label: 'Start food', get: () => CONFIG.resources.start.food, set: (v) => (CONFIG.resources.start.food = v), step: 10, min: 0, max: 400, live: false },
     ];
 

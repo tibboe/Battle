@@ -70,6 +70,17 @@ told.
   Effects fold into the existing chokepoints (`UnitManager.recomputeUpgrades`, spawn/heal, peasant
   speed/carry, `Abilities` cooldowns/counts, the keep-damage path) — they stack **on top of** the
   building-purchased upgrades in `upgrades.ts`.
+- **Enemy reinforcement arrivals** — a **third** enemy spawn source (on top of its built producers
+  and the muster). On a fixed **countdown** a squad **puffs into existence just below the enemy keep**
+  and marches **straight at the player base** (it ignores the muster). Each wave **escalates**: more
+  units (`baseCount` + `countGrowth`/wave, capped at `maxCount`) and more **variety** — every
+  `diversifyEvery` waves unlocks the next roster type (warrior→archer→lancer→monk). A
+  **⚔ Reinforcements m:ss** countdown shows under the enemy Castle bar (`ui/Hud.ts`). The puff is
+  **synthesised** from fading circles (`units/effects.ts` `spawnPuff` — the pack ships no puff
+  sprite; swap that one function if real art arrives). System: `ai/EnemyReinforcements.ts`; spawn
+  uses a new `forceAuto` flag on `UnitManager.spawnAt`. Knobs live in `CONFIG.enemyAI.reinforcements`;
+  **Reinforce ON/OFF, secs, count, +/wave** are exposed as live Dev/Setup tunables (the interval is
+  the headline dev value).
 
 > Heads-up for a fresh session: the current work lives on the **`claude/nice-cori-bfiSA`** branch
 > (PR open against `main`). Deployment changed from a static file server to the **Node server in

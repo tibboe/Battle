@@ -46,6 +46,8 @@ export interface HudData {
     playerXpForLevel: number; // XP required to leave the current level
     workers: Record<ResourceType, number>; // player's live worker count per resource
     focus: ResourceType[];                 // the FIFO focus queue (next assignments)
+    // Enemy reinforcement countdown: seconds until the next timed arrival + how many have landed.
+    reinforcement: { enabled: boolean; seconds: number; wave: number };
 }
 
 const xpCol = '#ffd24a'; // experience bar — gold
@@ -84,6 +86,7 @@ export class Hud {
     private playerBar!: Bar;
     private enemyBar!: Bar;
     private xpBar!: Bar;
+    private reinforceText!: Phaser.GameObjects.Text; // enemy reinforcement countdown (under the enemy bar)
     private fitBtn!: Phaser.GameObjects.Text;
     private devBtn!: Phaser.GameObjects.Text;
     private levelsBtn!: Phaser.GameObjects.Text;
@@ -111,6 +114,12 @@ export class Hud {
         this.playerBar = this.buildBar('YOUR CASTLE', youCol);
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
         this.xpBar = this.buildBar('LEVEL 1', xpCol);
+
+        // Enemy reinforcement countdown, tucked under the enemy Castle bar (right-aligned).
+        this.reinforceText = scene.add.text(0, 0, '', {
+            fontFamily: 'monospace', fontSize: '12px', color: '#ff9a6a', fontStyle: 'bold',
+        }).setOrigin(1, 0).setScrollFactor(0).setDepth(DEPTH + 1);
+        this.layer.add(this.reinforceText);
 
         this.fitBtn = this.mkButton('⤢ Fit', onFit);
         this.devBtn = this.mkButton('🛠 Dev', () => this.setDev(!this.devOnState));
@@ -220,6 +229,17 @@ export class Hud {
         this.setBar(this.playerBar, d.playerHp, d.playerMaxHp);
         this.setBar(this.enemyBar, d.enemyHp, d.enemyMaxHp);
 
+        // Reinforcement countdown (hidden when the feature is off). Shows time to the next arrival
+        // and how many waves have landed so far.
+        const r = d.reinforcement;
+        this.reinforceText.setVisible(r.enabled);
+        if (r.enabled) {
+            const t = Math.ceil(r.seconds);
+            const mm = Math.floor(t / 60);
+            const ss = String(t % 60).padStart(2, '0');
+            this.reinforceText.setText(`⚔ Reinforcements ${mm}:${ss}` + (r.wave > 0 ? `  (wave ${r.wave})` : ''));
+        }
+
         // XP bar: level on the label, XP/next as the value, fill = progress through the level.
         this.xpBar.fill.scaleX = Phaser.Math.Clamp(d.playerXpForLevel > 0 ? d.playerXp / d.playerXpForLevel : 0, 0, 1);
         this.xpBar.label.setText('LEVEL ' + d.playerLevel);
@@ -271,6 +291,9 @@ export class Hud {
         // Castle bars on row 2: yours left, enemy right.
         this.placeBar(this.playerBar, 10, 50);
         this.placeBar(this.enemyBar, w - 10 - BAR_W, 50);
+
+        // Reinforcement countdown sits just under the enemy Castle bar, right-aligned to it.
+        this.reinforceText.setPosition(w - 10, 50 + 14 + BAR_H + 4);
 
         // XP/level bar: a full-width strip flush against the very bottom of the screen. The
         // command/selection bars (also bottom-pinned) cover it only while you're commanding.
