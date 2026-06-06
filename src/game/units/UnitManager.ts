@@ -419,14 +419,19 @@ export class UnitManager {
         sprite.anims.timeScale = Math.max(0.05, shootMs / ls.drawTime);
     }
 
-    // Draw finished: loose the arrow (resolved where it lands), reset animation speed, cooldown.
-    private releaseLongShot(i: number) {
+    // Release point reached (near the end of the draw): loose the arrow now so it flies *during*
+    // the animation. The remaining frames keep playing as the bow's follow-through.
+    private looseLongShot(i: number) {
         const ls = CONFIG.abilities.longshot;
         const f = this.faction[i];
-        const sprite = this.sprites[i]!;
-        sprite.anims.timeScale = 1;
         if (this.onLongShot) this.onLongShot(this.x[i], this.y[i] - 40, this.drawLx[i], this.drawLy[i], f as Faction);
         this.abilityCd[i] = ls.cooldown;
+    }
+
+    // Draw animation fully played out: reset animation speed and return to idle / walk.
+    private finishLongShot(i: number) {
+        const sprite = this.sprites[i]!;
+        sprite.anims.timeScale = 1;
         this.playStateAnim(i); // back to idle / walk
     }
 
@@ -1018,10 +1023,15 @@ export class UnitManager {
 
             if (this.abilityCd[i] > 0) this.abilityCd[i] -= delta; // tick special-ability cd
 
-            // Mid long-shot draw: the archer stands frozen and slowly draws; loose at the end.
+            // Mid long-shot draw: the archer stands and slowly draws; loose near the end of the
+            // animation (releaseFrac), then let the remaining frames play as follow-through.
             if (this.drawTimer[i] > 0) {
+                const ls = CONFIG.abilities.longshot;
+                const tail = ls.drawTime * (1 - ls.releaseFrac); // ms of animation left when it looses
+                const prev = this.drawTimer[i];
                 this.drawTimer[i] -= delta;
-                if (this.drawTimer[i] <= 0) this.releaseLongShot(i);
+                if (prev > tail && this.drawTimer[i] <= tail) this.looseLongShot(i); // crossed release point
+                if (this.drawTimer[i] <= 0) this.finishLongShot(i);
                 continue;
             }
 

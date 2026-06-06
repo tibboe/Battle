@@ -443,8 +443,10 @@ export const CONFIG = {
         // Archer: when NO enemy is in normal range, stop and lob an arc arrow at a far enemy
         // (base range + bonus). The archer stands and slowly draws for `drawTime` ms, then looses
         // it. It only damages an enemy within `hitRadius` of where it lands; `spread` is the aim
-        // scatter (bigger = more misses); `speed` the lob travel.
-        longshot: { bonusRange: 2000, cooldown: 3000, drawTime: 1000, spread: 55, hitRadius: 36, speed: 1300 },
+        // scatter (bigger = more misses); `speed` the lob travel. `releaseFrac` is how far through
+        // the draw the arrow looses (0.85 = at 85% of drawTime); the rest plays as follow-through so
+        // the arrow flies *during* the animation rather than after it finishes.
+        longshot: { bonusRange: 2000, cooldown: 3000, drawTime: 1000, releaseFrac: 0.85, spread: 55, hitRadius: 36, speed: 1300 },
         // Peasant flee-burst upgrade: while fleeing a nearby enemy, sprint at ×mult for
         // `duration` ms, then `cooldown` ms before it can burst again.
         peasantFlee: { mult: 1.9, duration: 1500, cooldown: 6000 },
