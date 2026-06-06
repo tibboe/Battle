@@ -982,7 +982,7 @@ export class UnitManager {
             for (let k = 0; k < bucket.length; k++) {
                 const j = bucket[k];
                 if (j === i || this.faction[j] !== this.faction[i]) continue;
-                if (this.hp[j] >= this.typeHp[this.type[j]]) continue; // already full
+                if (this.hp[j] >= this.maxHpOf(j)) continue; // already full (real max: upgrades + hpScale)
                 const dx = this.x[j] - this.x[i];
                 const dy = this.y[j] - this.y[i];
                 if (dx * dx + dy * dy > range2) continue;
