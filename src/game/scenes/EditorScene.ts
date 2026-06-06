@@ -2,24 +2,21 @@ import * as Phaser from 'phaser';
 import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, TileId } from '../editor/MapData';
-import { getTile, makeTileThumb, WATER_KEY } from '../editor/tileCatalog';
-import { TilePalette } from '../editor/TilePalette';
+import { getTile, WATER_KEY } from '../editor/tileCatalog';
+import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
 
-// The map editor. Paint GROUND tiles (grass/water) cell-by-cell and place FEATURES (trees,
-// bushes, rocks, …) on top, chosen from a hierarchical palette with thumbnails + a recent
-// row. A toggleable grid overlay, ✏️ Paint / ✋ Pan modes, an eraser, pinch/wheel zoom, and
-// save round it out. The canvas pans/zooms on the main camera; the toolbars are drawn by a
-// separate zoom-1 UI camera so they stay anchored to the screen edges.
+// The map editor. Paint GROUND tiles (grass hues / water) cell-by-cell and place FEATURES
+// (trees, bushes, rocks, cliffs) on top, chosen from a persistent bottom EXPLORER strip you
+// scroll left/right. A grid overlay, ✏️ Paint / ✋ Pan modes, an eraser, pinch/wheel zoom, and
+// save round it out. The canvas pans/zooms on the main camera; the toolbar + explorer are
+// drawn by a separate zoom-1 UI camera so they stay anchored to the screen edges.
 
 const TOP_H = 48;
-const BOTTOM_H = 72;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 4;
-const THUMB = 38;
 
 type Mode = 'paint' | 'pan';
-type ThumbGO = Phaser.GameObjects.GameObject & Phaser.GameObjects.Components.Transform & Phaser.GameObjects.Components.Depth;
 
 export class EditorScene extends Phaser.Scene {
     private map!: MapData;
@@ -33,30 +30,25 @@ export class EditorScene extends Phaser.Scene {
     private erasing = false;
     private mode: Mode = 'paint';
     private gridOn = true;
-    private recent: TileId[] = [];
 
-    // Layer/camera split (see GameScene): world on the main camera, UI on a zoom-1 camera.
     private worldLayer!: Phaser.GameObjects.Layer;
     private uiLayer!: Phaser.GameObjects.Layer;
     private uiCamera!: Phaser.Cameras.Scene2D.Camera;
-    private palette!: TilePalette;
+    private explorer!: TileExplorer;
 
-    // Toolbar widgets (named, so dynamic recreation never breaks the layout).
+    // Top toolbar.
     private topBar!: Phaser.GameObjects.Rectangle;
-    private botBar!: Phaser.GameObjects.Rectangle;
     private menuBtn!: Phaser.GameObjects.Text;
     private nameText!: Phaser.GameObjects.Text;
     private saveBtn!: Phaser.GameObjects.Text;
     private statusText!: Phaser.GameObjects.Text;
-    private activeBg!: Phaser.GameObjects.Rectangle;
-    private activeLabel!: Phaser.GameObjects.Text;
-    private activeThumb: ThumbGO | null = null;
-    private recentSlots: { bg: Phaser.GameObjects.Rectangle; thumb: ThumbGO; id: TileId }[] = [];
     private eraserBtn!: Phaser.GameObjects.Text;
     private modeBtn!: Phaser.GameObjects.Text;
     private gridBtn!: Phaser.GameObjects.Text;
 
     private pinchDist = 0;
+    private scrollingExplorer = false;
+    private lastExplorerX = 0;
 
     constructor() {
         super('Editor');
@@ -86,7 +78,8 @@ export class EditorScene extends Phaser.Scene {
         this.drawGridAndBorder();
         this.setupCamera();
         this.buildToolbars();
-        this.palette = new TilePalette(this, this.uiLayer, (id) => this.selectBrush(id));
+        this.explorer = new TileExplorer(this, this.uiLayer, (id) => this.selectBrush(id));
+        this.explorer.setSelected(this.brush);
         this.setupUiCamera();
         this.layoutUI();
 
@@ -104,7 +97,6 @@ export class EditorScene extends Phaser.Scene {
     private onResize = () => {
         this.uiCamera.setSize(this.scale.width, this.scale.height);
         this.layoutUI();
-        this.palette.layout();
     };
 
     // ── world rendering ────────────────────────────────────────────────────────
@@ -209,7 +201,7 @@ export class EditorScene extends Phaser.Scene {
         cam.setBounds(-pad, -pad, this.mapW + pad * 2, this.mapH + pad * 2);
         const zoom = Math.min(
             this.scale.width / (this.mapW + this.ts * 2),
-            (this.scale.height - TOP_H - BOTTOM_H) / (this.mapH + this.ts * 2),
+            (this.scale.height - TOP_H - EXPLORER_H) / (this.mapH + this.ts * 2),
         );
         cam.setZoom(Phaser.Math.Clamp(zoom, ZOOM_MIN, ZOOM_MAX));
         cam.centerOn(this.mapW / 2, this.mapH / 2);
@@ -227,7 +219,7 @@ export class EditorScene extends Phaser.Scene {
 
     // ── input ──────────────────────────────────────────────────────────────--
     private overToolbar(y: number) {
-        return y < TOP_H || y > this.scale.height - BOTTOM_H;
+        return y < TOP_H || this.explorer.contains(y);
     }
 
     private cellAt(sx: number, sy: number): { col: number; row: number } | null {
@@ -254,12 +246,12 @@ export class EditorScene extends Phaser.Scene {
 
     private bindInput() {
         this.input.on('pointerdown', (p: Phaser.Input.Pointer) => {
-            if (this.palette.isOpen() || this.overToolbar(p.y)) return;
+            if (p.y < TOP_H) return; // top toolbar buttons handle themselves
+            if (this.explorer.contains(p.y)) { this.scrollingExplorer = true; this.lastExplorerX = p.x; return; }
             if (this.mode === 'paint' && !this.twoFingers()) this.paintAt(p.x, p.y);
         });
 
         this.input.on('pointermove', (p: Phaser.Input.Pointer) => {
-            if (this.palette.isOpen()) return;
             const p1 = this.input.pointer1;
             const p2 = this.input.pointer2;
             if (p1.isDown && p2.isDown) {
@@ -269,6 +261,11 @@ export class EditorScene extends Phaser.Scene {
                 return;
             }
             this.pinchDist = 0;
+            if (this.scrollingExplorer && p.isDown) {
+                this.explorer.scrollBy(p.x - this.lastExplorerX);
+                this.lastExplorerX = p.x;
+                return;
+            }
             if (!p.isDown || this.overToolbar(p.y)) return;
             if (this.mode === 'paint') {
                 this.paintAt(p.x, p.y);
@@ -279,18 +276,19 @@ export class EditorScene extends Phaser.Scene {
             }
         });
 
-        this.input.on('pointerup', () => { this.pinchDist = 0; });
+        this.input.on('pointerup', () => { this.pinchDist = 0; this.scrollingExplorer = false; });
         this.input.on('wheel', (p: Phaser.Input.Pointer, _o: unknown, _dx: number, dy: number) => {
-            if (!this.palette.isOpen()) this.zoomAt(dy > 0 ? 0.9 : 1.1, p.x, p.y);
+            if (this.explorer.contains(p.y)) this.explorer.scrollBy(dy > 0 ? -PITCH_WHEEL : PITCH_WHEEL);
+            else this.zoomAt(dy > 0 ? 0.9 : 1.1, p.x, p.y);
         });
     }
 
     private twoFingers() { return this.input.pointer1.isDown && this.input.pointer2.isDown; }
 
-    // ── toolbars ───────────────────────────────────────────────────────────--
+    // ── top toolbar ────────────────────────────────────────────────────────--
     private btn(text: string, bg: string, onTap: () => void) {
         const t = this.add.text(0, 0, text, {
-            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', backgroundColor: bg, padding: { x: 12, y: 7 },
+            fontFamily: 'monospace', fontSize: '15px', color: '#ffffff', backgroundColor: bg, padding: { x: 10, y: 6 },
         }).setOrigin(0, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
         t.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) onTap(); });
         this.uiLayer.add(t);
@@ -298,126 +296,60 @@ export class EditorScene extends Phaser.Scene {
     }
 
     private buildToolbars() {
-        // Top bar.
         this.topBar = this.add.rectangle(0, 0, 10, TOP_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
         this.menuBtn = this.btn('← Menu', '#33455a', () => this.scene.start('Menu'));
+        this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
+        this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
+        this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
         this.nameText = this.add.text(0, 0, this.map.name, { fontFamily: 'monospace', fontSize: '16px', color: '#e8f1ff', fontStyle: 'bold' })
             .setOrigin(0.5, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
         this.nameText.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.rename(); });
         this.saveBtn = this.btn('💾 Save', '#2a8c4a', () => this.save());
         this.statusText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#8aa0b5' }).setOrigin(1, 0.5).setDepth(1000);
-
-        // Bottom bar.
-        this.botBar = this.add.rectangle(0, 0, 10, BOTTOM_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
-        // Active-brush card → opens the palette.
-        this.activeBg = this.add.rectangle(0, 0, 150, 50, 0x16202c, 1).setOrigin(0, 0.5).setDepth(1000).setStrokeStyle(1, 0x3a4a5a)
-            .setInteractive({ useHandCursor: true });
-        this.activeBg.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.palette.show([]); });
-        this.activeLabel = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '13px', color: '#ffffff' }).setOrigin(0, 0.5).setDepth(1001);
-
-        this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
-        this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
-        this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
-
-        this.uiLayer.add([this.topBar, this.nameText, this.statusText, this.botBar, this.activeBg, this.activeLabel]);
-
-        this.refreshActive();
+        this.uiLayer.add([this.topBar, this.nameText, this.statusText]);
     }
 
     private layoutUI = () => {
         const w = this.scale.width;
         const h = this.scale.height;
-        const tcy = TOP_H / 2;
+        const cy = TOP_H / 2;
         this.topBar.setPosition(0, 0).setSize(w, TOP_H);
-        this.menuBtn.setPosition(8, tcy);
-        this.nameText.setPosition(w / 2, tcy);
-        this.saveBtn.setPosition(w - 220, tcy);
-        this.statusText.setPosition(w - 10, tcy);
 
-        const by = h - BOTTOM_H / 2;
-        this.botBar.setPosition(0, h - BOTTOM_H).setSize(w, BOTTOM_H);
-        this.activeBg.setPosition(10, by);
-        this.activeThumb?.setPosition(10 + 25, by);
-        this.activeLabel.setPosition(10 + 48, by);
-
-        // Recent thumbnails after the active card.
-        let rx = 176;
-        for (const slot of this.recentSlots) {
-            slot.bg.setPosition(rx, by);
-            slot.thumb.setPosition(rx + 22, by);
-            rx += 52;
+        let x = 8;
+        for (const b of [this.menuBtn, this.eraserBtn, this.modeBtn, this.gridBtn]) {
+            b.setPosition(x, cy);
+            x += b.width + 6;
         }
+        this.saveBtn.setPosition(w - this.saveBtn.width - 10, cy);
+        this.statusText.setPosition(this.saveBtn.x - 10, cy);
+        this.nameText.setPosition((x + this.saveBtn.x) / 2, cy);
 
-        this.gridBtn.setPosition(w - 90, by).setOrigin(0, 0.5);
-        this.modeBtn.setPosition(w - 200, by).setOrigin(0, 0.5);
-        this.eraserBtn.setPosition(w - 320, by).setOrigin(0, 0.5);
+        this.explorer?.layout(w, h);
     };
 
-    // ── selection / brush ────────────────────────────────────────────────────
+    // ── selection / toggles ────────────────────────────────────────────────────
     private selectBrush(id: TileId) {
         this.brush = id;
-        this.erasing = false;
-        this.recent = [id, ...this.recent.filter((x) => x !== id)].slice(0, 8);
-        this.refreshActive();
-        this.refreshEraserStyle();
-        this.refreshRecent();
+        if (this.erasing) { this.erasing = false; this.refreshEraserStyle(); }
+        this.explorer.setSelected(id);
     }
 
-    private refreshActive() {
-        this.activeThumb?.destroy();
-        this.activeThumb = null;
-        if (this.erasing) {
-            this.activeLabel.setText('Eraser');
-            const x = this.add.text(0, 0, '✕', { fontSize: '22px', color: '#ff9a9a' }).setOrigin(0.5).setDepth(1001);
-            this.uiLayer.add(x);
-            this.activeThumb = x as unknown as ThumbGO;
-        } else {
-            const def = getTile(this.brush);
-            this.activeLabel.setText(def?.label ?? this.brush);
-            if (def) {
-                const t = makeTileThumb(this, def, THUMB) as ThumbGO;
-                t.setDepth(1001);
-                this.uiLayer.add(t);
-                this.activeThumb = t;
-            }
-        }
-        this.layoutUI();
-    }
-
-    private refreshRecent() {
-        for (const s of this.recentSlots) { s.bg.destroy(); s.thumb.destroy(); }
-        this.recentSlots = [];
-        const show = this.recent.filter((id) => id !== this.brush).slice(0, 4);
-        for (const id of show) {
-            const def = getTile(id);
-            if (!def) continue;
-            const bg = this.add.rectangle(0, 0, 44, 44, 0x16202c, 1).setOrigin(0.5).setDepth(1000).setStrokeStyle(1, 0x2a3543)
-                .setInteractive({ useHandCursor: true });
-            bg.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.selectBrush(id); });
-            const thumb = makeTileThumb(this, def, THUMB) as ThumbGO;
-            thumb.setDepth(1001);
-            this.uiLayer.add([bg, thumb]);
-            this.recentSlots.push({ bg, thumb, id });
-        }
-        this.layoutUI();
-    }
-
-    // ── toggles / actions ────────────────────────────────────────────────────
     private toggleEraser() {
         this.erasing = !this.erasing;
         this.refreshEraserStyle();
-        this.refreshActive();
     }
 
     private refreshEraserStyle() {
         this.eraserBtn.setText(this.erasing ? '🩹 Erasing' : '🩹 Erase');
         this.eraserBtn.setBackgroundColor(this.erasing ? '#6a3a3a' : '#33455a');
+        this.layoutUI();
     }
 
     private toggleMode() {
         this.mode = this.mode === 'paint' ? 'pan' : 'paint';
         this.modeBtn.setText(this.mode === 'paint' ? '✏️ Paint' : '✋ Pan');
         this.modeBtn.setBackgroundColor(this.mode === 'paint' ? '#4a5a33' : '#33455a');
+        this.layoutUI();
     }
 
     private toggleGrid() {
@@ -446,3 +378,6 @@ export class EditorScene extends Phaser.Scene {
             .setColor(res.server ? '#8fe388' : '#ffcf6a');
     }
 }
+
+// Wheel scroll step for the explorer strip (one chip pitch-ish).
+const PITCH_WHEEL = 60;

@@ -27,14 +27,16 @@ A separate authoring mode for hand-building reusable miniature maps (eventual se
 generator). What exists: a **launch `MenuScene`** (Play → Setup → Game, or Map Editor →
 MapBrowser → Editor); a **`MapData`** per-cell grid model (`editor/MapData.ts`, `ground[]` +
 `features[]`) — the thing the procedural battlefield never had; a **tile catalog**
-(`editor/tileCatalog.ts`) whose `category` paths drive a **hierarchical tile browser**
-(`editor/TilePalette.ts`: Ground → **Grass (5 paintable hue variants — the tileset's
-color1..5)** / Water / **Cliffs**; Features → Trees / Bushes / Rocks / Stumps / Sea — each a
-thumbnail + label + description) plus a **recent-tiles** row; a
-**`MapBrowserScene`** (new / open / delete saved maps); and an **`EditorScene`** that paints
-**grass/water** ground cell-by-cell and places **features** (trees/bushes/rocks/stumps/sea decos,
-drawn from the same Tiny Swords art as the game, animated) on top, with an **eraser**, a
-**toggleable grid overlay**, ✏️ Paint / ✋ Pan modes, and pinch-zoom. **Cliffs** are the Tiny
+(`editor/tileCatalog.ts`) whose `category` paths drive a **persistent bottom tile explorer**
+(`editor/TileExplorer.ts`: a single horizontal, drag-/wheel-scrollable row of the current folder's
+items with a ‹ Back button — tap a 📁 folder to descend, tap a tile to set the brush *without*
+leaving the level. Hierarchy: Ground → **Grass (5 paintable hue variants — the tileset's
+color1..5)** / Water / **Cliffs**; Features → Trees / Bushes / Rocks / Stumps / Sea — each chip a
+thumbnail + label); a **`MapBrowserScene`** (new / open / delete saved maps); and an
+**`EditorScene`** that paints **grass/water** ground cell-by-cell and places **features**
+(trees/bushes/rocks/stumps/sea decos, drawn from the same Tiny Swords art as the game, animated)
+on top, with an **eraser**, a **toggleable grid overlay**, ✏️ Paint / ✋ Pan modes, and pinch-zoom
+(Menu / Erase / Pan / Grid / Save live on a thin top bar). **Cliffs** are the Tiny
 Swords elevation block (right side of the tileset, frame indices verified by scanning the PNG:
 plateau grass tops cols 5–7 rows 0–3, rock faces rows 4–5) exposed as overlay *features* — placed
 on top of ground so the grass shows through their transparent edges — for hand-assembling raised
