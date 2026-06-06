@@ -115,9 +115,11 @@ export class Hud {
         this.enemyBar = this.buildBar('ENEMY CASTLE', foeCol);
         this.xpBar = this.buildBar('LEVEL 1', xpCol);
 
-        // Enemy reinforcement countdown, tucked under the enemy Castle bar (right-aligned).
+        // Enemy reinforcement countdown, tucked under the enemy Castle bar (top-right, right-aligned).
+        // Black text on a light pill so it stays legible over any terrain colour.
         this.reinforceText = scene.add.text(0, 0, '', {
-            fontFamily: 'monospace', fontSize: '12px', color: '#ff9a6a', fontStyle: 'bold',
+            fontFamily: 'monospace', fontSize: '12px', color: '#000000', fontStyle: 'bold',
+            backgroundColor: '#e8eef2cc', padding: { x: 6, y: 3 },
         }).setOrigin(1, 0).setScrollFactor(0).setDepth(DEPTH + 1);
         this.layer.add(this.reinforceText);
 
