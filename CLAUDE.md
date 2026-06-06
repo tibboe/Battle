@@ -43,7 +43,9 @@ plateau grass tops cols 5–7 rows 0–3, rock faces rows 4–5) exposed as over
 on top of ground so the grass shows through their transparent edges — for hand-assembling raised
 plateaus (visual authoring only; gameplay elevation / Milestone 2 stays parked). Cliff edge/column
 pieces are **two cells tall** (a rock body in the clicked cell + a grass cap one cell above) and
-come in all five hues. (The pack has **no stairs/ramp art** — that's why M2 was parked.) The canvas pans/zooms on the main camera while the toolbars are drawn by a
+come in all five hues, **plus 1-tall pieces** (plateau grass incl. a front-edge "1-tile-thick top",
+bare rock faces, bases) for hand-composing any cliff shape or overriding an edge. (The pack has
+**no stairs/ramp art** — that's why M2 was parked.) The canvas pans/zooms on the main camera while the toolbars are drawn by a
 separate **zoom-1 `uiCamera`** (mirrors `GameScene`) so the HUD stays anchored to the screen edges.
 Maps persist to the **Node/SQLite server** (`/api/maps` CRUD in `server/index.mjs`) and mirror to
 **localStorage** (`lanebreaker.maps.v1`) so the editor also works under plain `npm run dev`.

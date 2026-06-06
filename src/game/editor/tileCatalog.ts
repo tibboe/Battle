@@ -52,38 +52,48 @@ const WATER_DEF: TileDef = {
 };
 
 // Cliff PIECES (the Tiny Swords elevation block, frame indices verified by scanning the PNG).
-// Two-tall pieces carry a `cap` (grass frame drawn in the cell above the rock body) so the full
-// structure shows instead of being clipped to one cell. 1-tall pieces (plateau surface, base)
-// have no cap. Each piece is generated in all five colours below.
-const CLIFF_PIECES: { body: number; cap?: number; label: string; desc: string }[] = [
-    { body: 41, cap: 23, label: 'Cliff edge (left)', desc: 'Rock wall under grass (edge only at the rock), left end. Two cells tall.' },
-    { body: 42, cap: 24, label: 'Cliff edge (front)', desc: 'Rock wall under grass (edge only at the rock). Two cells tall.' },
-    { body: 43, cap: 25, label: 'Cliff edge (right)', desc: 'Rock wall under grass (edge only at the rock), right end. Two cells tall.' },
-    { body: 45, cap: 36, label: 'Cliff column (left)', desc: 'Narrow cliff pillar, left side. Two cells tall.' },
-    { body: 48, cap: 39, label: 'Cliff column (right)', desc: 'Narrow cliff pillar, right side. Two cells tall.' },
-    { body: 50, label: 'Cliff base (left)', desc: 'Foot of the cliff wall, left — stack under an edge for a taller drop.' },
-    { body: 51, label: 'Cliff base (mid)', desc: 'Foot of the cliff wall — stack under an edge for a taller drop.' },
-    { body: 52, label: 'Cliff base (right)', desc: 'Foot of the cliff wall, right — stack under an edge for a taller drop.' },
-    { body: 5, label: 'Plateau ◤ (top-left)', desc: 'Raised-grass plateau back corner, left.' },
-    { body: 6, label: 'Plateau ▲ (top)', desc: 'Raised-grass plateau back edge.' },
-    { body: 7, label: 'Plateau ◥ (top-right)', desc: 'Raised-grass plateau back corner, right.' },
-    { body: 14, label: 'Plateau ◀ (left)', desc: 'Raised-grass plateau left edge.' },
-    { body: 15, label: 'Plateau ■ (fill)', desc: 'Raised-grass plateau interior.' },
-    { body: 16, label: 'Plateau ▶ (right)', desc: 'Raised-grass plateau right edge.' },
+// `key` gives each piece a stable id slug (existing ids preserved for saved maps). Two-tall
+// pieces carry a `cap` (a grass frame drawn in the cell ABOVE the rock body) for quick building;
+// the 1-tall pieces (plateau grass incl. the front-edge "1-tile-thick top", bare rock faces,
+// bases) let you compose any cliff shape or override an edge by hand. Generated in all 5 colours.
+const CLIFF_PIECES: { key: string; body: number; cap?: number; label: string; desc: string }[] = [
+    // Quick 2-tall composites: grass cap (edge only where it meets the rock) over a rock wall.
+    { key: '41', body: 41, cap: 23, label: 'Cliff edge (left)', desc: 'Two-tall: grass cap over a rock wall, left end. For 1-tile control use the Plateau front + Cliff face pieces.' },
+    { key: '42', body: 42, cap: 24, label: 'Cliff edge (front)', desc: 'Two-tall: grass cap over a rock wall. For 1-tile control use the Plateau front + Cliff face pieces.' },
+    { key: '43', body: 43, cap: 25, label: 'Cliff edge (right)', desc: 'Two-tall: grass cap over a rock wall, right end.' },
+    { key: '45', body: 45, cap: 36, label: 'Cliff column (left)', desc: 'Two-tall narrow cliff pillar, left side.' },
+    { key: '48', body: 48, cap: 39, label: 'Cliff column (right)', desc: 'Two-tall narrow cliff pillar, right side.' },
+    // 1-tall plateau grass — build a cliff top of any shape/thickness.
+    { key: '5', body: 5, label: 'Plateau ◤ (back-left)', desc: 'Raised-grass plateau back corner, left.' },
+    { key: '6', body: 6, label: 'Plateau ▲ (back)', desc: 'Raised-grass plateau back edge.' },
+    { key: '7', body: 7, label: 'Plateau ◥ (back-right)', desc: 'Raised-grass plateau back corner, right.' },
+    { key: '14', body: 14, label: 'Plateau ◀ (left)', desc: 'Raised-grass plateau left edge.' },
+    { key: '15', body: 15, label: 'Plateau ■ (fill)', desc: 'Raised-grass plateau interior.' },
+    { key: '16', body: 16, label: 'Plateau ▶ (right)', desc: 'Raised-grass plateau right edge.' },
+    { key: 'front-l', body: 23, label: 'Plateau ◣ (front-left)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top, left corner.' },
+    { key: 'front-m', body: 24, label: 'Plateau ▼ (front)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top.' },
+    { key: 'front-r', body: 25, label: 'Plateau ◢ (front-right)', desc: 'Grass top with the edge at the FRONT (bottom) only — a 1-tile-thick cliff top, right corner.' },
+    // 1-tall bare rock — stack to make a wall of any height.
+    { key: 'face-l', body: 41, label: 'Cliff face (left)', desc: 'Bare rock wall tile, left. Place below a plateau front edge.' },
+    { key: 'face-m', body: 42, label: 'Cliff face (mid)', desc: 'Bare rock wall tile. Place below a plateau front edge.' },
+    { key: 'face-r', body: 43, label: 'Cliff face (right)', desc: 'Bare rock wall tile, right. Place below a plateau front edge.' },
+    { key: '50', body: 50, label: 'Cliff base (left)', desc: 'Foot of the cliff wall, left.' },
+    { key: '51', body: 51, label: 'Cliff base (mid)', desc: 'Foot of the cliff wall.' },
+    { key: '52', body: 52, label: 'Cliff base (right)', desc: 'Foot of the cliff wall, right.' },
 ];
 
 const CLIFF_DEFS: TileDef[] = [];
 TERRAIN_VARIANTS.forEach((v, c) => {
     for (const pc of CLIFF_PIECES) {
         CLIFF_DEFS.push({
-            id: c === 0 ? `cliff-${pc.body}` : `cliff-c${c + 1}-${pc.body}`,
+            id: c === 0 ? `cliff-${pc.key}` : `cliff-c${c + 1}-${pc.key}`,
             category: ['Ground', 'Cliffs'],
             label: pc.label,
             desc: pc.desc,
             render: { kind: 'feature', texture: v.key, frame: pc.body, capFrame: pc.cap, originX: 0.5, originY: 0.5, scale: 1 },
             swatch: v.hue,
             colorIndex: c,
-            variantKey: `cliff-${pc.body}`,
+            variantKey: `cliff-${pc.key}`,
         });
     }
 });
