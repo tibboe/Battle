@@ -11,6 +11,8 @@ const DEC = `${BASE}/Decorations`;
 
 // Single-frame water tile + the animated foam ring (192² frames) that rims the coast.
 export const WATER = { key: 'env-water', file: `${BASE}/Tileset/Water Background color.png` } as const;
+// Soft drop shadow (192²) — used under cliff bottoms in the editor to ground them.
+export const SHADOW = { key: 'env-shadow', file: `${BASE}/Tileset/Shadow.png` } as const;
 export const FOAM = {
     key: 'env-foam',
     file: `${BASE}/Tileset/Water Foam.png`,
@@ -78,6 +80,7 @@ export const DUCK = {
 
 export function loadEnvironment(scene: Phaser.Scene) {
     scene.load.image(WATER.key, encodeURI(WATER.file));
+    scene.load.image(SHADOW.key, encodeURI(SHADOW.file));
     scene.load.spritesheet(FOAM.key, encodeURI(FOAM.file), { frameWidth: FOAM.size, frameHeight: FOAM.size });
     scene.load.spritesheet(DUCK.key, encodeURI(DUCK.file), { frameWidth: DUCK.size, frameHeight: DUCK.size });
     for (const c of CLOUDS) scene.load.image(c.key, encodeURI(c.file));

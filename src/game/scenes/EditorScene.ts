@@ -1,6 +1,6 @@
 import * as Phaser from 'phaser';
 import { loadTerrainVariants } from '../terrain/tileset';
-import { loadEnvironment, registerEnvironmentAnims } from '../terrain/environment';
+import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
@@ -167,6 +167,13 @@ export class EditorScene extends Phaser.Scene {
         for (const o of parts) {
             (o as Phaser.GameObjects.Image).setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
             this.worldLayer.add(o);
+        }
+        // Cliff bottoms drop a soft shadow on the ground below to add depth (under the cliff).
+        if (r.shadow) {
+            const sh = this.add.image(x, y + this.ts * 0.42, SHADOW.key)
+                .setOrigin(0.5).setScale(0.5).setAlpha(0.4).setDepth(1000 + y - 2);
+            this.worldLayer.add(sh);
+            parts.push(sh);
         }
         const i = cellIndex(this.map.cols, f.col, f.row);
         this.clearFeatureAt(i);
