@@ -1,22 +1,46 @@
 import * as Phaser from 'phaser';
+import { CONFIG } from '../config';
+import { cameraAngle, screenOffset, uprightAngle } from '../controls/billboard';
 import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
-import { cellIndex, createEmptyMap, MapData, MapFeature, TileId } from '../editor/MapData';
+import { cellIndex, createEmptyMap, MapData, MapFeature, MAX_LEVEL, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
 
-// The map editor. Paint GROUND tiles (grass hues / water) cell-by-cell and place FEATURES
-// (trees, bushes, rocks, cliffs) on top, chosen from a persistent bottom EXPLORER strip you
-// scroll left/right. A grid overlay, ✏️ Paint / ✋ Pan modes, an eraser, pinch/wheel zoom, and
-// save round it out. The canvas pans/zooms on the main camera; the toolbar + explorer are
-// drawn by a separate zoom-1 UI camera so they stay anchored to the screen edges.
+// The map editor. Paint GROUND tiles (grass hues / water) cell-by-cell, raise/lower ELEVATION
+// tiers, and place FEATURES (trees, bushes, rocks) on top, chosen from a persistent bottom
+// EXPLORER strip. The canvas pans/zooms AND rotates 90° (like the game) on the main camera;
+// each elevation level sits on its own plane, lifted "up on screen" via screenOffset so it
+// reads correctly at any rotation. The toolbar + explorer are drawn by a separate zoom-1 UI
+// camera so they stay anchored to the screen edges.
 
 const TOP_H = 48;
 const ZOOM_MIN = 0.25;
 const ZOOM_MAX = 4;
 
+// Depth bands: a higher tier always draws above everything on lower tiers (so high ground
+// occludes what's behind it). Within a tier, water < ground < grid < shadow < feature, and
+// overlapping things (features/shadows) sort by on-screen Y.
+const LEVEL_BAND = 100_000;
+const BIAS_GROUND = 0;
+const BIAS_SHADOW = 998;
+const BIAS_FEATURE = 1000;
+
 type Mode = 'paint' | 'pan';
+// Elevation tool: 0 = off (normal tile painting), +1 = raise, -1 = lower.
+type ElevTool = 0 | 1 | -1;
+
+// Per-object elevation bookkeeping (stored on the GameObject via setData) so a single pass can
+// re-lift / re-billboard / re-depth everything when the camera rotates.
+interface ElevData {
+    bx: number;     // base (unlifted) world x
+    by: number;     // base world y
+    lvl: number;    // elevation tier
+    bb: boolean;    // billboard upright (features) vs rotate with the world (ground/shadows)
+    bias: number;   // depth bias within the tier
+    sort: boolean;  // add on-screen-Y to depth (overlapping things)
+}
 
 export class EditorScene extends Phaser.Scene {
     private map!: MapData;
@@ -26,14 +50,21 @@ export class EditorScene extends Phaser.Scene {
     private featureSprites = new Map<number, Phaser.GameObjects.GameObject[]>();
     // Cliff-foot shadows, tracked per cell so they can be re-evaluated when neighbours change.
     private shadowSprites = new Map<number, Phaser.GameObjects.Image>();
-    private undoStack: { ground: TileId[]; features: MapFeature[] }[] = [];
+    private undoStack: { ground: TileId[]; levels: number[]; features: MapFeature[] }[] = [];
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
 
     private brush: TileId = 'grass';
     private erasing = false;
+    private elevTool: ElevTool = 0;
     private mode: Mode = 'paint';
     private gridOn = true;
+
+    // Rotation (mirrors the game's CameraController): 0..3 = 0/90/180/270° clockwise.
+    private orientation = 0;
+    private isRotating = false;
+    private readonly s1 = new Phaser.Math.Vector2();
+    private readonly s2 = new Phaser.Math.Vector2();
 
     private worldLayer!: Phaser.GameObjects.Layer;
     private uiLayer!: Phaser.GameObjects.Layer;
@@ -50,6 +81,9 @@ export class EditorScene extends Phaser.Scene {
     private eraserBtn!: Phaser.GameObjects.Text;
     private modeBtn!: Phaser.GameObjects.Text;
     private gridBtn!: Phaser.GameObjects.Text;
+    private raiseBtn!: Phaser.GameObjects.Text;
+    private lowerBtn!: Phaser.GameObjects.Text;
+    private rotBtn!: Phaser.GameObjects.Text;
 
     private pinchDist = 0;
     private scrollingExplorer = false;
@@ -69,6 +103,9 @@ export class EditorScene extends Phaser.Scene {
     create(data: { map?: MapData }) {
         this.map = data?.map ?? createEmptyMap();
         this.ts = this.map.tileSize;
+        if (!this.map.levels || this.map.levels.length !== this.map.cols * this.map.rows) {
+            this.map.levels = new Array(this.map.cols * this.map.rows).fill(0);
+        }
         this.cells = new Array(this.map.cols * this.map.rows).fill(null);
         this.featureSprites.clear();
         registerEnvironmentAnims(this);
@@ -113,6 +150,78 @@ export class EditorScene extends Phaser.Scene {
         return { x: col * this.ts + this.ts / 2, y: row * this.ts + this.ts / 2 };
     }
 
+    private get cliffH() { return this.ts; } // on-screen lift per elevation tier (one cell)
+    private levelAt(col: number, row: number) { return this.map.levels![cellIndex(this.map.cols, col, row)] | 0; }
+
+    // ── elevation lift / billboard / depth ──────────────────────────────────--
+    // Tag a world object with its base position + tier, then place it for the current camera
+    // angle. Re-called for everything on each rotation step (relayoutElevation).
+    private applyElevation(o: Phaser.GameObjects.GameObject, e: ElevData) {
+        o.setData('e', e);
+        this.liftObject(o);
+    }
+
+    /** On-screen-Y sort key for a base world point at the current camera angle (bigger = nearer
+     *  the bottom of the screen = drawn on top). */
+    private sortY(bx: number, by: number) {
+        const up = screenOffset(this, 0, 1, this.s2); // world vector that points "up on screen"
+        return -(bx * up.x + by * up.y);
+    }
+
+    private liftObject(o: Phaser.GameObjects.GameObject) {
+        const e = o.getData('e') as ElevData | undefined;
+        if (!e) return; // grid / border / water — rotate with the camera, fixed depth
+        const t = o as unknown as { x: number; y: number; rotation: number; depth: number };
+        if (e.lvl > 0) { screenOffset(this, 0, e.lvl * this.cliffH, this.s1); t.x = e.bx + this.s1.x; t.y = e.by + this.s1.y; }
+        else { t.x = e.bx; t.y = e.by; }
+        t.rotation = e.bb ? uprightAngle(this) : 0;
+        t.depth = e.lvl * LEVEL_BAND + e.bias + (e.sort ? this.sortY(e.bx, e.by) : 0);
+    }
+
+    /** Re-lift / re-billboard / re-depth every elevation-tagged object (called while rotating). */
+    private relayoutElevation() {
+        const kids = this.worldLayer.getChildren();
+        for (let k = 0; k < kids.length; k++) this.liftObject(kids[k]);
+    }
+
+    /** Re-place just one cell's sprites after its tier changes. */
+    private reliftCell(col: number, row: number) {
+        const i = cellIndex(this.map.cols, col, row);
+        const lvl = this.map.levels![i] | 0;
+        const setLvl = (o: Phaser.GameObjects.GameObject | undefined) => {
+            if (!o) return;
+            const e = o.getData('e') as ElevData | undefined;
+            if (e) { e.lvl = lvl; this.liftObject(o); }
+        };
+        setLvl(this.cells[i] ?? undefined);
+        for (const o of this.featureSprites.get(i) ?? []) setLvl(o);
+        setLvl(this.shadowSprites.get(i));
+    }
+
+    // ── rotation (mirrors CameraController.rotateBy) ─────────────────────────--
+    private rotateBy(dir: 1 | -1) {
+        if (this.isRotating) return;
+        const cam = this.cameras.main;
+        const pivot = cam.getWorldPoint(this.scale.width / 2, this.scale.height / 2);
+        const next = (this.orientation + dir + 4) % 4;
+        this.isRotating = true;
+        cam.useBounds = false;
+        this.tweens.add({
+            targets: cam,
+            rotation: cameraAngle(this) + dir * Math.PI / 2,
+            duration: CONFIG.camera.rotateMs,
+            ease: CONFIG.camera.rotateEase,
+            onUpdate: () => this.relayoutElevation(),
+            onComplete: () => {
+                this.orientation = next;
+                cam.centerOn(pivot.x, pivot.y);
+                cam.useBounds = (next === 0); // bounds clamp is only correct unrotated
+                this.isRotating = false;
+                this.relayoutElevation();
+            },
+        });
+    }
+
     private drawWaterBackdrop() {
         const pad = this.ts * 2;
         const sea = this.add
@@ -138,9 +247,9 @@ export class EditorScene extends Phaser.Scene {
         this.cells[i]?.destroy();
         this.cells[i] = null;
         if (def && def.render.kind === 'ground') {
-            const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame)
-                .setOrigin(0, 0).setDepth(0);
+            const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame).setOrigin(0, 0);
             this.worldLayer.add(img);
+            this.applyElevation(img, { bx: col * this.ts, by: row * this.ts, lvl: this.levelAt(col, row), bb: false, bias: BIAS_GROUND, sort: false });
             this.cells[i] = img;
         }
         if (commit) {
@@ -162,22 +271,25 @@ export class EditorScene extends Phaser.Scene {
         if (!def || def.render.kind !== 'feature') return;
         const r = def.render;
         const { x, y } = this.cellCentre(f.col, f.row);
-        const parts: Phaser.GameObjects.GameObject[] = [];
+        const lvl = this.levelAt(f.col, f.row);
+        // [sprite, baseY] pairs (a cliff cap sits one cell above its body).
+        const parts: [Phaser.GameObjects.GameObject, number][] = [];
         if (r.anim) {
             const s = this.add.sprite(x, y, r.texture).play(r.anim);
             s.anims.setProgress(Math.random());
-            parts.push(s);
+            parts.push([s, y]);
         } else {
-            parts.push(this.add.image(x, y, r.texture, r.frame));
-            if (r.capFrame !== undefined) parts.push(this.add.image(x, y - this.ts, r.texture, r.capFrame));
+            parts.push([this.add.image(x, y, r.texture, r.frame), y]);
+            if (r.capFrame !== undefined) parts.push([this.add.image(x, y - this.ts, r.texture, r.capFrame), y - this.ts]);
         }
-        for (const o of parts) {
-            (o as Phaser.GameObjects.Image).setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX).setDepth(1000 + y);
+        for (const [o, by] of parts) {
+            (o as Phaser.GameObjects.Image).setOrigin(r.originX ?? 0.5, r.originY).setScale(r.scale).setFlipX(!!f.flipX);
             this.worldLayer.add(o);
+            this.applyElevation(o, { bx: x, by, lvl, bb: true, bias: BIAS_FEATURE, sort: true });
         }
         const i = cellIndex(this.map.cols, f.col, f.row);
         this.clearFeatureAt(i);
-        this.featureSprites.set(i, parts);
+        this.featureSprites.set(i, parts.map((p) => p[0]));
     }
 
     private featureAt(col: number, row: number) {
@@ -209,9 +321,9 @@ export class EditorScene extends Phaser.Scene {
         this.shadowSprites.delete(i);
         if (!this.shouldShadow(col, row)) return;
         const { x, y } = this.cellCentre(col, row);
-        const sh = this.add.image(x, y + this.ts * 0.5, SHADOW.key)
-            .setOrigin(0.5).setScale(0.95, 0.7).setDepth(1000 + y - 2);
+        const sh = this.add.image(x, y + this.ts * 0.5, SHADOW.key).setOrigin(0.5).setScale(0.95, 0.7);
         this.worldLayer.add(sh);
+        this.applyElevation(sh, { bx: x, by: y + this.ts * 0.5, lvl: this.levelAt(col, row), bb: false, bias: BIAS_SHADOW, sort: true });
         this.shadowSprites.set(i, sh);
     }
 
@@ -261,7 +373,7 @@ export class EditorScene extends Phaser.Scene {
     // ── undo ───────────────────────────────────────────────────────────────--
     /** Snapshot the map before a mutating stroke (one entry per stroke, capped). */
     private pushUndo() {
-        this.undoStack.push({ ground: [...this.map.ground], features: this.map.features.map((f) => ({ ...f })) });
+        this.undoStack.push({ ground: [...this.map.ground], levels: [...this.map.levels!], features: this.map.features.map((f) => ({ ...f })) });
         if (this.undoStack.length > 60) this.undoStack.shift();
         this.refreshUndoStyle();
     }
@@ -270,10 +382,23 @@ export class EditorScene extends Phaser.Scene {
         const snap = this.undoStack.pop();
         if (!snap) return;
         this.map.ground = snap.ground;
+        this.map.levels = snap.levels;
         this.map.features = snap.features;
         this.fullRerender();
         this.markDirty();
         this.refreshUndoStyle();
+    }
+
+    /** Raise/lower one cell's elevation tier and re-place its sprites. */
+    private adjustLevel(col: number, row: number, d: number) {
+        const i = cellIndex(this.map.cols, col, row);
+        const cur = this.map.levels![i] | 0;
+        const next = Phaser.Math.Clamp(cur + d, 0, MAX_LEVEL);
+        if (next === cur) return;
+        this.map.levels![i] = next;
+        this.reliftCell(col, row);
+        this.strokeChanged = true;
+        this.markDirty();
     }
 
     private refreshUndoStyle() {
@@ -332,6 +457,7 @@ export class EditorScene extends Phaser.Scene {
     private paintAt(sx: number, sy: number) {
         const cell = this.cellAt(sx, sy);
         if (!cell) return;
+        if (this.elevTool !== 0) { this.adjustLevel(cell.col, cell.row, this.elevTool); return; }
         if (this.erasing) { this.eraseFeature(cell.col, cell.row); return; }
         const def = getTile(this.brush);
         if (!def) return;
@@ -374,9 +500,15 @@ export class EditorScene extends Phaser.Scene {
             if (this.mode === 'paint') {
                 this.paintAt(p.x, p.y);
             } else {
+                // Drag-pan: rotate the screen delta back into world axes so it tracks the finger
+                // at any camera orientation (collapses to the plain delta at orientation 0).
                 const cam = this.cameras.main;
-                cam.scrollX -= (p.position.x - p.prevPosition.x) / cam.zoom;
-                cam.scrollY -= (p.position.y - p.prevPosition.y) / cam.zoom;
+                const dx = p.position.x - p.prevPosition.x;
+                const dy = p.position.y - p.prevPosition.y;
+                const cos = Math.cos(-cameraAngle(this));
+                const sin = Math.sin(-cameraAngle(this));
+                cam.scrollX -= (dx * cos - dy * sin) / cam.zoom;
+                cam.scrollY -= (dx * sin + dy * cos) / cam.zoom;
             }
         });
 
@@ -414,6 +546,9 @@ export class EditorScene extends Phaser.Scene {
         this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
         this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
         this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
+        this.raiseBtn = this.btn('▲ Raise', '#33455a', () => this.toggleElev(1));
+        this.lowerBtn = this.btn('▼ Lower', '#33455a', () => this.toggleElev(-1));
+        this.rotBtn = this.btn('⟳ Turn', '#33455a', () => this.rotateBy(1));
         this.nameText = this.add.text(0, 0, this.map.name, { fontFamily: 'monospace', fontSize: '16px', color: '#e8f1ff', fontStyle: 'bold' })
             .setOrigin(0.5, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
         this.nameText.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.rename(); });
@@ -430,7 +565,7 @@ export class EditorScene extends Phaser.Scene {
         this.topBar.setPosition(0, 0).setSize(w, TOP_H);
 
         let x = 8;
-        for (const b of [this.menuBtn, this.undoBtn, this.eraserBtn, this.modeBtn, this.gridBtn]) {
+        for (const b of [this.menuBtn, this.undoBtn, this.eraserBtn, this.modeBtn, this.gridBtn, this.raiseBtn, this.lowerBtn, this.rotBtn]) {
             b.setPosition(x, cy);
             x += b.width + 6;
         }
@@ -445,12 +580,30 @@ export class EditorScene extends Phaser.Scene {
     private selectBrush(id: TileId) {
         this.brush = id;
         if (this.erasing) { this.erasing = false; this.refreshEraserStyle(); }
+        if (this.elevTool !== 0) { this.elevTool = 0; this.refreshElevStyle(); }
         this.explorer.setSelected(id);
     }
 
     private toggleEraser() {
         this.erasing = !this.erasing;
+        if (this.erasing && this.elevTool !== 0) { this.elevTool = 0; this.refreshElevStyle(); }
         this.refreshEraserStyle();
+    }
+
+    /** Raise/lower elevation tool: tapping the active one turns it off (back to tile painting). */
+    private toggleElev(d: 1 | -1) {
+        this.elevTool = this.elevTool === d ? 0 : d;
+        if (this.elevTool !== 0) {
+            if (this.erasing) { this.erasing = false; this.refreshEraserStyle(); }
+            if (this.mode !== 'paint') this.toggleMode(); // elevation needs paint (drag-to-edit)
+        }
+        this.refreshElevStyle();
+    }
+
+    private refreshElevStyle() {
+        this.raiseBtn.setBackgroundColor(this.elevTool === 1 ? '#2a6c8c' : '#33455a');
+        this.lowerBtn.setBackgroundColor(this.elevTool === -1 ? '#2a6c8c' : '#33455a');
+        this.layoutUI();
     }
 
     private refreshEraserStyle() {

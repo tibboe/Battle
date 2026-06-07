@@ -26,7 +26,7 @@ told.
 A separate authoring mode for hand-building reusable miniature maps (eventual seeds for a world
 generator). What exists: a **launch `MenuScene`** (Play → Setup → Game, or Map Editor →
 MapBrowser → Editor); a **`MapData`** per-cell grid model (`editor/MapData.ts`, `ground[]` +
-`features[]`) — the thing the procedural battlefield never had; a **tile catalog**
+`levels[]` + `features[]`) — the thing the procedural battlefield never had; a **tile catalog**
 (`editor/tileCatalog.ts`) whose `category` paths drive a **persistent bottom tile explorer**
 (`editor/TileExplorer.ts`: a single horizontal, drag-/wheel-scrollable row of the current folder's
 items with a ‹ Back button — tap a 📁 folder to descend, tap a tile to set the brush *without*
@@ -51,7 +51,18 @@ change. (The pack has **no stairs/ramp art** — that's why M2 was parked.) The 
 separate **zoom-1 `uiCamera`** (mirrors `GameScene`) so the HUD stays anchored to the screen edges.
 Maps persist to the **Node/SQLite server** (`/api/maps` CRUD in `server/index.mjs`) and mirror to
 **localStorage** (`lanebreaker.maps.v1`) so the editor also works under plain `npm run dev`.
-**Not yet built (next slices):** fill, redo (per-stroke undo is in), gameplay anchors
+**Elevation + rotation (IN PROGRESS, phased):** the editor is gaining a 3-tier elevation system
+(`MapData.levels[]`, `MAX_LEVEL=2`) that survives screen rotation. **P1 (done):** a **▲ Raise /
+▼ Lower** brush sets a cell's tier; each tier sits on its own plane, lifted "up on screen" via
+`screenOffset(0, level*CLIFF_H)` so it reads correctly at any angle; a **⟳ Turn** button does the
+game's smooth 90° camera spin (`rotateBy`, mirrors `CameraController`), with rotated drag-pan and
+a per-rotation `relayoutElevation()` pass that re-lifts/re-billboards/re-depths everything (depth =
+`level*BAND + bias + screenY`). **P2 (next):** auto-derived cliff faces between tiers whose art
+reorients with rotation (front→rock face, back→open grass, sides→edge art) in `editor/cliffs.ts`;
+the hand-placed Cliffs palette is being demoted to legacy. **P3:** stairs/ramp markers + occlusion
+polish. See the approved plan.
+
+**Not yet built (other slices):** fill, redo (per-stroke undo is in), gameplay anchors
 (lane/keeps/spawns), edge sockets for stitching, and the world generator itself.
 
 **Since M4 (built on the `claude/nice-cori-bfiSA` branch — the current playable state):**

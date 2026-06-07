@@ -25,6 +25,9 @@ export interface MapData {
     tileSize: number; // px per cell (always 64 to match the game's terrain grid)
     /** One tile id per cell, row-major (index = row * cols + col). */
     ground: TileId[];
+    /** Per-cell elevation tier, row-major, 0..MAX_LEVEL (0 = ground). Optional for back-compat;
+     *  normalizeMap fills it with 0s so older saved maps load as a flat map. */
+    levels?: number[];
     /** Decorations placed on top of the ground (empty in the foundation slice). */
     features: MapFeature[];
     createdAt: string;
@@ -44,6 +47,8 @@ export const DEFAULT_TILE_SIZE = 64;
 export const DEFAULT_COLS = 16;
 export const DEFAULT_ROWS = 16;
 export const DEFAULT_GROUND: TileId = 'grass';
+/** Highest paintable elevation tier (0 = ground, so 0..2 = three tiers). */
+export const MAX_LEVEL = 2;
 
 /** Cell index helper (row-major). */
 export const cellIndex = (cols: number, col: number, row: number) => row * cols + col;
@@ -58,6 +63,7 @@ export function createEmptyMap(name = 'Untitled Map', cols = DEFAULT_COLS, rows 
         rows,
         tileSize: DEFAULT_TILE_SIZE,
         ground: new Array(cols * rows).fill(DEFAULT_GROUND),
+        levels: new Array(cols * rows).fill(0),
         features: [],
         createdAt: now,
         updatedAt: now,
@@ -79,6 +85,9 @@ export function normalizeMap(raw: unknown): MapData {
     const wanted = cols * rows;
     const ground: TileId[] = Array.isArray(m.ground) ? m.ground.slice(0, wanted) : [];
     while (ground.length < wanted) ground.push(DEFAULT_GROUND);
+    // Elevation tiers: pad/truncate to the grid, clamped to valid range (older maps → all 0).
+    const levels: number[] = Array.isArray(m.levels) ? m.levels.slice(0, wanted).map((v) => Math.max(0, Math.min(MAX_LEVEL, Math.floor(Number(v) || 0)))) : [];
+    while (levels.length < wanted) levels.push(0);
     const now = new Date().toISOString();
     return {
         id: m.id || newId(),
@@ -87,6 +96,7 @@ export function normalizeMap(raw: unknown): MapData {
         rows,
         tileSize: m.tileSize || DEFAULT_TILE_SIZE,
         ground,
+        levels,
         features: Array.isArray(m.features) ? m.features : [],
         createdAt: m.createdAt || now,
         updatedAt: m.updatedAt || now,
