@@ -609,10 +609,17 @@ export class EditorScene extends Phaser.Scene {
 
     private cellAt(sx: number, sy: number): { col: number; row: number } | null {
         const w = this.cameras.main.getWorldPoint(sx, sy);
-        const col = Math.floor(w.x / this.ts);
-        const row = Math.floor(w.y / this.ts);
-        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return null;
-        return { col, row };
+        // Elevation-aware pick: a raised tile is drawn lifted up-screen, so test the TOP tier
+        // first and pick the highest cell whose lifted footprint is under the tap. This hits the
+        // visible tile (not the cell hidden behind it) and never reaches through a higher tier.
+        for (let L = MAX_LEVEL; L >= 0; L--) {
+            const off = screenOffset(this, 0, L * this.cliffH);
+            const col = Math.floor((w.x - off.x) / this.ts);
+            const row = Math.floor((w.y - off.y) / this.ts);
+            if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) continue;
+            if ((this.map.levels![cellIndex(this.map.cols, col, row)] | 0) === L) return { col, row };
+        }
+        return null;
     }
 
     private paintAt(sx: number, sy: number) {
@@ -623,6 +630,10 @@ export class EditorScene extends Phaser.Scene {
         const def = getTile(this.brush);
         if (!def) return;
         if (def.render.kind === 'feature') {
+            // Terrain rule: land props only on grass, sea props only on water.
+            const onWater = this.map.ground[cellIndex(this.map.cols, cell.col, cell.row)] === 'water';
+            const placeOn = def.placeOn ?? 'land';
+            if ((placeOn === 'land') === onWater) return; // mismatch — don't place
             this.placeFeature(cell.col, cell.row, this.brush);
         } else {
             const i = cellIndex(this.map.cols, cell.col, cell.row);

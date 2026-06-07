@@ -26,6 +26,8 @@ export interface TileDef {
     desc: string;
     render: TileRender;
     swatch: number;
+    /** Terrain a feature may be placed on (default 'land' = grass). Sea props use 'water'. */
+    placeOn?: 'land' | 'water';
     colorIndex?: number;  // 0–4 for recolourable tileset tiles (grass / cliffs)
     variantKey?: string;  // shared identity across colours (e.g. 'grass', 'cliff-41')
 }
@@ -125,12 +127,12 @@ const ROCK_DEFS: TileDef[] = ROCKS.map((r, i) => ({
 const SEA_DEFS: TileDef[] = [
     ...WATER_ROCKS.map((w, i) => ({
         id: `searock-${i + 1}`, category: ['Features', 'Sea'], label: `Sea Rock ${i + 1}`,
-        desc: 'A rock in the water, ringed by lapping foam. Place on water.',
+        desc: 'A rock in the water, ringed by lapping foam. Place on water.', placeOn: 'water' as const,
         render: { kind: 'feature' as const, texture: w.key, anim: w.anim, originY: 0.5, scale: 1.0 }, swatch: 0x3a5f72,
     })),
     {
         id: 'duck', category: ['Features', 'Sea'], label: 'Rubber Duck',
-        desc: 'A cheerful rubber duck bobbing at sea. Purely decorative.',
+        desc: 'A cheerful rubber duck bobbing at sea. Purely decorative.', placeOn: 'water',
         render: { kind: 'feature', texture: DUCK.key, anim: DUCK.anim, originY: 0.6, scale: 1.4 }, swatch: 0xe8c84a,
     },
 ];
