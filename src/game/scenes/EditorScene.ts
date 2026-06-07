@@ -97,6 +97,7 @@ export class EditorScene extends Phaser.Scene {
     private lastExplorerX = 0;
     private painting = false;       // a paint stroke is in progress (an undo snapshot is staged)
     private strokeChanged = false;  // did the current stroke actually change anything?
+    private strokeCells = new Set<number>(); // cells already elevated this stroke (1 step per stroke)
 
     constructor() {
         super('Editor');
@@ -465,6 +466,8 @@ export class EditorScene extends Phaser.Scene {
     /** Raise/lower one cell's elevation tier and re-place its sprites. */
     private adjustLevel(col: number, row: number, d: number) {
         const i = cellIndex(this.map.cols, col, row);
+        if (this.strokeCells.has(i)) return; // already stepped this cell this stroke
+        this.strokeCells.add(i);
         const cur = this.map.levels![i] | 0;
         const next = Phaser.Math.Clamp(cur + d, 0, MAX_LEVEL);
         if (next === cur) return;
@@ -551,6 +554,7 @@ export class EditorScene extends Phaser.Scene {
             if (this.mode === 'paint' && !this.twoFingers()) {
                 this.painting = true;
                 this.strokeChanged = false;
+                this.strokeCells.clear(); // elevation steps once per cell per stroke
                 this.pushUndo();
                 this.paintAt(p.x, p.y);
             }
