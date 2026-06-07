@@ -46,6 +46,9 @@ export class EditorScene extends Phaser.Scene {
     private map!: MapData;
     private ts = 64;
     private cells: (Phaser.GameObjects.Image | null)[] = [];
+    // A raised cell's ground tile lifts up-screen; this static level-0 grass tile fills the
+    // space it vacated so the sea backdrop doesn't show through (a stand-in until P2 rock faces).
+    private floorCells = new Map<number, Phaser.GameObjects.Image>();
     // A feature cell may hold several sprites (cliffs are a rock body + a grass cap).
     private featureSprites = new Map<number, Phaser.GameObjects.GameObject[]>();
     // Cliff-foot shadows, tracked per cell so they can be re-evaluated when neighbours change.
@@ -252,10 +255,29 @@ export class EditorScene extends Phaser.Scene {
             this.applyElevation(img, { bx: col * this.ts, by: row * this.ts, lvl: this.levelAt(col, row), bb: false, bias: BIAS_GROUND, sort: false });
             this.cells[i] = img;
         }
+        this.syncFloor(col, row);
         if (commit) {
             this.strokeChanged = true;
             this.markDirty();
             this.refreshShadow(col, row - 1); // changing this cell's ground may toggle the cliff-foot shadow above
+        }
+    }
+
+    /** Ensure a raised, grass cell keeps a level-0 grass floor under its lifted top tile. */
+    private syncFloor(col: number, row: number) {
+        const i = cellIndex(this.map.cols, col, row);
+        const def = getTile(this.map.ground[i]);
+        const want = (this.map.levels![i] | 0) > 0 && def?.render.kind === 'ground';
+        const existing = this.floorCells.get(i);
+        if (want && def?.render.kind === 'ground') {
+            if (existing) { existing.setTexture(def.render.atlas, def.render.frame); return; }
+            const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame).setOrigin(0, 0);
+            this.worldLayer.add(img);
+            this.applyElevation(img, { bx: col * this.ts, by: row * this.ts, lvl: 0, bb: false, bias: BIAS_GROUND, sort: false });
+            this.floorCells.set(i, img);
+        } else if (existing) {
+            existing.destroy();
+            this.floorCells.delete(i);
         }
     }
 
@@ -362,6 +384,8 @@ export class EditorScene extends Phaser.Scene {
     private fullRerender() {
         for (const c of this.cells) c?.destroy();
         this.cells = new Array(this.map.cols * this.map.rows).fill(null);
+        for (const f of this.floorCells.values()) f.destroy();
+        this.floorCells.clear();
         for (const arr of this.featureSprites.values()) for (const o of arr) o.destroy();
         this.featureSprites.clear();
         for (const s of this.shadowSprites.values()) s.destroy();
@@ -397,6 +421,7 @@ export class EditorScene extends Phaser.Scene {
         if (next === cur) return;
         this.map.levels![i] = next;
         this.reliftCell(col, row);
+        this.syncFloor(col, row);
         this.strokeChanged = true;
         this.markDirty();
     }
@@ -540,19 +565,20 @@ export class EditorScene extends Phaser.Scene {
     }
 
     private buildToolbars() {
+        // Compact icon buttons (active state shown by colour) so the whole toolbar fits.
         this.topBar = this.add.rectangle(0, 0, 10, TOP_H, 0x0e1620, 1).setOrigin(0, 0).setDepth(999).setStrokeStyle(1, 0x2a3543);
-        this.menuBtn = this.btn('← Menu', '#33455a', () => this.scene.start('Menu'));
-        this.undoBtn = this.btn('↶ Undo', '#33455a', () => this.undo());
-        this.eraserBtn = this.btn('🩹 Erase', '#33455a', () => this.toggleEraser());
-        this.modeBtn = this.btn('✏️ Paint', '#4a5a33', () => this.toggleMode());
-        this.gridBtn = this.btn('# Grid', '#33455a', () => this.toggleGrid());
-        this.raiseBtn = this.btn('▲ Raise', '#33455a', () => this.toggleElev(1));
-        this.lowerBtn = this.btn('▼ Lower', '#33455a', () => this.toggleElev(-1));
-        this.rotBtn = this.btn('⟳ Turn', '#33455a', () => this.rotateBy(1));
-        this.nameText = this.add.text(0, 0, this.map.name, { fontFamily: 'monospace', fontSize: '16px', color: '#e8f1ff', fontStyle: 'bold' })
+        this.menuBtn = this.btn('←', '#33455a', () => this.scene.start('Menu'));
+        this.undoBtn = this.btn('↶', '#33455a', () => this.undo());
+        this.modeBtn = this.btn('✏️', '#4a5a33', () => this.toggleMode());
+        this.eraserBtn = this.btn('🩹', '#33455a', () => this.toggleEraser());
+        this.raiseBtn = this.btn('▲', '#33455a', () => this.toggleElev(1));
+        this.lowerBtn = this.btn('▼', '#33455a', () => this.toggleElev(-1));
+        this.gridBtn = this.btn('#', '#33455a', () => this.toggleGrid());
+        this.rotBtn = this.btn('⟳', '#33455a', () => this.rotateBy(1));
+        this.nameText = this.add.text(0, 0, this.map.name, { fontFamily: 'monospace', fontSize: '15px', color: '#e8f1ff', fontStyle: 'bold' })
             .setOrigin(0.5, 0.5).setDepth(1000).setInteractive({ useHandCursor: true });
         this.nameText.on('pointerup', (p: Phaser.Input.Pointer) => { if (p.getDistance() < 14) this.rename(); });
-        this.saveBtn = this.btn('💾 Save', '#2a8c4a', () => this.save());
+        this.saveBtn = this.btn('💾', '#2a8c4a', () => this.save());
         this.statusText = this.add.text(0, 0, '', { fontFamily: 'monospace', fontSize: '12px', color: '#8aa0b5' }).setOrigin(1, 0.5).setDepth(1000);
         this.uiLayer.add([this.topBar, this.nameText, this.statusText]);
         this.refreshUndoStyle();
@@ -565,9 +591,15 @@ export class EditorScene extends Phaser.Scene {
         this.topBar.setPosition(0, 0).setSize(w, TOP_H);
 
         let x = 8;
-        for (const b of [this.menuBtn, this.undoBtn, this.eraserBtn, this.modeBtn, this.gridBtn, this.raiseBtn, this.lowerBtn, this.rotBtn]) {
-            b.setPosition(x, cy);
-            x += b.width + 6;
+        // nav | edit tools | view, with a small gap between groups.
+        const groups: Phaser.GameObjects.Text[][] = [
+            [this.menuBtn, this.undoBtn],
+            [this.modeBtn, this.eraserBtn, this.raiseBtn, this.lowerBtn],
+            [this.gridBtn, this.rotBtn],
+        ];
+        for (const g of groups) {
+            for (const b of g) { b.setPosition(x, cy); x += b.width + 5; }
+            x += 10;
         }
         this.saveBtn.setPosition(w - this.saveBtn.width - 10, cy);
         this.statusText.setPosition(this.saveBtn.x - 10, cy);
@@ -607,15 +639,13 @@ export class EditorScene extends Phaser.Scene {
     }
 
     private refreshEraserStyle() {
-        this.eraserBtn.setText(this.erasing ? '🩹 Erasing' : '🩹 Erase');
         this.eraserBtn.setBackgroundColor(this.erasing ? '#6a3a3a' : '#33455a');
-        this.layoutUI();
     }
 
     private toggleMode() {
         this.mode = this.mode === 'paint' ? 'pan' : 'paint';
-        this.modeBtn.setText(this.mode === 'paint' ? '✏️ Paint' : '✋ Pan');
-        this.modeBtn.setBackgroundColor(this.mode === 'paint' ? '#4a5a33' : '#33455a');
+        this.modeBtn.setText(this.mode === 'paint' ? '✏️' : '✋');
+        this.modeBtn.setBackgroundColor(this.mode === 'paint' ? '#4a5a33' : '#5a4a33');
         this.layoutUI();
     }
 
