@@ -15,9 +15,11 @@ import { screenOffset } from '../controls/billboard';
 export const FACE_L = 41;
 export const FACE_M = 42;
 export const FACE_R = 43;
+export const FACE_S = 44; // single-width rock wall (both edges rounded) — far-right of the sheet
 export const BASE_L = 50;
 export const BASE_M = 51;
 export const BASE_R = 52;
+export const BASE_S = 53; // single-width rock foot
 // The pack has no front-facing stair art; reuse the "left up" column as a placeholder for now.
 export const STAIR_PLACEHOLDER_FRAME = 45;
 

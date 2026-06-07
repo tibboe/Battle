@@ -5,7 +5,7 @@ import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, MAX_LEVEL, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
-import { BASE_L, BASE_M, BASE_R, FACE_L, FACE_M, FACE_R, frontDir, screenRightDir } from '../editor/cliffs';
+import { BASE_L, BASE_M, BASE_R, BASE_S, FACE_L, FACE_M, FACE_R, FACE_S, frontDir, screenRightDir } from '../editor/cliffs';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
 
@@ -244,33 +244,25 @@ export class EditorScene extends Phaser.Scene {
                     parts.push(img);
                 };
 
-                // FRONT (toward the viewer): rounded ends by run, foot shadow on land.
+                // FRONT (toward the viewer): rounded ends by run, single tile when 1 wide, foot
+                // shadow on the lower ground. Side/back edges are left to the grass top (plateau
+                // autotile, P3) — no separate side rock, which doubled the corners on a 1-tile cliff.
                 const fNL = lvl(col + fd.dc, row + fd.dr);
                 if (fNL < L) {
                     const leftEnd = !runs(col - sr.dc, row - sr.dr, L);
                     const rightEnd = !runs(col + sr.dc, row + sr.dr, L);
-                    const body = leftEnd ? FACE_L : rightEnd ? FACE_R : FACE_M;
-                    const base = leftEnd ? BASE_L : rightEnd ? BASE_R : BASE_M;
+                    const single = leftEnd && rightEnd;
+                    const body = single ? FACE_S : leftEnd ? FACE_L : rightEnd ? FACE_R : FACE_M;
+                    const base = single ? BASE_S : leftEnd ? BASE_L : rightEnd ? BASE_R : BASE_M;
                     for (let k = fNL; k <= L - 1; k++) face(x, y, k === fNL ? base : body, k);
                     if (fNL === 0 && land(col + fd.dc, row + fd.dr)) {
                         const o = screenOffset(this, 0, -this.ts * 0.4); // screen-down, on the lower ground
                         const sh = this.add.image(x + o.x, y + o.y, SHADOW.key).setOrigin(0.5).setScale(0.95, 0.7);
                         this.worldLayer.add(sh);
-                        this.applyElevation(sh, { bx: x + o.x, by: y + o.y, lvl: 0, depthLvl: L, bb: false, bias: BIAS_SHADOW, sort: true });
+                        // Belongs to the LOWER ground's depth band so it sits behind/under the cliff.
+                        this.applyElevation(sh, { bx: x + o.x, by: y + o.y, lvl: 0, depthLvl: fNL, bb: false, bias: BIAS_SHADOW, sort: true });
                         parts.push(sh);
                     }
-                }
-                // RIGHT side edge: right-end rock, shifted to the cell's screen-right edge.
-                const rNL = lvl(col + sr.dc, row + sr.dr);
-                if (rNL < L) {
-                    const o = screenOffset(this, this.ts / 2, 0); // fresh vector (applyElevation reuses s1)
-                    for (let k = rNL; k <= L - 1; k++) face(x + o.x, y + o.y, k === rNL ? BASE_R : FACE_R, k);
-                }
-                // LEFT side edge.
-                const lNL = lvl(col - sr.dc, row - sr.dr);
-                if (lNL < L) {
-                    const o = screenOffset(this, -this.ts / 2, 0);
-                    for (let k = lNL; k <= L - 1; k++) face(x + o.x, y + o.y, k === lNL ? BASE_L : FACE_L, k);
                 }
                 this.cliffFaces.set(i, parts);
             }
