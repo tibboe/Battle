@@ -2,9 +2,10 @@ import * as Phaser from 'phaser';
 import { CONFIG } from '../config';
 import { cameraAngle, screenOffset, uprightAngle } from '../controls/billboard';
 import { loadTerrainVariants } from '../terrain/tileset';
-import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
+import { loadEnvironment, registerEnvironmentAnims, FOAM, SHADOW } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, MAX_LEVEL, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
+import { EDGE_E, EDGE_N, EDGE_S, EDGE_W, flatFrame, plateauFrame } from '../editor/autotile';
 import { BASE_L, BASE_M, BASE_R, BASE_S, FACE_L, FACE_M, FACE_R, FACE_S, frontDir, screenRightDir } from '../editor/cliffs';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
@@ -24,9 +25,11 @@ const ZOOM_MAX = 4;
 // occludes what's behind it). Within a tier, water < ground < grid < shadow < feature, and
 // overlapping things (features/shadows) sort by on-screen Y.
 const LEVEL_BAND = 100_000;
+const BIAS_FOAM = -50;   // above the water backdrop, below the grass coastline tile
 const BIAS_GROUND = 0;
 const BIAS_SHADOW = 998;
 const BIAS_FEATURE = 1000;
+const NEIGH4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
 type Mode = 'paint' | 'pan';
 // Elevation tool: 0 = off (normal tile painting), +1 = raise, -1 = lower.
@@ -57,6 +60,8 @@ export class EditorScene extends Phaser.Scene {
     private shadowSprites = new Map<number, Phaser.GameObjects.Image>();
     // Derived rock cliff faces (front edge only), keyed by cell. Rebuilt on edit + rotation.
     private cliffFaces = new Map<number, Phaser.GameObjects.GameObject[]>();
+    // Animated coastline foam where level-0 grass meets water, keyed by cell.
+    private foamSprites = new Map<number, Phaser.GameObjects.Sprite>();
     private undoStack: { ground: TileId[]; levels: number[]; features: MapFeature[] }[] = [];
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
@@ -307,31 +312,81 @@ export class EditorScene extends Phaser.Scene {
     private renderAllCells() {
         for (let row = 0; row < this.map.rows; row++) {
             for (let col = 0; col < this.map.cols; col++) {
-                this.setGround(col, row, this.map.ground[cellIndex(this.map.cols, col, row)], false);
+                this.refreshGroundTile(col, row);
+                this.syncFloor(col, row);
             }
+        }
+        for (let row = 0; row < this.map.rows; row++) {
+            for (let col = 0; col < this.map.cols; col++) this.refreshFoam(col, row);
         }
     }
 
-    /** Paint one cell's ground tile (data + sprite). */
+    /** Paint one cell's ground tile (data + sprite, autotiled against its neighbours). */
     private setGround(col: number, row: number, id: TileId, commit = true) {
         const i = cellIndex(this.map.cols, col, row);
         this.map.ground[i] = id;
-        const def = getTile(id);
-        this.cells[i]?.destroy();
-        this.cells[i] = null;
-        if (def && def.render.kind === 'ground') {
-            const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, def.render.frame).setOrigin(0, 0);
-            this.worldLayer.add(img);
-            this.applyElevation(img, { bx: col * this.ts, by: row * this.ts, lvl: this.levelAt(col, row), bb: false, bias: BIAS_GROUND, sort: false });
-            this.cells[i] = img;
-        }
+        this.refreshGroundTile(col, row);
         this.syncFloor(col, row);
+        this.refreshFoam(col, row);
         if (commit) {
+            // Neighbours' coastline/plateau edges + foam depend on this cell.
+            for (const [dc, dr] of NEIGH4) { this.refreshGroundTile(col + dc, row + dr); this.refreshFoam(col + dc, row + dr); }
             this.strokeChanged = true;
             this.markDirty();
-            this.refreshShadow(col, row - 1); // changing this cell's ground may toggle the cliff-foot shadow above
-            if ((this.map.levels![i] | 0) > 0) this.rebuildCliffFaces(); // recolour/refresh a raised cell's face
+            this.refreshShadow(col, row - 1);
+            this.rebuildCliffFaces();
         }
+    }
+
+    /** A cell's "height": water (and off-map) is the sea floor (-1); grass is its elevation tier. */
+    private heightAt(col: number, row: number): number {
+        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return -1;
+        const i = cellIndex(this.map.cols, col, row);
+        return this.map.ground[i] === 'water' ? -1 : (this.map.levels![i] | 0);
+    }
+
+    /** Autotile frame for a grass cell: coastline (flat) at sea level, plateau set when raised,
+     *  with a boundary on each side whose neighbour is lower (water or a lower tier). */
+    private groundFrame(col: number, row: number): number {
+        const h = this.heightAt(col, row);
+        let bits = 0;
+        if (this.heightAt(col, row - 1) < h) bits |= EDGE_N;
+        if (this.heightAt(col + 1, row) < h) bits |= EDGE_E;
+        if (this.heightAt(col, row + 1) < h) bits |= EDGE_S;
+        if (this.heightAt(col - 1, row) < h) bits |= EDGE_W;
+        return h > 0 ? plateauFrame(bits) : flatFrame(bits);
+    }
+
+    /** Recreate one cell's ground sprite with the right autotile frame + elevation lift. */
+    private refreshGroundTile(col: number, row: number) {
+        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return;
+        const i = cellIndex(this.map.cols, col, row);
+        this.cells[i]?.destroy();
+        this.cells[i] = null;
+        const def = getTile(this.map.ground[i]);
+        if (!def || def.render.kind !== 'ground') return; // water → backdrop shows
+        const img = this.add.image(col * this.ts, row * this.ts, def.render.atlas, this.groundFrame(col, row)).setOrigin(0, 0);
+        this.worldLayer.add(img);
+        this.applyElevation(img, { bx: col * this.ts, by: row * this.ts, lvl: this.map.levels![i] | 0, bb: false, bias: BIAS_GROUND, sort: false });
+        this.cells[i] = img;
+    }
+
+    /** Animated foam where sea-level grass meets water (the coastline ring). */
+    private refreshFoam(col: number, row: number) {
+        if (col < 0 || row < 0 || col >= this.map.cols || row >= this.map.rows) return;
+        const i = cellIndex(this.map.cols, col, row);
+        this.foamSprites.get(i)?.destroy();
+        this.foamSprites.delete(i);
+        const def = getTile(this.map.ground[i]);
+        const grassSea = def?.render.kind === 'ground' && (this.map.levels![i] | 0) === 0;
+        const coastal = this.heightAt(col, row - 1) < 0 || this.heightAt(col + 1, row) < 0 || this.heightAt(col, row + 1) < 0 || this.heightAt(col - 1, row) < 0;
+        if (!grassSea || !coastal) return;
+        const { x, y } = this.cellCentre(col, row);
+        const s = this.add.sprite(x, y, FOAM.key).play(FOAM.anim);
+        s.anims.setProgress(Math.random());
+        this.worldLayer.add(s);
+        this.applyElevation(s, { bx: x, by: y, lvl: 0, bb: false, bias: BIAS_FOAM, sort: false });
+        this.foamSprites.set(i, s);
     }
 
     /** Ensure a raised, grass cell keeps a level-0 grass floor under its lifted top tile. */
@@ -461,6 +516,8 @@ export class EditorScene extends Phaser.Scene {
         this.featureSprites.clear();
         for (const s of this.shadowSprites.values()) s.destroy();
         this.shadowSprites.clear();
+        for (const s of this.foamSprites.values()) s.destroy();
+        this.foamSprites.clear();
         this.clearCliffFaces();
         this.renderAllCells();
         this.renderAllFeatures();
@@ -495,9 +552,12 @@ export class EditorScene extends Phaser.Scene {
         const next = Phaser.Math.Clamp(cur + d, 0, MAX_LEVEL);
         if (next === cur) return;
         this.map.levels![i] = next;
-        this.reliftCell(col, row);
+        this.refreshGroundTile(col, row); // flat <-> plateau autotile + new lift
         this.syncFloor(col, row);
-        this.rebuildCliffFaces(); // a tier change can add/remove faces on this cell + its neighbour
+        this.refreshFoam(col, row);
+        this.reliftCell(col, row); // re-lift features + shadow on this cell
+        for (const [dc, dr] of NEIGH4) { this.refreshGroundTile(col + dc, row + dr); this.refreshFoam(col + dc, row + dr); }
+        this.rebuildCliffFaces(); // a tier change can add/remove faces on this cell + its neighbours
         this.strokeChanged = true;
         this.markDirty();
     }

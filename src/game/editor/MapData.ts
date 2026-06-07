@@ -53,7 +53,8 @@ export const MAX_LEVEL = 2;
 /** Cell index helper (row-major). */
 export const cellIndex = (cols: number, col: number, row: number) => row * cols + col;
 
-/** Make a fresh, all-grass map. New maps "start out as plain grass" per the brief. */
+/** Make a fresh, all-WATER map. New maps start as open sea; you paint grass (level-0 land)
+ *  to raise islands, which auto-get a foamed coastline. */
 export function createEmptyMap(name = 'Untitled Map', cols = DEFAULT_COLS, rows = DEFAULT_ROWS): MapData {
     const now = new Date().toISOString();
     return {
@@ -62,7 +63,7 @@ export function createEmptyMap(name = 'Untitled Map', cols = DEFAULT_COLS, rows 
         cols,
         rows,
         tileSize: DEFAULT_TILE_SIZE,
-        ground: new Array(cols * rows).fill(DEFAULT_GROUND),
+        ground: new Array(cols * rows).fill('water'),
         levels: new Array(cols * rows).fill(0),
         features: [],
         createdAt: now,

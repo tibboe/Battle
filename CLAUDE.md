@@ -62,11 +62,16 @@ edge currently facing the viewer (screen-down); `rebuildCliffFaces()` draws a bi
 wall (mid body 42 + base 51, in the cell's grass hue) into the on-screen gap wherever a tier drops
 onto a lower front neighbour — so elevation is visible at rest and the face moves to the new
 viewer-facing edge on each turn (rebuilt at rotation onComplete; cleared during the spin). The
-front face now uses **rounded left/right end frames** (run-detected along the screen edge) with a
-**foot shadow** on land, and **side edges** (screen-left/right drops) draw the matching left/right
-rock shifted half a tile to that edge; the back edge stays open grass. **P3:** stairs/ramp markers,
-cross-tier feature occlusion polish; the hand-placed Cliffs palette still needs demoting to legacy.
-See the approved plan.
+front face uses **rounded end frames** + a **single-width frame** (far-right of the sheet, 44/53)
+for a 1-wide cliff, with a **foot shadow** parked in the *lower* tier's depth band so it sits
+behind the rock. **Coastline/plateau autotile (`editor/autotile.ts`):** the flat-ground (cols 0–3)
+and plateau-grass (cols 5–8) blocks are the **same 16-piece autotile** indexed by exposed
+(lower/water) edges N/E/S/W — plateau frame = flat frame + 5 (verified by scanning the tileset).
+Ground tiles autotile against neighbours (`groundFrame`/`heightAt`, water = height −1): sea-level
+grass gets coastline edges, raised grass gets plateau edges, and **animated foam** (`FOAM`, depth
+band between water and grass) rings level-0 coastlines. **New maps default to all-WATER** — paint
+grass (level-0 land) to raise foamed islands, then ▲ Raise into plateaus. **P3:** stairs/ramp
+markers, cross-tier occlusion polish; demote the legacy Cliffs palette. See the approved plan.
 
 **Not yet built (other slices):** fill, redo (per-stroke undo is in), gameplay anchors
 (lane/keeps/spawns), edge sockets for stitching, and the world generator itself.
