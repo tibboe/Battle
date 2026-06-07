@@ -5,7 +5,7 @@ import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, MAX_LEVEL, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
-import { FACE_BASE, FACE_BODY, frontDir } from '../editor/cliffs';
+import { BASE_L, BASE_M, BASE_R, FACE_L, FACE_M, FACE_R, frontDir, screenRightDir } from '../editor/cliffs';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
 
@@ -213,33 +213,64 @@ export class EditorScene extends Phaser.Scene {
         this.cliffFaces.clear();
     }
 
-    /** Rebuild the rock cliff faces for the current orientation: a face shows on the edge that
-     *  faces the viewer (screen-down) wherever a cell drops onto a lower neighbour. */
+    /** Rebuild the rock cliff faces for the current orientation. A FRONT face (viewer-facing
+     *  edge) drops straight below the grass top with rounded ends + a foot shadow; SIDE edges
+     *  (screen-left / -right) get the matching left/right rock, offset to that edge; the BACK
+     *  edge stays open grass. */
     private rebuildCliffFaces() {
         this.clearCliffFaces();
         const fd = frontDir(this);
+        const sr = screenRightDir(this);
         const { cols, rows } = this.map;
+        const lvl = (c: number, r: number) => (c < 0 || r < 0 || c >= cols || r >= rows) ? 0 : (this.map.levels![cellIndex(cols, c, r)] | 0);
+        // A same-level neighbour that also drops on the front = the run continues (no rounded end).
+        const runs = (c: number, r: number, L: number) => lvl(c, r) === L && lvl(c, r) > lvl(c + fd.dc, r + fd.dr);
+        const land = (c: number, r: number) => c >= 0 && r >= 0 && c < cols && r < rows && this.map.ground[cellIndex(cols, c, r)] !== 'water';
+
         for (let row = 0; row < rows; row++) {
             for (let col = 0; col < cols; col++) {
                 const i = cellIndex(cols, col, row);
-                const L = this.map.levels![i] | 0;
+                const L = lvl(col, row);
                 if (L <= 0) continue;
-                const nc = col + fd.dc;
-                const nr = row + fd.dr;
-                const off = nc < 0 || nr < 0 || nc >= cols || nr >= rows;
-                const NL = off ? 0 : (this.map.levels![cellIndex(cols, nc, nr)] | 0);
-                if (NL >= L) continue; // no drop toward the viewer here
                 const def = getTile(this.map.ground[i]);
                 if (!def || def.render.kind !== 'ground') continue; // only solid (grass) cells get faces
                 const atlas = def.render.atlas;
                 const { x, y } = this.cellCentre(col, row);
                 const parts: Phaser.GameObjects.GameObject[] = [];
-                // One rock tile per dropped tier, stacked in the on-screen gap below the grass top.
-                for (let k = NL; k <= L - 1; k++) {
-                    const img = this.add.image(x, y, atlas, k === NL ? FACE_BASE : FACE_BODY).setOrigin(0.5, 0.5);
+                const face = (bx: number, by: number, frame: number, k: number) => {
+                    const img = this.add.image(bx, by, atlas, frame).setOrigin(0.5, 0.5);
                     this.worldLayer.add(img);
-                    this.applyElevation(img, { bx: x, by: y, lvl: k, depthLvl: L, bb: true, bias: BIAS_FEATURE, sort: true });
+                    this.applyElevation(img, { bx, by, lvl: k, depthLvl: L, bb: true, bias: BIAS_FEATURE, sort: true });
                     parts.push(img);
+                };
+
+                // FRONT (toward the viewer): rounded ends by run, foot shadow on land.
+                const fNL = lvl(col + fd.dc, row + fd.dr);
+                if (fNL < L) {
+                    const leftEnd = !runs(col - sr.dc, row - sr.dr, L);
+                    const rightEnd = !runs(col + sr.dc, row + sr.dr, L);
+                    const body = leftEnd ? FACE_L : rightEnd ? FACE_R : FACE_M;
+                    const base = leftEnd ? BASE_L : rightEnd ? BASE_R : BASE_M;
+                    for (let k = fNL; k <= L - 1; k++) face(x, y, k === fNL ? base : body, k);
+                    if (fNL === 0 && land(col + fd.dc, row + fd.dr)) {
+                        const o = screenOffset(this, 0, -this.ts * 0.4); // screen-down, on the lower ground
+                        const sh = this.add.image(x + o.x, y + o.y, SHADOW.key).setOrigin(0.5).setScale(0.95, 0.7);
+                        this.worldLayer.add(sh);
+                        this.applyElevation(sh, { bx: x + o.x, by: y + o.y, lvl: 0, depthLvl: L, bb: false, bias: BIAS_SHADOW, sort: true });
+                        parts.push(sh);
+                    }
+                }
+                // RIGHT side edge: right-end rock, shifted to the cell's screen-right edge.
+                const rNL = lvl(col + sr.dc, row + sr.dr);
+                if (rNL < L) {
+                    const o = screenOffset(this, this.ts / 2, 0); // fresh vector (applyElevation reuses s1)
+                    for (let k = rNL; k <= L - 1; k++) face(x + o.x, y + o.y, k === rNL ? BASE_R : FACE_R, k);
+                }
+                // LEFT side edge.
+                const lNL = lvl(col - sr.dc, row - sr.dr);
+                if (lNL < L) {
+                    const o = screenOffset(this, -this.ts / 2, 0);
+                    for (let k = lNL; k <= L - 1; k++) face(x + o.x, y + o.y, k === lNL ? BASE_L : FACE_L, k);
                 }
                 this.cliffFaces.set(i, parts);
             }

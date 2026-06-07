@@ -61,10 +61,12 @@ a per-rotation `relayoutElevation()` pass that re-lifts/re-billboards/re-depths 
 edge currently facing the viewer (screen-down); `rebuildCliffFaces()` draws a billboarded rock
 wall (mid body 42 + base 51, in the cell's grass hue) into the on-screen gap wherever a tier drops
 onto a lower front neighbour — so elevation is visible at rest and the face moves to the new
-viewer-facing edge on each turn (rebuilt at rotation onComplete; cleared during the spin). **P2
-remaining / P3:** side & back edges (currently grass), rounded left/right end frames, derived foot
-shadows, stairs/ramp markers; the hand-placed Cliffs palette still needs demoting to legacy. See
-the approved plan.
+viewer-facing edge on each turn (rebuilt at rotation onComplete; cleared during the spin). The
+front face now uses **rounded left/right end frames** (run-detected along the screen edge) with a
+**foot shadow** on land, and **side edges** (screen-left/right drops) draw the matching left/right
+rock shifted half a tile to that edge; the back edge stays open grass. **P3:** stairs/ramp markers,
+cross-tier feature occlusion polish; the hand-placed Cliffs palette still needs demoting to legacy.
+See the approved plan.
 
 **Not yet built (other slices):** fill, redo (per-stroke undo is in), gameplay anchors
 (lane/keeps/spawns), edge sockets for stitching, and the world generator itself.
