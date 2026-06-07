@@ -57,10 +57,14 @@ Maps persist to the **Node/SQLite server** (`/api/maps` CRUD in `server/index.mj
 `screenOffset(0, level*CLIFF_H)` so it reads correctly at any angle; a **⟳ Turn** button does the
 game's smooth 90° camera spin (`rotateBy`, mirrors `CameraController`), with rotated drag-pan and
 a per-rotation `relayoutElevation()` pass that re-lifts/re-billboards/re-depths everything (depth =
-`level*BAND + bias + screenY`). **P2 (next):** auto-derived cliff faces between tiers whose art
-reorients with rotation (front→rock face, back→open grass, sides→edge art) in `editor/cliffs.ts`;
-the hand-placed Cliffs palette is being demoted to legacy. **P3:** stairs/ramp markers + occlusion
-polish. See the approved plan.
+`level*BAND + bias + screenY`). **P2 (v1 done):** `editor/cliffs.ts` `frontDir()` picks the world
+edge currently facing the viewer (screen-down); `rebuildCliffFaces()` draws a billboarded rock
+wall (mid body 42 + base 51, in the cell's grass hue) into the on-screen gap wherever a tier drops
+onto a lower front neighbour — so elevation is visible at rest and the face moves to the new
+viewer-facing edge on each turn (rebuilt at rotation onComplete; cleared during the spin). **P2
+remaining / P3:** side & back edges (currently grass), rounded left/right end frames, derived foot
+shadows, stairs/ramp markers; the hand-placed Cliffs palette still needs demoting to legacy. See
+the approved plan.
 
 **Not yet built (other slices):** fill, redo (per-stroke undo is in), gameplay anchors
 (lane/keeps/spawns), edge sockets for stitching, and the world generator itself.

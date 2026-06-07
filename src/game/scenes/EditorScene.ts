@@ -5,6 +5,7 @@ import { loadTerrainVariants } from '../terrain/tileset';
 import { loadEnvironment, registerEnvironmentAnims, SHADOW } from '../terrain/environment';
 import { cellIndex, createEmptyMap, MapData, MapFeature, MAX_LEVEL, TileId } from '../editor/MapData';
 import { getTile, WATER_KEY } from '../editor/tileCatalog';
+import { FACE_BASE, FACE_BODY, frontDir } from '../editor/cliffs';
 import { EXPLORER_H, TileExplorer } from '../editor/TileExplorer';
 import { MapStore } from '../editor/MapStore';
 
@@ -36,10 +37,11 @@ type ElevTool = 0 | 1 | -1;
 interface ElevData {
     bx: number;     // base (unlifted) world x
     by: number;     // base world y
-    lvl: number;    // elevation tier
-    bb: boolean;    // billboard upright (features) vs rotate with the world (ground/shadows)
+    lvl: number;    // elevation tier used for the on-screen LIFT
+    bb: boolean;    // billboard upright (features / cliff faces) vs rotate with the world
     bias: number;   // depth bias within the tier
     sort: boolean;  // add on-screen-Y to depth (overlapping things)
+    depthLvl?: number; // tier used for the DEPTH band (cliff faces lift by `lvl` but belong to a higher plateau)
 }
 
 export class EditorScene extends Phaser.Scene {
@@ -53,6 +55,8 @@ export class EditorScene extends Phaser.Scene {
     private featureSprites = new Map<number, Phaser.GameObjects.GameObject[]>();
     // Cliff-foot shadows, tracked per cell so they can be re-evaluated when neighbours change.
     private shadowSprites = new Map<number, Phaser.GameObjects.Image>();
+    // Derived rock cliff faces (front edge only), keyed by cell. Rebuilt on edit + rotation.
+    private cliffFaces = new Map<number, Phaser.GameObjects.GameObject[]>();
     private undoStack: { ground: TileId[]; levels: number[]; features: MapFeature[] }[] = [];
     private grid!: Phaser.GameObjects.Graphics;
     private border!: Phaser.GameObjects.Graphics;
@@ -122,6 +126,7 @@ export class EditorScene extends Phaser.Scene {
         this.drawWaterBackdrop();
         this.renderAllCells();
         this.renderAllFeatures();
+        this.rebuildCliffFaces();
         this.drawGridAndBorder();
         this.setupCamera();
         this.buildToolbars();
@@ -178,7 +183,7 @@ export class EditorScene extends Phaser.Scene {
         if (e.lvl > 0) { screenOffset(this, 0, e.lvl * this.cliffH, this.s1); t.x = e.bx + this.s1.x; t.y = e.by + this.s1.y; }
         else { t.x = e.bx; t.y = e.by; }
         t.rotation = e.bb ? uprightAngle(this) : 0;
-        t.depth = e.lvl * LEVEL_BAND + e.bias + (e.sort ? this.sortY(e.bx, e.by) : 0);
+        t.depth = (e.depthLvl ?? e.lvl) * LEVEL_BAND + e.bias + (e.sort ? this.sortY(e.bx, e.by) : 0);
     }
 
     /** Re-lift / re-billboard / re-depth every elevation-tagged object (called while rotating). */
@@ -201,6 +206,45 @@ export class EditorScene extends Phaser.Scene {
         setLvl(this.shadowSprites.get(i));
     }
 
+    // ── derived cliff faces (P2) ─────────────────────────────────────────────--
+    private clearCliffFaces() {
+        for (const arr of this.cliffFaces.values()) for (const o of arr) o.destroy();
+        this.cliffFaces.clear();
+    }
+
+    /** Rebuild the rock cliff faces for the current orientation: a face shows on the edge that
+     *  faces the viewer (screen-down) wherever a cell drops onto a lower neighbour. */
+    private rebuildCliffFaces() {
+        this.clearCliffFaces();
+        const fd = frontDir(this);
+        const { cols, rows } = this.map;
+        for (let row = 0; row < rows; row++) {
+            for (let col = 0; col < cols; col++) {
+                const i = cellIndex(cols, col, row);
+                const L = this.map.levels![i] | 0;
+                if (L <= 0) continue;
+                const nc = col + fd.dc;
+                const nr = row + fd.dr;
+                const off = nc < 0 || nr < 0 || nc >= cols || nr >= rows;
+                const NL = off ? 0 : (this.map.levels![cellIndex(cols, nc, nr)] | 0);
+                if (NL >= L) continue; // no drop toward the viewer here
+                const def = getTile(this.map.ground[i]);
+                if (!def || def.render.kind !== 'ground') continue; // only solid (grass) cells get faces
+                const atlas = def.render.atlas;
+                const { x, y } = this.cellCentre(col, row);
+                const parts: Phaser.GameObjects.GameObject[] = [];
+                // One rock tile per dropped tier, stacked in the on-screen gap below the grass top.
+                for (let k = NL; k <= L - 1; k++) {
+                    const img = this.add.image(x, y, atlas, k === NL ? FACE_BASE : FACE_BODY).setOrigin(0.5, 0.5);
+                    this.worldLayer.add(img);
+                    this.applyElevation(img, { bx: x, by: y, lvl: k, depthLvl: L, bb: true, bias: BIAS_FEATURE, sort: true });
+                    parts.push(img);
+                }
+                this.cliffFaces.set(i, parts);
+            }
+        }
+    }
+
     // ── rotation (mirrors CameraController.rotateBy) ─────────────────────────--
     private rotateBy(dir: 1 | -1) {
         if (this.isRotating) return;
@@ -209,6 +253,7 @@ export class EditorScene extends Phaser.Scene {
         const next = (this.orientation + dir + 4) % 4;
         this.isRotating = true;
         cam.useBounds = false;
+        this.clearCliffFaces(); // faces are direction-specific; rebuild for the new angle on land
         this.tweens.add({
             targets: cam,
             rotation: cameraAngle(this) + dir * Math.PI / 2,
@@ -221,6 +266,7 @@ export class EditorScene extends Phaser.Scene {
                 cam.useBounds = (next === 0); // bounds clamp is only correct unrotated
                 this.isRotating = false;
                 this.relayoutElevation();
+                this.rebuildCliffFaces();
             },
         });
     }
@@ -260,6 +306,7 @@ export class EditorScene extends Phaser.Scene {
             this.strokeChanged = true;
             this.markDirty();
             this.refreshShadow(col, row - 1); // changing this cell's ground may toggle the cliff-foot shadow above
+            if ((this.map.levels![i] | 0) > 0) this.rebuildCliffFaces(); // recolour/refresh a raised cell's face
         }
     }
 
@@ -390,8 +437,10 @@ export class EditorScene extends Phaser.Scene {
         this.featureSprites.clear();
         for (const s of this.shadowSprites.values()) s.destroy();
         this.shadowSprites.clear();
+        this.clearCliffFaces();
         this.renderAllCells();
         this.renderAllFeatures();
+        this.rebuildCliffFaces();
     }
 
     // ── undo ───────────────────────────────────────────────────────────────--
@@ -422,6 +471,7 @@ export class EditorScene extends Phaser.Scene {
         this.map.levels![i] = next;
         this.reliftCell(col, row);
         this.syncFloor(col, row);
+        this.rebuildCliffFaces(); // a tier change can add/remove faces on this cell + its neighbour
         this.strokeChanged = true;
         this.markDirty();
     }
@@ -633,8 +683,8 @@ export class EditorScene extends Phaser.Scene {
     }
 
     private refreshElevStyle() {
-        this.raiseBtn.setBackgroundColor(this.elevTool === 1 ? '#2a6c8c' : '#33455a');
-        this.lowerBtn.setBackgroundColor(this.elevTool === -1 ? '#2a6c8c' : '#33455a');
+        this.raiseBtn.setBackgroundColor(this.elevTool === 1 ? '#2f86d8' : '#33455a');
+        this.lowerBtn.setBackgroundColor(this.elevTool === -1 ? '#2f86d8' : '#33455a');
         this.layoutUI();
     }
 
