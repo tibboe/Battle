@@ -27,7 +27,7 @@ const ZOOM_MAX = 4;
 const LEVEL_BAND = 100_000;
 const BIAS_FOAM = -50;   // above the water backdrop, below the grass coastline tile
 const BIAS_GROUND = 0;
-const BIAS_SHADOW = 998;
+const BIAS_SHADOW = 500;  // above grass/water, well below the cliff (clears the foot-offset sort)
 const BIAS_FEATURE = 1000;
 const NEIGH4: [number, number][] = [[0, -1], [1, 0], [0, 1], [-1, 0]];
 
