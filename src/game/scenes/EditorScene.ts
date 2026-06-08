@@ -242,10 +242,12 @@ export class EditorScene extends Phaser.Scene {
                 const atlas = def.render.atlas;
                 const { x, y } = this.cellCentre(col, row);
                 const parts: Phaser.GameObjects.GameObject[] = [];
-                const face = (bx: number, by: number, frame: number, k: number) => {
+                // depthLvl = the LOWER ground the face drops onto, so a feature standing in front
+                // of the cliff (on that lower ground) sorts OVER the face instead of behind it.
+                const face = (bx: number, by: number, frame: number, k: number, dLvl: number) => {
                     const img = this.add.image(bx, by, atlas, frame).setOrigin(0.5, 0.5);
                     this.worldLayer.add(img);
-                    this.applyElevation(img, { bx, by, lvl: k, depthLvl: L, bb: true, bias: BIAS_FEATURE, sort: true });
+                    this.applyElevation(img, { bx, by, lvl: k, depthLvl: dLvl, bb: true, bias: BIAS_FEATURE, sort: true });
                     parts.push(img);
                 };
 
@@ -259,7 +261,7 @@ export class EditorScene extends Phaser.Scene {
                     const single = leftEnd && rightEnd;
                     const body = single ? FACE_S : leftEnd ? FACE_L : rightEnd ? FACE_R : FACE_M;
                     const base = single ? BASE_S : leftEnd ? BASE_L : rightEnd ? BASE_R : BASE_M;
-                    for (let k = fNL; k <= L - 1; k++) face(x, y, k === fNL ? base : body, k);
+                    for (let k = fNL; k <= L - 1; k++) face(x, y, k === fNL ? base : body, k, fNL);
                     if (fNL === 0 && land(col + fd.dc, row + fd.dr)) {
                         const o = screenOffset(this, 0, -this.ts * 0.4); // screen-down, on the lower ground
                         const sh = this.add.image(x + o.x, y + o.y, SHADOW.key).setOrigin(0.5).setScale(0.95, 0.7);
@@ -378,9 +380,11 @@ export class EditorScene extends Phaser.Scene {
         this.foamSprites.get(i)?.destroy();
         this.foamSprites.delete(i);
         const def = getTile(this.map.ground[i]);
-        const grassSea = def?.render.kind === 'ground' && (this.map.levels![i] | 0) === 0;
+        // Foam where grass meets water at ANY tier (a raised cliff in the sea laps at its foot,
+        // drawn at sea level), not just flat coastline.
+        const grass = def?.render.kind === 'ground';
         const coastal = this.heightAt(col, row - 1) < 0 || this.heightAt(col + 1, row) < 0 || this.heightAt(col, row + 1) < 0 || this.heightAt(col - 1, row) < 0;
-        if (!grassSea || !coastal) return;
+        if (!grass || !coastal) return;
         const { x, y } = this.cellCentre(col, row);
         const s = this.add.sprite(x, y, FOAM.key).play(FOAM.anim);
         s.anims.setProgress(Math.random());
@@ -543,21 +547,23 @@ export class EditorScene extends Phaser.Scene {
         this.refreshUndoStyle();
     }
 
-    /** Raise/lower one cell's elevation tier and re-place its sprites. */
+    /** Raise/lower one cell's height. Water is the floor: Raise turns water → grass (level 0) →
+     *  level 1 …; Lower reverses, grass level 0 → water. One step per stroke. */
     private adjustLevel(col: number, row: number, d: number) {
         const i = cellIndex(this.map.cols, col, row);
         if (this.strokeCells.has(i)) return; // already stepped this cell this stroke
         this.strokeCells.add(i);
-        const cur = this.map.levels![i] | 0;
-        const next = Phaser.Math.Clamp(cur + d, 0, MAX_LEVEL);
+        const cur = this.heightAt(col, row); // -1 = water, else tier
+        const next = Phaser.Math.Clamp(cur + d, -1, MAX_LEVEL);
         if (next === cur) return;
-        this.map.levels![i] = next;
-        this.refreshGroundTile(col, row); // flat <-> plateau autotile + new lift
+        if (next < 0) { this.map.ground[i] = 'water'; this.map.levels![i] = 0; }
+        else { if (this.map.ground[i] === 'water') this.map.ground[i] = 'grass'; this.map.levels![i] = next; }
+        this.refreshGroundTile(col, row);
         this.syncFloor(col, row);
         this.refreshFoam(col, row);
         this.reliftCell(col, row); // re-lift features + shadow on this cell
         for (const [dc, dr] of NEIGH4) { this.refreshGroundTile(col + dc, row + dr); this.refreshFoam(col + dc, row + dr); }
-        this.rebuildCliffFaces(); // a tier change can add/remove faces on this cell + its neighbours
+        this.rebuildCliffFaces();
         this.strokeChanged = true;
         this.markDirty();
     }
